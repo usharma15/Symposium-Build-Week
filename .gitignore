@@ -1,0 +1,19 @@
+.DS_Store
+.env*
+.next/
+node_modules/
+out/
+dist/
+.npm-cache/
+tsconfig.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local project context and the pre-Next static sketch stay off the deploy branch.
+Science Rebirth Context Overview.md
+index.html
+styles.css
+app.js
+public/symposium-arrival.png
