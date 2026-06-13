@@ -256,7 +256,8 @@ button {
 .world-rail,
 .side-panel,
 .movement-pad,
-.pocket {
+.pocket,
+.sync-status {
   pointer-events: auto;
 }
 
@@ -282,7 +283,8 @@ button {
 .hall-door,
 .comment-composer,
 .profile-hero,
-.profile-tabs {
+.profile-tabs,
+.sync-status {
   border: 1px solid var(--line);
   background: var(--panel);
   box-shadow: var(--small-shadow);
@@ -307,6 +309,7 @@ button {
 .post-composer select,
 .comment-composer button,
 .comment-composer select,
+.reply-button,
 .tablet-input button,
 .pocket,
 .hall-door,
@@ -442,6 +445,19 @@ button {
   gap: 8px;
   min-height: 42px;
   padding: 0 12px;
+}
+
+.sync-status {
+  position: fixed;
+  z-index: 29;
+  top: 70px;
+  right: 16px;
+  min-height: 30px;
+  border-radius: var(--radius);
+  padding: 7px 10px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 760;
 }
 
 .stage {
@@ -853,7 +869,9 @@ button {
 .post-composer textarea,
 .post-composer select,
 .comment-composer textarea,
-.comment-composer select {
+.comment-composer select,
+.account-form input,
+.account-form textarea {
   width: 100%;
   min-width: 0;
   border: 1px solid var(--line);
@@ -865,13 +883,15 @@ button {
 
 .post-composer input,
 .post-composer select,
-.comment-composer select {
+.comment-composer select,
+.account-form input {
   min-height: 40px;
   padding: 0 11px;
 }
 
 .post-composer textarea,
-.comment-composer textarea {
+.comment-composer textarea,
+.account-form textarea {
   min-height: 88px;
   resize: vertical;
   padding: 11px;
@@ -1184,6 +1204,23 @@ button {
   line-height: 1.55;
 }
 
+.reply-button {
+  margin: 10px 0 0 39px;
+  min-height: 30px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--muted);
+  padding: 0 10px;
+  font-size: 0.78rem;
+  font-weight: 780;
+}
+
+.comment-composer.compact {
+  margin: 12px 0 0 39px;
+  background: color-mix(in srgb, var(--aqua) 7%, transparent);
+}
+
 .detail-side {
   position: sticky;
   top: 92px;
@@ -1404,6 +1441,10 @@ button {
   right: 16px;
 }
 
+.account-panel {
+  right: 16px;
+}
+
 .panel-header {
   display: flex;
   align-items: center;
@@ -1495,6 +1536,88 @@ button {
   border-radius: var(--radius);
 }
 
+.account-current {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--aqua) 8%, transparent);
+}
+
+.account-current strong,
+.account-current small,
+.account-switcher strong,
+.account-switcher small {
+  display: block;
+}
+
+.account-current small,
+.account-switcher small {
+  margin-top: 3px;
+  color: var(--muted);
+}
+
+.account-form,
+.account-switcher {
+  display: grid;
+  gap: 10px;
+}
+
+.account-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.account-form textarea {
+  min-height: 108px;
+}
+
+.account-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.account-actions button,
+.account-switcher button {
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--ink);
+  font-weight: 780;
+}
+
+.account-switcher {
+  margin-top: 18px;
+}
+
+.account-switcher h2 {
+  margin: 0;
+  font-size: 0.86rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.account-switcher button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px;
+  text-align: left;
+}
+
+.account-switcher button.active {
+  border-color: color-mix(in srgb, var(--aqua) 55%, transparent);
+  background: color-mix(in srgb, var(--aqua) 10%, transparent);
+}
+
 @media (max-width: 1120px) {
   .detail-layout,
   .room-header {
@@ -1563,7 +1686,8 @@ button {
   .brand small,
   .profile-button span,
   .pocket span,
-  .movement-pad {
+  .movement-pad,
+  .sync-status {
     display: none;
   }
 

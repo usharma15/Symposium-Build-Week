@@ -1,0 +1,634 @@
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { Pool } from "pg";
+import {
+  getProfileForName,
+  inquiryItems,
+  profile as defaultProfile,
+  profilesByName,
+  type ContentKind,
+  type InquiryComment,
+  type InquiryItem,
+  type ResearchProfile,
+  type RoomId
+} from "@/lib/mockData";
+
+type AppData = {
+  profiles: Record<string, ResearchProfile>;
+  items: InquiryItem[];
+};
+
+export type CreateProfileInput = {
+  name: string;
+  handle: string;
+  role: string;
+  location: string;
+  bio: string;
+  fields: string[];
+};
+
+export type CreatePostInput = {
+  title: string;
+  body: string;
+  kind: ContentKind;
+  room: Exclude<RoomId, "hall">;
+};
+
+export type CreateCommentInput = {
+  body: string;
+  stance: string;
+  parentId?: string | null;
+};
+
+export type PostAction = "signal" | "save" | "fork" | "read";
+
+const localDataPath = process.env.VERCEL
+  ? path.join("/tmp", "symposium.json")
+  : path.join(process.cwd(), ".data", "symposium.json");
+const databaseUrl = process.env.POSTGRES_PRISMA_URL ?? process.env.POSTGRES_URL ?? process.env.DATABASE_URL;
+const usePostgres = Boolean(databaseUrl);
+
+let pool: Pool | null = null;
+let schemaReady: Promise<void> | null = null;
+
+const cleanHandle = (handle: string) => {
+  const trimmed = handle.trim().toLowerCase();
+  const withAt = trimmed.startsWith("@") ? trimmed : `@${trimmed}`;
+  return withAt.replace(/[^@a-z0-9_]+/g, "_").replace(/_+/g, "_").replace(/^@_/, "@").replace(/_$/, "");
+};
+
+const handleFromName = (name: string) => getProfileForName(name).handle;
+
+const nowLabel = () =>
+  new Intl.DateTimeFormat("en", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  }).format(new Date());
+
+const newId = (prefix: string) =>
+  `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+const normalizeProfile = (input: CreateProfileInput): ResearchProfile => ({
+  name: input.name.trim(),
+  handle: cleanHandle(input.handle),
+  role: input.role.trim() || "Symposium participant",
+  location: input.location.trim() || "Public rooms",
+  bio: input.bio.trim() || "A participant in the current inquiry thread.",
+  fields: input.fields.map((field) => field.trim()).filter(Boolean).slice(0, 8)
+});
+
+const seedData = (): AppData => {
+  const profiles = Object.fromEntries(
+    Object.values(profilesByName).map((person) => [person.handle, person])
+  );
+
+  return {
+    profiles,
+    items: inquiryItems.map((item, itemIndex) => ({
+      ...item,
+      authorHandle: handleFromName(item.author),
+      comments: normalizeComments(item.comments, item.id, itemIndex)
+    }))
+  };
+};
+
+const normalizeComments = (
+  comments: InquiryComment[],
+  itemId: string,
+  itemIndex: number,
+  parentId: string | null = null
+): InquiryComment[] =>
+  comments.map((comment, commentIndex) => {
+    const id = comment.id ?? `${itemId}-comment-${itemIndex}-${parentId ?? "root"}-${commentIndex}`;
+    return {
+      ...comment,
+      id,
+      parentId,
+      authorHandle: comment.authorHandle ?? handleFromName(comment.author),
+      createdAt: comment.createdAt ?? "Seeded",
+      replies: normalizeComments(comment.replies ?? [], itemId, itemIndex, id)
+    };
+  });
+
+const metricNumber = (value: string) => {
+  const normalized = value.toLowerCase().replace(/,/g, "");
+  const multiplier = normalized.endsWith("k") ? 1000 : 1;
+  return Math.round((Number.parseFloat(normalized) || 0) * multiplier);
+};
+
+const formatMetric = (value: number) => {
+  if (value >= 1000) return `${Number(value / 1000).toFixed(value >= 10000 ? 1 : 0)}k`;
+  return String(Math.max(0, value));
+};
+
+const incrementMetric = (value: string, amount: number) => formatMetric(metricNumber(value) + amount);
+
+const updateSignalValue = (signals: InquiryItem["signals"], label: string, value: string) =>
+  signals.map((signal) => (signal.label === label ? { ...signal, value } : signal));
+
+const getPool = () => {
+  if (!databaseUrl) throw new Error("No database URL configured.");
+  if (!pool) {
+    pool = new Pool({
+      connectionString: databaseUrl,
+      ssl: databaseUrl.includes("localhost") ? undefined : { rejectUnauthorized: false }
+    });
+  }
+  return pool;
+};
+
+const ensureSchema = async () => {
+  if (!usePostgres) return;
+  if (!schemaReady) {
+    schemaReady = (async () => {
+      const db = getPool();
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS profiles (
+          handle TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          role TEXT NOT NULL,
+          location TEXT NOT NULL,
+          bio TEXT NOT NULL,
+          fields JSONB NOT NULL,
+          created_at TIMESTAMPTZ DEFAULT now(),
+          updated_at TIMESTAMPTZ DEFAULT now()
+        );
+
+        CREATE TABLE IF NOT EXISTS items (
+          id TEXT PRIMARY KEY,
+          kind TEXT NOT NULL,
+          room TEXT NOT NULL,
+          title TEXT NOT NULL,
+          author_handle TEXT NOT NULL,
+          author_name TEXT NOT NULL,
+          affiliation TEXT NOT NULL,
+          date_label TEXT NOT NULL,
+          status TEXT NOT NULL,
+          metrics JSONB NOT NULL,
+          gathering_reason TEXT NOT NULL,
+          excerpt TEXT NOT NULL,
+          body TEXT NOT NULL,
+          tags JSONB NOT NULL,
+          signals JSONB NOT NULL,
+          claims JSONB NOT NULL,
+          objections JSONB NOT NULL,
+          evidence JSONB NOT NULL,
+          tests JSONB NOT NULL,
+          forks JSONB NOT NULL,
+          saved BOOLEAN DEFAULT false,
+          created_at TIMESTAMPTZ DEFAULT now()
+        );
+
+        CREATE TABLE IF NOT EXISTS comments (
+          id TEXT PRIMARY KEY,
+          item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+          parent_id TEXT REFERENCES comments(id) ON DELETE CASCADE,
+          author_handle TEXT NOT NULL,
+          author_name TEXT NOT NULL,
+          stance TEXT NOT NULL,
+          body TEXT NOT NULL,
+          created_at TIMESTAMPTZ DEFAULT now()
+        );
+      `);
+
+      const { rows } = await db.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM items");
+      if (Number(rows[0]?.count ?? 0) === 0) {
+        await seedPostgres();
+      }
+    })();
+  }
+  await schemaReady;
+};
+
+const seedPostgres = async () => {
+  const db = getPool();
+  const seed = seedData();
+
+  for (const person of Object.values(seed.profiles)) {
+    await db.query(
+      `INSERT INTO profiles (handle, name, role, location, bio, fields)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (handle) DO NOTHING`,
+      [person.handle, person.name, person.role, person.location, person.bio, JSON.stringify(person.fields)]
+    );
+  }
+
+  for (const item of seed.items) {
+    await db.query(
+      `INSERT INTO items (
+        id, kind, room, title, author_handle, author_name, affiliation, date_label, status,
+        metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
+        tests, forks, saved
+      )
+      VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9,
+        $10, $11, $12, $13, $14, $15, $16, $17, $18,
+        $19, $20, $21
+      )
+      ON CONFLICT (id) DO NOTHING`,
+      [
+        item.id,
+        item.kind,
+        item.room,
+        item.title,
+        item.authorHandle ?? handleFromName(item.author),
+        item.author,
+        item.affiliation,
+        item.date,
+        item.status,
+        JSON.stringify(item.metrics),
+        item.gatheringReason,
+        item.excerpt,
+        item.body,
+        JSON.stringify(item.tags),
+        JSON.stringify(item.signals),
+        JSON.stringify(item.claims),
+        JSON.stringify(item.objections),
+        JSON.stringify(item.evidence),
+        JSON.stringify(item.tests),
+        JSON.stringify(item.forks),
+        Boolean(item.saved)
+      ]
+    );
+    await insertCommentTree(item.id, item.comments);
+  }
+};
+
+const insertCommentTree = async (itemId: string, comments: InquiryComment[]) => {
+  const db = getPool();
+
+  for (const comment of comments) {
+    await db.query(
+      `INSERT INTO comments (id, item_id, parent_id, author_handle, author_name, stance, body)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (id) DO NOTHING`,
+      [
+        comment.id ?? newId("comment"),
+        itemId,
+        comment.parentId ?? null,
+        comment.authorHandle ?? handleFromName(comment.author),
+        comment.author,
+        comment.stance,
+        comment.body
+      ]
+    );
+    await insertCommentTree(itemId, comment.replies ?? []);
+  }
+};
+
+const readLocal = async (): Promise<AppData> => {
+  try {
+    const raw = await readFile(localDataPath, "utf8");
+    return JSON.parse(raw) as AppData;
+  } catch {
+    const seed = seedData();
+    await writeLocal(seed);
+    return seed;
+  }
+};
+
+const writeLocal = async (data: AppData) => {
+  await mkdir(path.dirname(localDataPath), { recursive: true });
+  await writeFile(localDataPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+};
+
+const commentsFromRows = (
+  rows: Array<{
+    id: string;
+    item_id: string;
+    parent_id: string | null;
+    author_handle: string;
+    author_name: string;
+    stance: string;
+    body: string;
+    created_at: string;
+  }>,
+  itemId: string,
+  parentId: string | null = null
+): InquiryComment[] =>
+  rows
+    .filter((row) => row.item_id === itemId && row.parent_id === parentId)
+    .map((row) => ({
+      id: row.id,
+      parentId: row.parent_id,
+      author: row.author_name,
+      authorHandle: row.author_handle,
+      stance: row.stance,
+      body: row.body,
+      createdAt: row.created_at,
+      replies: commentsFromRows(rows, itemId, row.id)
+    }));
+
+const loadPostgres = async (): Promise<AppData> => {
+  await ensureSchema();
+  const db = getPool();
+  const [profileResult, itemResult, commentResult] = await Promise.all([
+    db.query<{
+      handle: string;
+      name: string;
+      role: string;
+      location: string;
+      bio: string;
+      fields: string[];
+    }>("SELECT handle, name, role, location, bio, fields FROM profiles ORDER BY created_at ASC"),
+    db.query<{
+      id: string;
+      kind: ContentKind;
+      room: Exclude<RoomId, "hall">;
+      title: string;
+      author_handle: string;
+      author_name: string;
+      affiliation: string;
+      date_label: string;
+      status: string;
+      metrics: InquiryItem["metrics"];
+      gathering_reason: string;
+      excerpt: string;
+      body: string;
+      tags: string[];
+      signals: InquiryItem["signals"];
+      claims: string[];
+      objections: string[];
+      evidence: string[];
+      tests: string[];
+      forks: string[];
+      saved: boolean;
+    }>("SELECT * FROM items ORDER BY created_at DESC"),
+    db.query<{
+      id: string;
+      item_id: string;
+      parent_id: string | null;
+      author_handle: string;
+      author_name: string;
+      stance: string;
+      body: string;
+      created_at: string;
+    }>("SELECT * FROM comments ORDER BY created_at ASC")
+  ]);
+
+  return {
+    profiles: Object.fromEntries(
+      profileResult.rows.map((person) => [
+        person.handle,
+        {
+          name: person.name,
+          handle: person.handle,
+          role: person.role,
+          location: person.location,
+          bio: person.bio,
+          fields: person.fields
+        }
+      ])
+    ),
+    items: itemResult.rows.map((item) => ({
+      id: item.id,
+      kind: item.kind,
+      room: item.room,
+      title: item.title,
+      author: item.author_name,
+      authorHandle: item.author_handle,
+      affiliation: item.affiliation,
+      date: item.date_label,
+      status: item.status,
+      metrics: item.metrics,
+      gatheringReason: item.gathering_reason,
+      excerpt: item.excerpt,
+      body: item.body,
+      tags: item.tags,
+      signals: item.signals,
+      claims: item.claims,
+      objections: item.objections,
+      evidence: item.evidence,
+      tests: item.tests,
+      forks: item.forks,
+      comments: commentsFromRows(commentResult.rows, item.id),
+      saved: item.saved
+    }))
+  };
+};
+
+export const getSnapshot = async () => (usePostgres ? loadPostgres() : readLocal());
+
+export const upsertProfile = async (input: CreateProfileInput) => {
+  const person = normalizeProfile(input);
+
+  if (usePostgres) {
+    await ensureSchema();
+    await getPool().query(
+      `INSERT INTO profiles (handle, name, role, location, bio, fields)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (handle) DO UPDATE SET
+         name = EXCLUDED.name,
+         role = EXCLUDED.role,
+         location = EXCLUDED.location,
+         bio = EXCLUDED.bio,
+         fields = EXCLUDED.fields,
+         updated_at = now()`,
+      [person.handle, person.name, person.role, person.location, person.bio, JSON.stringify(person.fields)]
+    );
+    return person;
+  }
+
+  const data = await readLocal();
+  data.profiles[person.handle] = person;
+  await writeLocal(data);
+  return person;
+};
+
+export const createPost = async (input: CreatePostInput, authorHandle: string) => {
+  const data = await getSnapshot();
+  const author = data.profiles[authorHandle] ?? defaultProfile;
+  const isPaper = input.kind === "paper";
+  const item: InquiryItem = {
+    id: newId("post"),
+    kind: input.kind,
+    room: input.room,
+    title: input.title.trim(),
+    author: author.name,
+    authorHandle: author.handle,
+    affiliation: author.location,
+    date: "Just now",
+    status: isPaper ? "Draft" : "New",
+    metrics: { signal: "0", critiques: "0", forks: "0", saves: "0", reads: "0" },
+    gatheringReason: "A new working post added to the live v0.",
+    excerpt: input.body.trim(),
+    body: input.body.trim(),
+    tags: [input.room, input.kind, ...author.fields.slice(0, 2).map((field) => field.toLowerCase())],
+    signals: [
+      { label: "Status", value: isPaper ? "Draft" : "New" },
+      { label: "Critiques", value: "0" },
+      { label: "Forks", value: "0" },
+      { label: "Next action", value: "Invite critique" }
+    ],
+    claims: [input.body.trim()],
+    objections: [],
+    evidence: [],
+    tests: [],
+    forks: [],
+    comments: [],
+    saved: input.room === "office"
+  };
+
+  if (usePostgres) {
+    await ensureSchema();
+    await getPool().query(
+      `INSERT INTO items (
+        id, kind, room, title, author_handle, author_name, affiliation, date_label, status,
+        metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
+        tests, forks, saved
+      )
+      VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9,
+        $10, $11, $12, $13, $14, $15, $16, $17, $18,
+        $19, $20, $21
+      )`,
+      [
+        item.id,
+        item.kind,
+        item.room,
+        item.title,
+        item.authorHandle,
+        item.author,
+        item.affiliation,
+        item.date,
+        item.status,
+        JSON.stringify(item.metrics),
+        item.gatheringReason,
+        item.excerpt,
+        item.body,
+        JSON.stringify(item.tags),
+        JSON.stringify(item.signals),
+        JSON.stringify(item.claims),
+        JSON.stringify(item.objections),
+        JSON.stringify(item.evidence),
+        JSON.stringify(item.tests),
+        JSON.stringify(item.forks),
+        item.saved
+      ]
+    );
+    return item;
+  }
+
+  const local = await readLocal();
+  local.items = [item, ...local.items];
+  await writeLocal(local);
+  return item;
+};
+
+export const addComment = async (itemId: string, input: CreateCommentInput, authorHandle: string) => {
+  const data = await getSnapshot();
+  const author = data.profiles[authorHandle] ?? defaultProfile;
+  const comment: InquiryComment = {
+    id: newId("comment"),
+    parentId: input.parentId ?? null,
+    author: author.name,
+    authorHandle: author.handle,
+    stance: input.stance.trim() || "Comment",
+    body: input.body.trim(),
+    createdAt: nowLabel(),
+    replies: []
+  };
+
+  if (usePostgres) {
+    await ensureSchema();
+    const existing = data.items.find((item) => item.id === itemId);
+    const nextCritiques = String(metricNumber(existing?.metrics.critiques ?? "0") + 1);
+    const nextSignals = updateSignalValue(existing?.signals ?? [], "Critiques", nextCritiques);
+    await getPool().query(
+      `INSERT INTO comments (id, item_id, parent_id, author_handle, author_name, stance, body)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        comment.id,
+        itemId,
+        comment.parentId,
+        comment.authorHandle,
+        comment.author,
+        comment.stance,
+        comment.body
+      ]
+    );
+    await getPool().query(
+      `UPDATE items
+       SET metrics = jsonb_set(metrics, '{critiques}', to_jsonb(($2)::text)),
+           signals = $3
+       WHERE id = $1`,
+      [itemId, nextCritiques, JSON.stringify(nextSignals)]
+    );
+    return comment;
+  }
+
+  const addToTree = (comments: InquiryComment[]): InquiryComment[] => {
+    if (!comment.parentId) return [...comments, comment];
+    return comments.map((current) =>
+      current.id === comment.parentId
+        ? { ...current, replies: [...(current.replies ?? []), comment] }
+        : { ...current, replies: addToTree(current.replies ?? []) }
+    );
+  };
+
+  const local = await readLocal();
+  local.items = local.items.map((item) =>
+    item.id === itemId
+      ? {
+          ...item,
+          metrics: { ...item.metrics, critiques: incrementMetric(item.metrics.critiques, 1) },
+          signals: updateSignalValue(item.signals, "Critiques", incrementMetric(item.metrics.critiques, 1)),
+          comments: addToTree(item.comments)
+        }
+      : item
+  );
+  await writeLocal(local);
+  return comment;
+};
+
+export const applyPostAction = async (itemId: string, action: PostAction) => {
+  const mutate = (item: InquiryItem): InquiryItem => {
+    if (action === "save") {
+      const saved = !item.saved;
+      return {
+        ...item,
+        saved,
+        metrics: {
+          ...item.metrics,
+          saves: incrementMetric(item.metrics.saves, saved ? 1 : -1)
+        }
+      };
+    }
+
+    const metricKey = action === "fork" ? "forks" : action === "read" ? "reads" : "signal";
+    const nextMetric = incrementMetric(item.metrics[metricKey], 1);
+    return {
+      ...item,
+      metrics: {
+        ...item.metrics,
+        [metricKey]: nextMetric
+      },
+      signals: metricKey === "forks" ? updateSignalValue(item.signals, "Forks", nextMetric) : item.signals
+    };
+  };
+
+  if (usePostgres) {
+    const data = await getSnapshot();
+    const existing = data.items.find((item) => item.id === itemId);
+    if (!existing) return null;
+    const updated = mutate(existing);
+    await getPool().query("UPDATE items SET metrics = $2, saved = $3 WHERE id = $1", [
+      itemId,
+      JSON.stringify(updated.metrics),
+      Boolean(updated.saved)
+    ]);
+    return updated;
+  }
+
+  const local = await readLocal();
+  let updated: InquiryItem | null = null;
+  local.items = local.items.map((item) => {
+    if (item.id !== itemId) return item;
+    updated = mutate(item);
+    return updated;
+  });
+  await writeLocal(local);
+  return updated;
+};

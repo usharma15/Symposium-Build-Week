@@ -16,9 +16,13 @@ export type FeedScope = "suggested" | "following" | "rooms";
 export type ContentKind = "paper" | "thought" | "draft" | "note" | "code";
 
 export type InquiryComment = {
+  id?: string;
+  parentId?: string | null;
   author: string;
+  authorHandle?: string;
   body: string;
   stance: string;
+  createdAt?: string;
   replies?: InquiryComment[];
 };
 
@@ -36,6 +40,7 @@ export type InquiryItem = {
   room: Exclude<RoomId, "hall">;
   title: string;
   author: string;
+  authorHandle?: string;
   affiliation: string;
   date: string;
   status: string;
