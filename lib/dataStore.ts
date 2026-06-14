@@ -51,6 +51,7 @@ const usePostgres = Boolean(databaseUrl);
 
 let pool: Pool | null = null;
 let schemaReady: Promise<void> | null = null;
+let seedReady: Promise<void> | null = null;
 
 const cleanHandle = (handle: string) => {
   const trimmed = handle.trim().toLowerCase();
@@ -93,6 +94,19 @@ const normalizeData = (data: AppData): AppData => ({
   profiles: data.profiles,
   items: data.items.map(normalizeItem)
 });
+
+const mergeSeedData = (data: AppData): AppData => {
+  const seed = seedData();
+  const existingItemIds = new Set(data.items.map((item) => item.id));
+
+  return {
+    profiles: { ...seed.profiles, ...data.profiles },
+    items: [
+      ...data.items,
+      ...seed.items.filter((item) => !existingItemIds.has(item.id))
+    ].map(normalizeItem)
+  };
+};
 
 const seedData = (): AppData => {
   const profiles = Object.fromEntries(
@@ -221,7 +235,7 @@ const ensureSchema = async () => {
 
       const { rows } = await db.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM items");
       if (Number(rows[0]?.count ?? 0) === 0) {
-        await seedPostgres();
+        await syncSeedPostgres();
       }
     })();
   }
@@ -285,6 +299,12 @@ const seedPostgres = async () => {
   }
 };
 
+const syncSeedPostgres = async () => {
+  if (!usePostgres) return;
+  if (!seedReady) seedReady = seedPostgres();
+  await seedReady;
+};
+
 const insertCommentTree = async (itemId: string, comments: InquiryComment[]) => {
   const db = getPool();
 
@@ -310,7 +330,9 @@ const insertCommentTree = async (itemId: string, comments: InquiryComment[]) => 
 const readLocal = async (): Promise<AppData> => {
   try {
     const raw = await readFile(localDataPath, "utf8");
-    return normalizeData(JSON.parse(raw) as AppData);
+    const merged = mergeSeedData(normalizeData(JSON.parse(raw) as AppData));
+    await writeLocal(merged);
+    return merged;
   } catch {
     const seed = seedData();
     await writeLocal(seed);
@@ -352,6 +374,7 @@ const commentsFromRows = (
 
 const loadPostgres = async (): Promise<AppData> => {
   await ensureSchema();
+  await syncSeedPostgres();
   const db = getPool();
   const [profileResult, itemResult, commentResult] = await Promise.all([
     db.query<{

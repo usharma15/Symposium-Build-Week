@@ -193,6 +193,107 @@ export const profile = {
   fields: ["Metascience", "Physics", "AI for science", "Institution design"]
 } satisfies ResearchProfile;
 
+const generatedNames = [
+  "Anika Rao",
+  "Jonas Vale",
+  "Priya Menon",
+  "Theo Marwick",
+  "Lina Ortega",
+  "Samir Haddad",
+  "Maeve Chen",
+  "Tomasz Zielinski",
+  "Aya Nakamura",
+  "Iris Okafor",
+  "Felix Moreau",
+  "Noor Al-Khatib",
+  "Helena Park",
+  "Cassian Reed",
+  "Mina Farouk",
+  "Dario Silva",
+  "Keiko Tan",
+  "Ruth Bell",
+  "Owen Markham",
+  "Salma Idris",
+  "Vikram Bedi",
+  "Sofia Klein",
+  "Eli Navarro",
+  "Nadia Petrov",
+  "Yara Mensah",
+  "Arun Sen",
+  "Clara Weiss",
+  "Mateo Ibarra",
+  "Talia Finch",
+  "Reza Mahdavi",
+  "June Park",
+  "Omar Nasser",
+  "Greta Holm",
+  "Niko Varga",
+  "Imani Brooks",
+  "Petra Novak",
+  "Soren Li",
+  "Asha Verma",
+  "Milo Hart",
+  "Farah Qureshi",
+  "Leona Brandt",
+  "Kenji Mori",
+  "Mara Ellis",
+  "Basil Khan",
+  "Tessa Laurent",
+  "Hugo Stein",
+  "Rina Campos",
+  "Idris Bellamy",
+  "Vera Novak",
+  "Kian Shah"
+];
+
+const generatedRoles = [
+  "Replication organizer",
+  "Independent physics reader",
+  "Metascience analyst",
+  "Instrument builder",
+  "History of discovery researcher",
+  "AI evaluation designer",
+  "Field-note editor",
+  "Methods critic",
+  "Simulation engineer",
+  "Youth-lab mentor"
+];
+
+const generatedLocations = [
+  "Library table",
+  "Amphitheater bench",
+  "Symposium floor",
+  "Independent review desk",
+  "Rogue youth lab notes",
+  "Field methods room"
+];
+
+const generatedFieldSets = [
+  ["Replication", "Methods", "Negative results"],
+  ["Frontier physics", "Toy worlds", "Instrumentation"],
+  ["AI metascience", "Benchmarks", "Critique"],
+  ["History of discovery", "Anomalies", "Institutions"],
+  ["Youth labs", "Proof-of-work", "Mentorship"],
+  ["Product systems", "Dialogue", "Research UX"]
+];
+
+const handleFor = (name: string) =>
+  `@${name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "")}`;
+
+const generatedPublicProfiles: ResearchProfile[] = generatedNames.map((name, index) => ({
+  name,
+  handle: handleFor(name),
+  role: generatedRoles[index % generatedRoles.length],
+  location: generatedLocations[index % generatedLocations.length],
+  bio:
+    "A public seed profile used to make Symposium feel live: reading, saving, critiquing, and forking work across the early rooms.",
+  fields: generatedFieldSets[index % generatedFieldSets.length]
+}));
+
+const generatedProfilesByName = Object.fromEntries(
+  generatedPublicProfiles.map((person) => [person.name, person])
+) as Record<string, ResearchProfile>;
+
 export const profilesByName: Record<string, ResearchProfile> = {
   [profile.name]: profile,
   "Mira Sato": {
@@ -278,7 +379,8 @@ export const profilesByName: Record<string, ResearchProfile> = {
       "A contextual assistant that helps readers find objections, next tests, forks, and saved work inside the current room.",
     fields: ["Assistance", "Search", "Critique", "Synthesis"]
   },
-  Self: profile
+  Self: profile,
+  ...generatedProfilesByName
 };
 
 export const getProfileForName = (name: string): ResearchProfile =>
@@ -291,7 +393,7 @@ export const getProfileForName = (name: string): ResearchProfile =>
     fields: ["Inquiry", "Critique", "Discussion"]
   };
 
-export const inquiryItems: InquiryItem[] = [
+const coreInquiryItems: InquiryItem[] = [
   {
     id: "cheap-exploration",
     kind: "paper",
@@ -674,3 +776,249 @@ export const inquiryItems: InquiryItem[] = [
     saved: true
   }
 ];
+
+const generatedBlueprints: Array<{
+  room: Exclude<RoomId, "hall">;
+  kind: ContentKind;
+  status: string;
+  title: string;
+  excerpt: string;
+  body: string;
+  tags: string[];
+}> = [
+  {
+    room: "library",
+    kind: "paper",
+    status: "Live reading",
+    title: "A denominator for heroic discovery stories",
+    excerpt: "A field map of anomalies that died, survived, or became useful only after criticism.",
+    body:
+      "This paper sketch asks for a denominator behind famous discovery stories. The claim is simple: the archive of failed anomaly chases is part of the truth, not an embarrassment to hide after the one story succeeds.",
+    tags: ["history", "anomaly", "methods", "archive"]
+  },
+  {
+    room: "symposium",
+    kind: "thought",
+    status: "Open thread",
+    title: "A good objection should leave a handle",
+    excerpt: "Objections should be reusable objects, not vapor in a comment thread.",
+    body:
+      "If a critique matters, it should become something other people can cite, improve, answer, or test. Otherwise the same objection returns every week in a new costume.",
+    tags: ["critique", "dialogue", "product"]
+  },
+  {
+    room: "amphitheater",
+    kind: "thought",
+    status: "Live argument",
+    title: "Taste is a research instrument",
+    excerpt: "Not a substitute for evidence, but one of the things that decides where evidence is sought.",
+    body:
+      "Taste is dangerous when it becomes authority. But pretending it is absent only hides it. The better move is to train taste in public against failed predictions and hard objections.",
+    tags: ["taste", "training", "research culture"]
+  },
+  {
+    room: "library",
+    kind: "paper",
+    status: "Replication packet",
+    title: "Negative-result tables for toy-world agents",
+    excerpt: "A proposal for storing failed law-recovery attempts as useful data rather than noise.",
+    body:
+      "The packet format records the hidden law, allowed experiments, failed mechanisms, critic notes, and held-out prediction errors. The goal is to make agent failure inspectable rather than merely disappointing.",
+    tags: ["AI metascience", "negative results", "toy worlds"]
+  },
+  {
+    room: "symposium",
+    kind: "paper",
+    status: "Needs readers",
+    title: "Source packets before synthesis",
+    excerpt: "A protocol for forcing AI-assisted summaries to carry their evidential spine.",
+    body:
+      "The paper proposes source packets that travel with every synthesis: claims, quotes, missing sources, uncertainty, and what would make the summary wrong. The aim is to stop polished synthesis from outrunning evidence.",
+    tags: ["AI agents", "sources", "protocols"]
+  },
+  {
+    room: "office",
+    kind: "draft",
+    status: "Saved draft",
+    title: "Youth-lab selection notes after the first screen",
+    excerpt: "Agency, taste, weird seriousness, and proof-of-work should be visible before credentials.",
+    body:
+      "The draft separates selection into artifacts, interviews, criticism response, and self-directed repair. The goal is to avoid confusing polish with the capacity to originate.",
+    tags: ["youth labs", "selection", "proof-of-work"]
+  },
+  {
+    room: "library",
+    kind: "paper",
+    status: "Method note",
+    title: "Blind rediscovery as a weekly practice",
+    excerpt: "A small routine for testing whether a person or agent can recover structure without leakage.",
+    body:
+      "The note lays out a weekly blind rediscovery practice: source constraints, hidden target, critic review, and a log of what changed between guesses. It is designed to be small enough to run repeatedly.",
+    tags: ["rediscovery", "benchmarks", "practice"]
+  },
+  {
+    room: "amphitheater",
+    kind: "note",
+    status: "Sharp question",
+    title: "What is the smallest room where real ambition survives?",
+    excerpt: "The question is not only funding. It is permission, taste, criticism, and time.",
+    body:
+      "A protected room can still become fake if the work inside is not forced into contact with reality. A strict room can still be alive if it protects illegible beginnings. The design problem is the mixture.",
+    tags: ["ambition", "institutions", "youth labs"]
+  },
+  {
+    room: "symposium",
+    kind: "thought",
+    status: "Forked",
+    title: "Do not reward volume when the scarce thing is judgment",
+    excerpt: "A feed can accidentally train people to manufacture visible motion.",
+    body:
+      "If Symposium rewards volume, it will become another machine for producing research-looking movement. The scarce thing is not speech. It is judgment under pressure.",
+    tags: ["metrics", "judgment", "feed design"]
+  },
+  {
+    room: "office",
+    kind: "code",
+    status: "Prototype note",
+    title: "Oscillator task scoring stub",
+    excerpt: "Held-out prediction, mechanism fit, experiment count, and unsupported invention.",
+    body:
+      "The scoring stub separates prediction from mechanism story. An agent can sound elegant and still fail held-out data. It can also predict while inventing a mechanism not supported by the source packet.",
+    tags: ["simulation", "code", "hidden laws"]
+  },
+  {
+    room: "library",
+    kind: "paper",
+    status: "Reading group",
+    title: "Prepared minds without mythology",
+    excerpt: "A critique of discovery stories that skip training, apparatus, and the boring archive.",
+    body:
+      "The paper argues for a middle position: prepared minds matter, but not as a magic trait. They are trained by contact with material, failed examples, instruments, and local cultures that let oddness stay visible.",
+    tags: ["history", "discovery", "apparatus"]
+  },
+  {
+    room: "amphitheater",
+    kind: "thought",
+    status: "Contested",
+    title: "The phrase 'not realistic' needs an audit trail",
+    excerpt: "Sometimes it means physics. Sometimes it means fear wearing institutional clothes.",
+    body:
+      "A serious system should ask what kind of impossibility is being invoked: material impossibility, time cost, reputation cost, credential politics, or genuine incoherence.",
+    tags: ["institutions", "ambition", "critique"]
+  }
+];
+
+const participantHandles = [profile.handle, ...generatedPublicProfiles.map((person) => person.handle)];
+
+const pickHandles = (seed: number, count: number) =>
+  Array.from({ length: Math.min(count, participantHandles.length) }, (_, offset) => {
+    const index = (seed * 7 + offset * 11) % participantHandles.length;
+    return participantHandles[index];
+  }).filter((handle, index, all) => all.indexOf(handle) === index);
+
+const countGeneratedComments = (comments: InquiryComment[]): number =>
+  comments.reduce((total, comment) => total + 1 + countGeneratedComments(comment.replies ?? []), 0);
+
+const generatedComments = (itemIndex: number, author: ResearchProfile): InquiryComment[] => {
+  const first = generatedPublicProfiles[(itemIndex + 9) % generatedPublicProfiles.length];
+  const second = generatedPublicProfiles[(itemIndex + 21) % generatedPublicProfiles.length];
+  const reply = generatedPublicProfiles[(itemIndex + 33) % generatedPublicProfiles.length];
+
+  return [
+    {
+      id: `live-${itemIndex}-comment-1`,
+      author: first.name,
+      authorHandle: first.handle,
+      stance: "Comment",
+      createdAt: itemIndex % 3 === 0 ? "Just now" : `${(itemIndex % 20) + 2}m ago`,
+      body:
+        "This is useful, but the next version should name the failure case more sharply.",
+      replies: [
+        {
+          id: `live-${itemIndex}-comment-1-reply`,
+          author: author.name,
+          authorHandle: author.handle,
+          stance: "Comment",
+          createdAt: `${(itemIndex % 14) + 1}m ago`,
+          body:
+            "Agreed. I am trying to separate the claim from the mood around the claim."
+        }
+      ]
+    },
+    {
+      id: `live-${itemIndex}-comment-2`,
+      author: second.name,
+      authorHandle: second.handle,
+      stance: "Comment",
+      createdAt: `${(itemIndex % 26) + 4}m ago`,
+      body:
+        "I would save this, but only if the test section becomes concrete enough for someone else to run."
+    },
+    ...(itemIndex % 4 === 0
+      ? [
+          {
+            id: `live-${itemIndex}-comment-3`,
+            author: reply.name,
+            authorHandle: reply.handle,
+            stance: "Comment",
+            createdAt: `${(itemIndex % 34) + 7}m ago`,
+            body:
+              "The strongest part is the constraint. The weakest part is still the measurement story."
+          }
+        ]
+      : [])
+  ];
+};
+
+const generatedInquiryItems: InquiryItem[] = Array.from({ length: 72 }, (_, index) => {
+  const blueprint = generatedBlueprints[index % generatedBlueprints.length];
+  const author = generatedPublicProfiles[index % generatedPublicProfiles.length];
+  const signaledBy = pickHandles(index + 1, 9 + (index % 19));
+  const forkedBy = pickHandles(index + 3, 2 + (index % 8));
+  const savedBy = pickHandles(index + 5, 4 + (index % 15));
+  if (index % 6 === 0 && !savedBy.includes(profile.handle)) savedBy.push(profile.handle);
+  const comments = generatedComments(index, author);
+  const critiqueCount = countGeneratedComments(comments);
+
+  return {
+    id: `live-${index + 1}-${blueprint.room}-${blueprint.kind}`,
+    kind: blueprint.kind,
+    room: blueprint.room,
+    title: `${blueprint.title}${index >= generatedBlueprints.length ? ` ${Math.floor(index / generatedBlueprints.length) + 1}` : ""}`,
+    author: author.name,
+    authorHandle: author.handle,
+    affiliation: author.location,
+    date: index < 10 ? "Live now" : `${(index % 48) + 1}m ago`,
+    status: blueprint.status,
+    metrics: {
+      signal: String(signaledBy.length),
+      critiques: String(critiqueCount),
+      forks: String(forkedBy.length),
+      saves: String(savedBy.length),
+      reads: String(340 + index * 37)
+    },
+    gatheringReason:
+      "This live seed thread is here to make the room feel inhabited while the backend matures.",
+    excerpt: blueprint.excerpt,
+    body: blueprint.body,
+    tags: blueprint.tags,
+    signals: [
+      { label: "Signals", value: String(signaledBy.length) },
+      { label: "Critiques", value: String(critiqueCount) },
+      { label: "Forks", value: String(forkedBy.length) },
+      { label: "Room", value: blueprint.room }
+    ],
+    claims: [blueprint.excerpt],
+    objections: ["The strongest objection is not settled yet."],
+    evidence: ["Seeded discussion, mock reading activity, and live v0 interaction state."],
+    tests: ["Turn this thread into a concrete artifact, replication, or falsifiable test."],
+    forks: ["Public critique", "Replication note", "Notebook extraction"],
+    comments,
+    saved: savedBy.includes(profile.handle),
+    savedBy,
+    signaledBy,
+    forkedBy
+  };
+});
+
+export const inquiryItems: InquiryItem[] = [...coreInquiryItems, ...generatedInquiryItems];

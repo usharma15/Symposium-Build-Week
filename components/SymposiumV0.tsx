@@ -6,7 +6,6 @@ import {
   ArrowLeft,
   Bookmark,
   BrainCircuit,
-  ChevronRight,
   Eye,
   GitFork,
   MessageCircle,
@@ -624,10 +623,10 @@ export function SymposiumV0() {
 
       <header className="topbar">
         <button className="brand" type="button" onClick={() => enterRoom("hall")}>
-          <span className="brand-glyph">S</span>
+          {activeRoom === "hall" ? <span className="brand-glyph">S</span> : <ArrowLeft size={18} />}
           <span>
-            <strong>SYMPOSIUM</strong>
-            <small>{activeRoomData.location}</small>
+            <strong>{activeRoom === "hall" ? "SYMPOSIUM" : "Exit"}</strong>
+            <small>{activeRoom === "hall" ? activeRoomData.location : "Main hall"}</small>
           </span>
         </button>
 
@@ -639,22 +638,6 @@ export function SymposiumV0() {
             onClick={() => setTheme((value) => (value === "day" ? "night" : "day"))}
           >
             {theme === "day" ? <Moon size={18} /> : <Sun size={18} />}
-          </button>
-          <button
-            className="icon-button"
-            type="button"
-            title="Open notebook"
-            onClick={openNotebook}
-          >
-            <NotebookPen size={18} />
-          </button>
-          <button
-            className="icon-button"
-            type="button"
-            title="Open AI tablet"
-            onClick={openTablet}
-          >
-            <BrainCircuit size={18} />
           </button>
           <button
             className="profile-button"
@@ -671,26 +654,6 @@ export function SymposiumV0() {
       <div className="sync-status" aria-live="polite">
         {syncStatus}
       </div>
-
-      {activeRoom !== "hall" && !selectedProfile ? (
-        <aside className="world-rail" aria-label="Rooms">
-          {rooms.map((room) => {
-            const Icon = room.icon;
-            return (
-              <button
-                key={room.id}
-                className={`rail-button ${activeRoom === room.id ? "active" : ""}`}
-                type="button"
-                onClick={() => enterRoom(room.id)}
-                title={room.name}
-              >
-                <Icon size={18} />
-                <span>{room.shortName}</span>
-              </button>
-            );
-          })}
-        </aside>
-      ) : null}
 
       <section className="stage">
         {selectedProfile ? (
@@ -734,7 +697,6 @@ export function SymposiumV0() {
             onOpenProfile={openProfile}
             onCreatePost={createPost}
             onAction={applyAction}
-            onEnter={enterRoom}
             onOpenNotebook={openNotebook}
             actorHandle={currentProfile.handle}
           />
@@ -965,33 +927,17 @@ function HallView({ onEnter }: { onEnter: (roomId: RoomId) => void }) {
   return (
     <div className="hall-layout">
       <section className="hall-world" aria-label="Main hall">
-        <Image
-          src={roomRenders.hall}
-          alt="The main hall of Symposium with doors to the office, amphitheatre, library, and symposium room"
-          fill
-          priority
-          sizes="(max-width: 900px) 100vw, 1500px"
-          className="hall-render-image"
-        />
         {doorIds.map((roomId) => {
           const room = getRoom(roomId);
-          const Icon = room.icon;
           return (
             <button
               key={room.id}
               className={`hall-door hall-door-${room.id}`}
               type="button"
+              aria-label={`Enter ${room.name}`}
               onClick={() => onEnter(room.id)}
             >
-              <span className="door-icon">
-                <Icon size={20} />
-              </span>
-              <span>
-                <small>{room.location}</small>
-                <strong>{room.name}</strong>
-                <em>{room.feedLabel}</em>
-              </span>
-              <ChevronRight size={17} />
+              <span className="hall-hover-label">{room.name}</span>
             </button>
           );
         })}
@@ -1013,7 +959,6 @@ function RoomView({
   onOpenProfile,
   onCreatePost,
   onAction,
-  onEnter,
   onOpenNotebook,
   actorHandle
 }: {
@@ -1029,15 +974,29 @@ function RoomView({
   onOpenProfile: (name: string) => void;
   onCreatePost: (draft: { title: string; body: string; kind: InquiryItem["kind"] }) => void;
   onAction: (itemId: string, action: PostAction) => void;
-  onEnter: (roomId: RoomId) => void;
   onOpenNotebook: () => void;
   actorHandle: string;
 }) {
   return (
     <div className="room-layout">
-      <RoomRender room={room} onEnter={onEnter} onOpenNotebook={onOpenNotebook} />
+      <RoomRender room={room} onOpenNotebook={onOpenNotebook} />
 
       <section className="feed-toolbar" aria-label="Feed controls">
+        <div className="room-mini-title">
+          <p className="eyebrow">{room.eyebrow}</p>
+          <h1>{room.name}</h1>
+          <p>{room.description}</p>
+        </div>
+
+        <label className="search-box">
+          <Search size={17} />
+          <input
+            value={query}
+            onChange={(event) => onQuery(event.target.value)}
+            placeholder="Search"
+          />
+        </label>
+
         <div className="segmented">
           {feedScopes.map((scope) => (
             <button
@@ -1051,32 +1010,21 @@ function RoomView({
           ))}
         </div>
 
-        <label className="search-box">
-          <Search size={17} />
-          <input
-            value={query}
-            onChange={(event) => onQuery(event.target.value)}
-            placeholder="Search claims, papers, rooms"
-          />
-        </label>
+        {feedScope === "rooms" ? (
+          <label className="topic-select">
+            <span>Topic</span>
+            <select value={roomChip} onChange={(event) => onRoomChip(event.target.value)}>
+              {roomChips.map((chip) => (
+                <option key={chip} value={chip}>
+                  {chip}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+
+        {room.id === "office" ? <OfficeFolders /> : null}
       </section>
-
-      {feedScope === "rooms" ? (
-        <section className="chip-row" aria-label="Rooms">
-          {roomChips.map((chip) => (
-            <button
-              key={chip}
-              type="button"
-              className={roomChip === chip ? "active" : ""}
-              onClick={() => onRoomChip(chip)}
-            >
-              {chip}
-            </button>
-          ))}
-        </section>
-      ) : null}
-
-      {room.id === "office" ? <OfficeFolders /> : null}
 
       <PostComposer room={room} onCreatePost={onCreatePost} />
 
@@ -1105,58 +1053,39 @@ function RoomView({
 
 function RoomRender({
   room,
-  onEnter,
   onOpenNotebook
 }: {
   room: Room;
-  onEnter: (roomId: RoomId) => void;
   onOpenNotebook: () => void;
 }) {
-  const RoomIcon = room.icon;
   const isOffice = room.id === "office";
 
   return (
     <section
       className={`room-render room-render-${room.id}`}
       aria-label={`${room.name} rendered room`}
-      style={{ backgroundImage: `url(${roomRenders[room.id]})` }}
     >
-      <div className="room-render-content">
-        <p className="eyebrow">{room.eyebrow}</p>
-        <h1>{room.name}</h1>
-        <p>{room.description}</p>
-      </div>
-      <div className="room-seal">
-        <RoomIcon size={28} />
-        <span>{room.feedLabel}</span>
-      </div>
-      <div className="room-hotspots" aria-label={`${room.name} movement points`}>
-        <button
-          className="render-hotspot render-hotspot-exit"
-          type="button"
-          onClick={() => onEnter("hall")}
-        >
-          Main Hall
-        </button>
-        {isOffice ? (
+      {isOffice ? (
+        <div className="room-hotspots" aria-label="Office desk areas">
           <>
             <button
-              className="render-hotspot render-hotspot-notes"
+              className="office-hotspot office-hotspot-notes"
               type="button"
               onClick={onOpenNotebook}
+              aria-label="Open notes"
             >
-              Notes
+              <span>Notes</span>
             </button>
             <button
-              className="render-hotspot render-hotspot-saved"
+              className="office-hotspot office-hotspot-saved"
               type="button"
-              onClick={() => onEnter("office")}
+              aria-label="Saved for later"
             >
-              Saved for later
+              <span>Saved for later</span>
             </button>
           </>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -1219,18 +1148,16 @@ function PostComposer({
 
 function OfficeFolders() {
   return (
-    <section className="folder-row" aria-label="Saved folders">
-      {libraryFolders.map((folder) => {
-        const Icon = folder.icon;
-        return (
-          <button className="folder-tile" key={folder.label} type="button">
-            <Icon size={19} />
-            <strong>{folder.label}</strong>
-            <span>{folder.count} artifacts</span>
-          </button>
-        );
-      })}
-    </section>
+    <label className="office-folder-select">
+      <span>Desk view</span>
+      <select defaultValue={libraryFolders[0].label}>
+        {libraryFolders.map((folder) => (
+          <option key={folder.label} value={folder.label}>
+            {folder.label} · {folder.count}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
@@ -1257,7 +1184,7 @@ function FeedPost({
 
   return (
     <article
-      className="feed-post"
+      className={`feed-post post-kind-${item.kind}`}
       data-testid={`feed-card-${item.id}`}
       role="button"
       tabIndex={0}
