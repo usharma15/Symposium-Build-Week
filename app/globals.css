@@ -346,10 +346,11 @@ button {
   top: 16px;
   left: 16px;
   right: 16px;
-  display: flex;
+  --brand-nav-slot: 282px;
+  display: grid;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  grid-template-columns: var(--brand-nav-slot) auto minmax(0, 1fr);
+  column-gap: 8px;
   pointer-events: none;
 }
 
@@ -456,6 +457,8 @@ button {
 }
 
 .brand {
+  grid-column: 1;
+  justify-self: start;
   display: inline-flex;
   align-items: center;
   gap: 11px;
@@ -525,6 +528,8 @@ button {
 }
 
 .topbar-actions {
+  grid-column: 3;
+  justify-self: end;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1962,6 +1967,7 @@ button {
 
 @media (max-width: 760px) {
   .topbar {
+    --brand-nav-slot: 182px;
     top: 10px;
     left: 10px;
     right: 10px;
@@ -2176,10 +2182,12 @@ button {
 }
 
 .topbar-actions {
-  margin-left: auto;
+  margin-left: 0;
 }
 
 .view-nav {
+  grid-column: 2;
+  justify-self: start;
   position: static;
   pointer-events: auto;
   display: inline-flex;
@@ -3346,6 +3354,7 @@ button {
 
 @media (max-width: 640px) {
   .topbar {
+    --brand-nav-slot: 154px;
     align-items: center;
   }
 
