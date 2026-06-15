@@ -83,6 +83,7 @@ export type ResearchProfile = {
   name: string;
   handle: string;
   email?: string;
+  likesPublic?: boolean;
   role: string;
   location: string;
   bio: string;
@@ -283,6 +284,7 @@ const handleFor = (name: string) =>
 const generatedPublicProfiles: ResearchProfile[] = generatedNames.map((name, index) => ({
   name,
   handle: handleFor(name),
+  likesPublic: index % 5 !== 0,
   role: generatedRoles[index % generatedRoles.length],
   location: generatedLocations[index % generatedLocations.length],
   bio:

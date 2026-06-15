@@ -37,7 +37,7 @@ import {
 import type { CreateProfileInput, PostAction } from "@/lib/dataStore";
 
 type Theme = "day" | "night";
-type ProfileTab = "all" | "papers" | "thoughts" | "reshares" | "likes" | "saved";
+type ProfileTab = "all" | "papers" | "thoughts" | "comments" | "reshares" | "likes" | "saved";
 type EntryMode = "loading" | "approach" | "auth" | "complete";
 
 type AuthRecord = {
@@ -54,8 +54,7 @@ type LocalSnapshot = {
 type PostDraft = {
   title: string;
   body: string;
-  kind: InquiryItem["kind"];
-  room?: Exclude<RoomId, "hall">;
+  kind: Extract<InquiryItem["kind"], "paper" | "thought">;
 };
 
 const kindLabels: Record<InquiryItem["kind"], string> = {
@@ -141,6 +140,36 @@ const hasHandle = (handles: string[] | undefined, handle: string) => (handles ??
 const isSavedBy = (item: InquiryItem, handle: string) =>
   hasHandle(item.savedBy, handle) || (Boolean(item.saved) && handle === profile.handle);
 
+const relativeDateScore = (label: string) => {
+  const normalized = label.trim().toLowerCase();
+  const now = Date.now();
+  if (!normalized || normalized === "just now" || normalized === "live now") return now - 10 * 60 * 1000;
+  if (normalized === "today") return now - 60 * 60 * 1000;
+
+  const minutes = normalized.match(/^(\d+)m ago$/);
+  if (minutes) return now - Number(minutes[1]) * 60 * 1000;
+
+  const hours = normalized.match(/^(\d+)h ago$/);
+  if (hours) return now - Number(hours[1]) * 60 * 60 * 1000;
+
+  if (normalized === "yesterday") return now - 24 * 60 * 60 * 1000;
+
+  const parsed = Date.parse(`${label} ${new Date().getFullYear()}`);
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+const commentTreeHasAuthor = (comments: InquiryComment[], person: ResearchProfile): boolean =>
+  comments.some(
+    (comment) =>
+      comment.authorHandle === person.handle ||
+      comment.author === person.name ||
+      commentTreeHasAuthor(comment.replies ?? [], person)
+  );
+
+const uniqueItemsById = (items: InquiryItem[]) => [...new Map(items.map((item) => [item.id, item])).values()];
+
+const inferredLikesPublic = (person: ResearchProfile) => person.likesPublic ?? person.handle.length % 5 !== 0;
+
 const toggleHandle = (handles: string[] | undefined, handle: string) => {
   const current = new Set(handles ?? []);
   if (current.has(handle)) {
@@ -211,6 +240,8 @@ export function SymposiumV0() {
   const [composerOpen, setComposerOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [selectedProfileName, setSelectedProfileName] = useState<string | null>(null);
+  const [returnProfileName, setReturnProfileName] = useState<string | null>(null);
+  const [activityRecency, setActivityRecency] = useState<Record<string, number>>({});
   const [syncStatus, setSyncStatus] = useState("Loading live data");
   const [authError, setAuthError] = useState("");
   const [noteText, setNoteText] = useState(
@@ -224,6 +255,8 @@ export function SymposiumV0() {
     profileList.find((person) => person.name === nameOrHandle || person.handle === nameOrHandle) ??
     getProfileForName(nameOrHandle);
   const selectedProfile = selectedProfileName ? findProfile(selectedProfileName) : null;
+  const getRecency = (item: InquiryItem) => activityRecency[item.id] ?? relativeDateScore(item.date);
+  const sortByRecency = (nextItems: InquiryItem[]) => [...nextItems].sort((a, b) => getRecency(b) - getRecency(a));
 
   const visibleItems = useMemo(() => {
     const lowered = query.trim().toLowerCase();
@@ -246,12 +279,8 @@ export function SymposiumV0() {
         return searchableText(item).includes(lowered);
       });
 
-    if (feedScope === "suggested") {
-      return [...roomFiltered].sort((a, b) => metricScore(b.metrics.signal) - metricScore(a.metrics.signal));
-    }
-
-    return roomFiltered;
-  }, [activeRoom, currentProfile.handle, currentProfile.name, feedScope, items, query, roomChip]);
+    return sortByRecency(roomFiltered);
+  }, [activeRoom, activityRecency, currentProfile.handle, currentProfile.name, feedScope, items, query, roomChip]);
 
   const readLocalSnapshot = (): LocalSnapshot | null => {
     try {
@@ -314,6 +343,11 @@ export function SymposiumV0() {
 
     if (storedTheme === "day" || storedTheme === "night") setTheme(storedTheme);
     if (storedNote) setNoteText(storedNote);
+    try {
+      setActivityRecency(JSON.parse(window.localStorage.getItem("symposium-activity-recency") ?? "{}") as Record<string, number>);
+    } catch {
+      setActivityRecency({});
+    }
     setSignedIn(Boolean(signedHandle));
     setEntryMode(hasEntered && signedHandle ? "complete" : "approach");
 
@@ -352,11 +386,20 @@ export function SymposiumV0() {
     window.localStorage.setItem("symposium-notebook", noteText);
   }, [noteText]);
 
+  const touchActivity = (itemId: string, timestamp = Date.now()) => {
+    setActivityRecency((current) => {
+      const next = { ...current, [itemId]: timestamp };
+      window.localStorage.setItem("symposium-activity-recency", JSON.stringify(next));
+      return next;
+    });
+  };
+
   const enterRoom = (roomId: RoomId) => {
     setActiveRoom(roomId);
     setSelectedItemId(null);
     setQuery("");
     setSelectedProfileName(null);
+    setReturnProfileName(null);
     setAccountOpen(false);
     window.scrollTo({ top: 0, behavior: "auto" });
   };
@@ -366,6 +409,7 @@ export function SymposiumV0() {
     setNotebookOpen(false);
     setComposerOpen(false);
     setAccountOpen(false);
+    setReturnProfileName(null);
     setSelectedProfileName(name);
     window.scrollTo({ top: 0, behavior: "auto" });
   };
@@ -394,14 +438,10 @@ export function SymposiumV0() {
     setAccountOpen(true);
   };
 
-  const routePostRoom = (kind: InquiryItem["kind"], requestedRoom?: Exclude<RoomId, "hall">): Exclude<RoomId, "hall"> => {
-    if (kind === "paper") return requestedRoom === "library" ? "library" : "symposium";
-    if (kind === "thought" || kind === "note") return requestedRoom === "amphitheater" ? "amphitheater" : "symposium";
-    return "office";
-  };
+  const routePostRoom = (): Exclude<RoomId, "hall"> => "symposium";
 
-  const createPost = async ({ title, body, kind, room }: PostDraft) => {
-    const routedRoom = routePostRoom(kind, room ?? (activeRoom === "hall" ? undefined : activeRoom));
+  const createPost = async ({ title, body, kind }: PostDraft) => {
+    const routedRoom = routePostRoom();
     setSyncStatus("Posting");
     const response = await fetch("/api/posts", {
       method: "POST",
@@ -437,6 +477,7 @@ export function SymposiumV0() {
     };
     const data = response.ok ? ((await response.json()) as { item: InquiryItem }) : { item: fallbackItem };
     const nextItems = [data.item, ...items.filter((item) => item.id !== data.item.id)];
+    touchActivity(data.item.id);
     setItems(nextItems);
     persistLocalSnapshot(nextItems, profiles);
     setSelectedItemId(data.item.id);
@@ -474,6 +515,7 @@ export function SymposiumV0() {
       const nextItems = items.map((item) =>
         item.id === itemId ? { ...item, comments: addToTree(item.comments) } : item
       );
+      touchActivity(itemId);
       setItems(nextItems);
       persistLocalSnapshot(nextItems, profiles);
       setSelectedItemId(itemId);
@@ -481,6 +523,7 @@ export function SymposiumV0() {
       return;
     }
 
+    touchActivity(itemId);
     await refreshData(currentProfile.handle);
     setSelectedItemId(itemId);
     setSyncStatus(parentId ? "Reply saved" : "Comment saved");
@@ -587,6 +630,7 @@ export function SymposiumV0() {
   };
 
   const applyAction = async (itemId: string, action: PostAction) => {
+    if (action !== "read") touchActivity(itemId);
     const response = await fetch(`/api/posts/${itemId}/actions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -607,7 +651,13 @@ export function SymposiumV0() {
     persistLocalSnapshot(nextItems, profiles);
   };
 
-  const openPost = (id: string) => {
+  const openPost = (id: string, fromProfileName?: string | null) => {
+    if (fromProfileName) {
+      setReturnProfileName(fromProfileName);
+      setSelectedProfileName(null);
+    } else {
+      setReturnProfileName(null);
+    }
     setSelectedItemId(id);
     window.scrollTo({ top: 0, behavior: "auto" });
     void applyAction(id, "read");
@@ -677,13 +727,11 @@ export function SymposiumV0() {
             person={selectedProfile}
             items={items}
             onBack={() => setSelectedProfileName(null)}
-            onSelect={(id) => {
-              setSelectedProfileName(null);
-              openPost(id);
-            }}
+            onSelect={(id) => openPost(id, selectedProfile.name)}
             onOpenProfile={openProfile}
             onAction={applyAction}
             actorHandle={currentProfile.handle}
+            getRecency={getRecency}
           />
         ) : activeRoom === "hall" ? (
           <HallView onEnter={enterRoom} />
@@ -691,7 +739,13 @@ export function SymposiumV0() {
           <DetailView
             item={selectedItem}
             room={activeRoomData}
-            onBack={() => setSelectedItemId(null)}
+            onBack={() => {
+              setSelectedItemId(null);
+              if (returnProfileName) {
+                setSelectedProfileName(returnProfileName);
+                setReturnProfileName(null);
+              }
+            }}
             onOpenTablet={openTablet}
             onOpenNotebook={openNotebook}
             onOpenProfile={openProfile}
@@ -772,7 +826,6 @@ export function SymposiumV0() {
 
       {composerOpen ? (
         <PostComposerModal
-          activeRoom={activeRoom}
           onClose={() => setComposerOpen(false)}
           onCreatePost={createPost}
         />
@@ -1123,37 +1176,18 @@ function RoomRender({
   );
 }
 
-const postKindOptions: InquiryItem["kind"][] = ["thought", "paper", "note", "draft", "code"];
-
-const routedRoomForKind = (
-  kind: InquiryItem["kind"],
-  activeRoom: RoomId
-): Exclude<RoomId, "hall"> => {
-  if (kind === "paper") return activeRoom === "library" ? "library" : "symposium";
-  if (kind === "thought" || kind === "note") return activeRoom === "amphitheater" ? "amphitheater" : "symposium";
-  return "office";
-};
+const postKindOptions: PostDraft["kind"][] = ["thought", "paper"];
 
 function PostComposerModal({
-  activeRoom,
   onClose,
   onCreatePost
 }: {
-  activeRoom: RoomId;
   onClose: () => void;
   onCreatePost: (draft: PostDraft) => void;
 }) {
-  const defaultKind: InquiryItem["kind"] =
-    activeRoom === "library" ? "paper" : activeRoom === "office" ? "draft" : "thought";
-  const [kind, setKind] = useState<InquiryItem["kind"]>(defaultKind);
+  const [kind, setKind] = useState<PostDraft["kind"]>("thought");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
-
-  useEffect(() => {
-    setKind(defaultKind);
-  }, [defaultKind]);
-
-  const destination = routedRoomForKind(kind, activeRoom);
 
   const submitPost = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1161,10 +1195,10 @@ function PostComposerModal({
     const cleanBody = body.trim();
     if (!cleanTitle || !cleanBody) return;
 
-    onCreatePost({ title: cleanTitle, body: cleanBody, kind, room: destination });
+    onCreatePost({ title: cleanTitle, body: cleanBody, kind });
     setTitle("");
     setBody("");
-    setKind(defaultKind);
+    setKind("thought");
   };
 
   return (
@@ -1173,14 +1207,14 @@ function PostComposerModal({
         <div className="composer-modal-head">
           <div>
             <span>New post</span>
-            <strong>{getRoom(destination).name}</strong>
+            <strong>{kindLabels[kind]}</strong>
           </div>
           <button type="button" title="Close" onClick={onClose}>
             <X size={17} />
           </button>
         </div>
         <div className="composer-topline">
-          <select value={kind} onChange={(event) => setKind(event.target.value as InquiryItem["kind"])}>
+          <select value={kind} onChange={(event) => setKind(event.target.value as PostDraft["kind"])}>
             {postKindOptions.map((option) => (
               <option key={option} value={option}>
                 {kindLabels[option]}
@@ -1615,7 +1649,8 @@ function ProfileView({
   onSelect,
   onOpenProfile,
   onAction,
-  actorHandle
+  actorHandle,
+  getRecency
 }: {
   person: ResearchProfile;
   items: InquiryItem[];
@@ -1624,19 +1659,29 @@ function ProfileView({
   onOpenProfile: (name: string) => void;
   onAction: (itemId: string, action: PostAction) => void;
   actorHandle: string;
+  getRecency: (item: InquiryItem) => number;
 }) {
   const [activeTab, setActiveTab] = useState<ProfileTab>("all");
-  const authored = items.filter((item) => item.author === person.name);
+  const byRecency = (nextItems: InquiryItem[]) => [...nextItems].sort((a, b) => getRecency(b) - getRecency(a));
+  const isAuthor = (item: InquiryItem) => item.authorHandle === person.handle || item.author === person.name;
+  const canShowLikes = actorHandle === person.handle || inferredLikesPublic(person);
+  const canShowSaved = actorHandle === person.handle;
+  const authored = byRecency(items.filter(isAuthor));
   const papers = authored.filter((item) => item.kind === "paper");
   const thoughts = authored.filter((item) => item.kind === "thought" || item.kind === "note");
-  const reshares = items.filter((item) => item.author !== person.name && hasHandle(item.forkedBy, person.handle));
-  const likes = items.filter((item) => item.author !== person.name && hasHandle(item.signaledBy, person.handle));
-  const saved = items.filter((item) => item.author !== person.name && isSavedBy(item, person.handle));
+  const comments = byRecency(items.filter((item) => !isAuthor(item) && commentTreeHasAuthor(item.comments, person)));
+  const reshares = byRecency(items.filter((item) => !isAuthor(item) && hasHandle(item.forkedBy, person.handle)));
+  const likes = canShowLikes
+    ? byRecency(items.filter((item) => !isAuthor(item) && hasHandle(item.signaledBy, person.handle)))
+    : [];
+  const saved = canShowSaved ? byRecency(items.filter((item) => !isAuthor(item) && isSavedBy(item, person.handle))) : [];
+  const allActivity = byRecency(uniqueItemsById([...authored, ...comments, ...reshares, ...likes, ...saved]));
 
   const tabItems: Record<ProfileTab, InquiryItem[]> = {
-    all: authored,
+    all: allActivity,
     papers,
     thoughts,
+    comments,
     reshares,
     likes,
     saved
@@ -1646,10 +1691,15 @@ function ProfileView({
     { id: "all", label: "All" },
     { id: "papers", label: "Papers" },
     { id: "thoughts", label: "Thoughts" },
+    { id: "comments", label: "Comments" },
     { id: "reshares", label: "Reshares" },
-    { id: "likes", label: "Likes" },
-    { id: "saved", label: "Saved" }
+    ...(canShowLikes ? [{ id: "likes" as const, label: "Likes" }] : []),
+    ...(canShowSaved ? [{ id: "saved" as const, label: "Saved" }] : [])
   ];
+
+  useEffect(() => {
+    if (!tabs.some((tab) => tab.id === activeTab)) setActiveTab("all");
+  }, [activeTab, tabs]);
 
   return (
     <article className="profile-page">
