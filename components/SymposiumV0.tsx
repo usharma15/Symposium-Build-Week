@@ -135,6 +135,26 @@ const searchableText = (item: InquiryItem) =>
     .join(" ")
     .toLowerCase();
 
+const searchableContentText = (item: InquiryItem) =>
+  [
+    item.author,
+    item.affiliation,
+    item.status,
+    item.excerpt,
+    item.body,
+    ...item.tags,
+    ...item.claims,
+    ...item.objections,
+    ...item.evidence,
+    ...item.tests,
+    ...item.forks,
+    commentSearchText(item.comments)
+  ]
+    .join(" ")
+    .toLowerCase();
+
+const normalizeSearchPhrase = (value: string) => value.trim().toLowerCase().replace(/\s+/g, " ");
+
 const matchesTopic = (item: InquiryItem, chip: string) => {
   const terms = topicTerms[chip] ?? [];
   const text = searchableText(item);
@@ -789,13 +809,15 @@ export function SymposiumV0() {
     : `${activeRoomData.name}: ${activeRoomData.description}`;
 
   const searchResults = useMemo(() => {
-    const term = searchQuery.trim().toLowerCase();
+    const term = normalizeSearchPhrase(searchQuery);
     if (!term) return { titleMatches: [] as InquiryItem[], contentMatches: [] as InquiryItem[], profileMatches: [] as ResearchProfile[] };
 
-    const titleMatches = sortByPublishedRecency(items.filter((item) => item.title.toLowerCase().includes(term)));
+    const titleMatches = sortByPublishedRecency(
+      items.filter((item) => normalizeSearchPhrase(item.title).includes(term))
+    );
     const titleIds = new Set(titleMatches.map((item) => item.id));
     const contentMatches = sortByPublishedRecency(
-      items.filter((item) => !titleIds.has(item.id) && searchableText(item).includes(term))
+      items.filter((item) => !titleIds.has(item.id) && normalizeSearchPhrase(searchableContentText(item)).includes(term))
     );
     const profileMatches = profileList
       .filter((person) =>

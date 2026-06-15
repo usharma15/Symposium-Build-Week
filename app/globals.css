@@ -459,7 +459,8 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 11px;
-  min-width: 224px;
+  min-width: 206px;
+  width: fit-content;
   padding: 9px 12px 9px 9px;
   border-radius: var(--radius);
   text-align: left;
@@ -2179,14 +2180,15 @@ button {
 
 .view-nav {
   position: fixed;
-  top: 16px;
-  left: 258px;
+  top: 10px;
+  left: 232px;
   pointer-events: auto;
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-height: 58px;
   margin-left: 0;
-  padding: 5px;
+  padding: 5px 7px;
   border: 1px solid rgba(255, 253, 245, 0.22);
   border-radius: 8px;
   background: rgba(255, 253, 245, 0.72);
@@ -2198,8 +2200,8 @@ button {
 .view-nav button {
   display: grid;
   place-items: center;
-  width: 36px;
-  min-height: 34px;
+  width: 46px;
+  min-height: 46px;
   border: 1px solid rgba(20, 32, 31, 0.12);
   border-radius: 7px;
   background: rgba(255, 253, 245, 0.58);
@@ -2356,11 +2358,11 @@ button {
 
 .room-layout {
   display: grid;
-  grid-template-columns: minmax(230px, 292px) minmax(0, 760px) minmax(230px, 292px);
-  gap: 18px 24px;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 800px) minmax(220px, 280px);
+  gap: 18px 22px;
   align-items: start;
   justify-content: center;
-  width: min(1400px, calc(100vw - 48px));
+  width: min(1420px, calc(100vw - 48px));
   min-height: calc(100vh - 220px);
   margin: 0 auto;
 }
@@ -2462,13 +2464,13 @@ button {
 .feed-toolbar {
   grid-column: 1;
   position: fixed;
-  left: max(24px, calc((100vw - 1400px) / 2));
+  left: max(18px, calc((100vw - 1420px) / 2));
   top: 104px;
   z-index: 8;
   display: grid;
   align-items: stretch;
   gap: 12px;
-  width: min(292px, calc(100vw - 48px));
+  width: min(280px, calc(100vw - 48px));
   max-width: none;
   margin: 0;
   padding: 14px;
@@ -2570,7 +2572,7 @@ button {
 .post-composer,
 .feed-stream {
   grid-column: 2;
-  max-width: 760px;
+  max-width: 800px;
   margin: 0;
 }
 
@@ -2725,23 +2727,23 @@ button {
 .social-actions {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 7px;
+  gap: 6px;
   width: 100%;
 }
 
 .social-actions button {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) minmax(3ch, auto);
+  display: inline-flex;
   align-items: center;
-  justify-content: stretch;
-  gap: 5px;
+  justify-content: flex-start;
+  gap: 7px;
   min-width: 0;
-  padding: 0 5px;
+  padding: 0 4px;
 }
 
 .social-actions strong {
-  min-width: 3ch;
-  text-align: right;
+  min-width: 0;
+  margin-left: 2px;
+  text-align: left;
   font-variant-numeric: tabular-nums;
 }
 
@@ -2758,7 +2760,7 @@ button {
 
 .detail-layout,
 .profile-page {
-  width: min(1120px, calc(100vw - 48px));
+  width: min(1160px, calc(100vw - 48px));
   margin: 0 auto;
 }
 
@@ -2766,6 +2768,7 @@ button {
   position: relative;
   display: grid;
   gap: 16px;
+  width: min(800px, calc(100vw - 48px));
 }
 
 .profile-page > .back-button {
@@ -2824,7 +2827,7 @@ button {
 
 .profile-stream {
   grid-column: 1;
-  width: min(760px, 100%);
+  width: min(800px, 100%);
   margin: 0 auto 32px;
 }
 
@@ -3055,14 +3058,14 @@ button {
 
 .detail-layout.simple-detail {
   display: grid;
-  grid-template-columns: minmax(0, 820px);
+  grid-template-columns: minmax(0, 840px);
   justify-content: center;
 }
 
 .detail-layout.paper-detail {
   display: grid;
-  width: min(1280px, calc(100vw - 48px));
-  grid-template-columns: minmax(220px, 1fr) minmax(0, 760px) minmax(240px, 1fr);
+  width: min(1360px, calc(100vw - 48px));
+  grid-template-columns: minmax(220px, 1fr) minmax(0, 800px) minmax(280px, 1fr);
   column-gap: 28px;
   row-gap: 16px;
   justify-content: stretch;
@@ -3080,7 +3083,7 @@ button {
 .paper-detail > .paper-side {
   grid-column: 3;
   justify-self: start;
-  width: min(300px, 100%);
+  width: min(320px, calc(100vw - 48px));
 }
 
 .paper-side {
