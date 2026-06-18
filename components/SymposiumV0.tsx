@@ -86,11 +86,14 @@ const kindLabels: Record<InquiryItem["kind"], string> = {
 };
 
 const roomRenders: Record<RoomId, string> = {
-  hall: "/symposium-renders/main-hall-2.png",
+  hall: "/symposium-renders/main-hall-new.png",
   office: "/symposium-renders/office.png",
   symposium: "/symposium-renders/symposium.png",
   library: "/symposium-renders/library-1.png",
-  amphitheater: "/symposium-renders/amphitheatre-2.png"
+  amphitheater: "/symposium-renders/amphitheatre-2.png",
+  funding: "/symposium-renders/main-hall-new.png",
+  communities: "/symposium-renders/main-hall-new.png",
+  opportunities: "/symposium-renders/main-hall-new.png"
 };
 
 const getRoom = (roomId: RoomId) => rooms.find((room) => room.id === roomId) ?? rooms[0];
@@ -103,7 +106,10 @@ const topicTerms: Record<string, string[]> = {
   "AI Metascience": ["ai", "agent", "agents", "metascience", "benchmark", "simulation"],
   "Rogue Youth Labs": ["youth lab", "youth labs", "pilot", "proof-of-work"],
   "History Of Discovery": ["history", "discovery", "accident", "anomaly", "prepared"],
-  "Tools And Instruments": ["tool", "tools", "code", "instrument", "runner", "notebook"]
+  "Tools And Instruments": ["tool", "tools", "code", "instrument", "runner", "notebook"],
+  Funding: ["funding", "grant", "backer", "budget", "patronage"],
+  Communities: ["community", "communities", "events", "calls", "groups"],
+  Opportunities: ["opportunity", "opportunities", "call", "fellowship", "role", "residency"]
 };
 
 const commentSearchText = (comments: InquiryComment[]): string =>
@@ -329,6 +335,9 @@ export function SymposiumV0() {
         if (activeRoom === "symposium") return item.kind === "paper" || item.kind === "thought";
         if (activeRoom === "library") return item.kind === "paper";
         if (activeRoom === "amphitheater") return item.kind === "thought" || item.kind === "note";
+        if (activeRoom === "funding") return item.room === "funding";
+        if (activeRoom === "communities") return item.room === "communities";
+        if (activeRoom === "opportunities") return item.room === "opportunities";
         return true;
       })
       .filter((item) => {
@@ -1204,8 +1213,11 @@ function HallView({ onEnter }: { onEnter: (roomId: RoomId) => void }) {
   const doorIds: Array<Exclude<RoomId, "hall">> = [
     "office",
     "amphitheater",
+    "funding",
     "library",
-    "symposium"
+    "communities",
+    "symposium",
+    "opportunities"
   ];
 
   return (

@@ -11,7 +11,15 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
-export type RoomId = "hall" | "office" | "symposium" | "library" | "amphitheater";
+export type RoomId =
+  | "hall"
+  | "office"
+  | "symposium"
+  | "library"
+  | "amphitheater"
+  | "funding"
+  | "communities"
+  | "opportunities";
 export type FeedScope = "suggested" | "following" | "rooms";
 export type ContentKind = "paper" | "thought" | "draft" | "note" | "code";
 
@@ -162,6 +170,48 @@ export const rooms: Room[] = [
     location: "Under the library stair",
     ambient: "Stone benches, live argument, quick notes",
     includes: ["thought", "note"]
+  },
+  {
+    id: "funding",
+    name: "Funding",
+    shortName: "Funding",
+    icon: Sparkles,
+    eyebrow: "Backing and patronage",
+    title: "Support serious work before it looks obvious.",
+    description:
+      "Grant sketches, patron notes, experiment budgets, backer questions, and funding routes for live research work.",
+    feedLabel: "Backing desk",
+    location: "Left under the library stair",
+    ambient: "Quiet negotiations, budgets, small tables, practical pressure",
+    includes: ["paper", "thought", "draft", "note"]
+  },
+  {
+    id: "communities",
+    name: "Communities",
+    shortName: "Communities",
+    icon: MessagesSquare,
+    eyebrow: "Campus threshold",
+    title: "Find the groups around shared work.",
+    description:
+      "A gateway to communities, calls, events, reading rooms, and live clusters without turning every group into a physical room.",
+    feedLabel: "Community paths",
+    location: "Right under the library stair",
+    ambient: "Garden path, moving groups, live invitations",
+    includes: ["paper", "thought", "draft", "note"]
+  },
+  {
+    id: "opportunities",
+    name: "Opportunities",
+    shortName: "Calls",
+    icon: ScrollText,
+    eyebrow: "Open calls and roles",
+    title: "Places to join, build, fund, or test.",
+    description:
+      "Calls for collaborators, fellowships, events, open problems, internships, grants, and practical next steps.",
+    feedLabel: "Opportunity board",
+    location: "Right wall notice board",
+    ambient: "Pinned notices, deadline cards, public invitations",
+    includes: ["paper", "thought", "draft", "note"]
   }
 ];
 
@@ -176,7 +226,10 @@ export const roomChips = [
   "AI Metascience",
   "Rogue Youth Labs",
   "History Of Discovery",
-  "Tools And Instruments"
+  "Tools And Instruments",
+  "Funding",
+  "Communities",
+  "Opportunities"
 ];
 
 export const libraryFolders = [
@@ -246,7 +299,57 @@ const generatedNames = [
   "Rina Campos",
   "Idris Bellamy",
   "Vera Novak",
-  "Kian Shah"
+  "Kian Shah",
+  "Ada Sterling",
+  "Bram Okoye",
+  "Cleo Varma",
+  "Dima Rosen",
+  "Etta Malik",
+  "Finn Calder",
+  "Gia Moretti",
+  "Hari Collins",
+  "Ines Duarte",
+  "Jalen Brooks",
+  "Kaia Stern",
+  "Luca Fontaine",
+  "Maya Solberg",
+  "Noemi Hart",
+  "Orion Patel",
+  "Pia Anders",
+  "Quinn Reyes",
+  "Rafi Delacroix",
+  "Sana Morel",
+  "Tobin Yates",
+  "Una Farrow",
+  "Valen Cho",
+  "Willa Greaves",
+  "Xavi Laurent",
+  "Yuki Adler",
+  "Zara Bell",
+  "Ari Kwon",
+  "Bianca Neri",
+  "Cato Ivers",
+  "Dalia Faris",
+  "Emre Novak",
+  "Freya Stone",
+  "Galen Moss",
+  "Hana Pierce",
+  "Ilya Ford",
+  "Juno West",
+  "Kira Sol",
+  "Leif Moreno",
+  "Mira Elian",
+  "Nolan Reyes",
+  "Oona Keller",
+  "Pavel Idris",
+  "Rhea Sands",
+  "Silas Vale",
+  "Tara Quinn",
+  "Uri Campos",
+  "Veda Lin",
+  "Wren Hollis",
+  "Yasmin Reed",
+  "Zev Marin"
 ];
 
 const generatedRoles = [
@@ -268,7 +371,10 @@ const generatedLocations = [
   "Symposium floor",
   "Independent review desk",
   "Rogue youth lab notes",
-  "Field methods room"
+  "Field methods room",
+  "Funding alcove",
+  "Community path",
+  "Opportunity board"
 ];
 
 const generatedFieldSets = [
@@ -277,7 +383,10 @@ const generatedFieldSets = [
   ["AI metascience", "Benchmarks", "Critique"],
   ["History of discovery", "Anomalies", "Institutions"],
   ["Youth labs", "Proof-of-work", "Mentorship"],
-  ["Product systems", "Dialogue", "Research UX"]
+  ["Product systems", "Dialogue", "Research UX"],
+  ["Funding", "Patronage", "Budgets"],
+  ["Communities", "Events", "Calls"],
+  ["Opportunities", "Open problems", "Roles"]
 ];
 
 const handleFor = (name: string) =>
@@ -910,6 +1019,66 @@ const generatedBlueprints: Array<{
     body:
       "A serious system should ask what kind of impossibility is being invoked: material impossibility, time cost, reputation cost, credential politics, or genuine incoherence.",
     tags: ["institutions", "ambition", "critique"]
+  },
+  {
+    room: "funding",
+    kind: "draft",
+    status: "Seeking backers",
+    title: "Microgrant packet for blind rediscovery weekends",
+    excerpt: "A compact budget for running small rediscovery sessions with public logs and critic review.",
+    body:
+      "The funding note asks for small, fast support: facilitator time, participant stipends, hosting, and review honoraria. The output would be public packets, failed attempts, and a repeatable format for other communities.",
+    tags: ["funding", "microgrants", "rediscovery", "review"]
+  },
+  {
+    room: "funding",
+    kind: "thought",
+    status: "Backer question",
+    title: "What evidence should unlock the second tranche?",
+    excerpt: "Funding should reward reality contact, not the ability to write heroic updates.",
+    body:
+      "A staged grant can be honest if the unlock condition is visible work: logs, critique response, replication attempts, or a working artifact. The hard part is choosing evidence that does not become theater.",
+    tags: ["funding", "milestones", "evidence", "patronage"]
+  },
+  {
+    room: "communities",
+    kind: "thought",
+    status: "Discoverable",
+    title: "A community should orbit work, not vibes",
+    excerpt: "The useful unit is a group with artifacts, calls, and a memory of what it tried.",
+    body:
+      "Communities should not become private clubs with nice language. Each one needs a reason to exist: a method, a field map, a reading room, a live event, a dataset, or a recurring challenge.",
+    tags: ["communities", "groups", "events", "calls"]
+  },
+  {
+    room: "communities",
+    kind: "note",
+    status: "Campus path",
+    title: "Discover view should start with live rooms and recent calls",
+    excerpt: "Your communities, discover, calls, and events can be normal interface inside an in-world threshold.",
+    body:
+      "The community doorway can open into a cleaner directory: your groups first, live calls second, then discovery by field and recent activity. The in-world move is the entrance, not every group becoming a miniature building.",
+    tags: ["communities", "discovery", "interface", "events"]
+  },
+  {
+    room: "opportunities",
+    kind: "note",
+    status: "Open call",
+    title: "Call for reviewers: source-packet synthesis tests",
+    excerpt: "Need careful readers to judge whether summaries carry enough evidence to be trusted.",
+    body:
+      "The call asks for reviewers who can inspect source packets, mark missing evidence, and score whether a synthesis outruns what its sources can support. Useful for AI-assisted research workflows.",
+    tags: ["opportunities", "review", "AI metascience", "call"]
+  },
+  {
+    room: "opportunities",
+    kind: "draft",
+    status: "Fellowship sketch",
+    title: "Three-month rogue youth lab residency",
+    excerpt: "A small residency for young builders producing artifacts rather than credential theater.",
+    body:
+      "The opportunity sketch proposes a short residency with public artifacts, weekly critique, and a final packet. Selection would favor prior work, taste, resilience under criticism, and self-directed repair.",
+    tags: ["opportunities", "youth labs", "fellowship", "residency"]
   }
 ];
 
@@ -975,7 +1144,7 @@ const generatedComments = (itemIndex: number, author: ResearchProfile): InquiryC
   ];
 };
 
-const generatedInquiryItems: InquiryItem[] = Array.from({ length: 72 }, (_, index) => {
+const generatedInquiryItems: InquiryItem[] = Array.from({ length: 132 }, (_, index) => {
   const blueprint = generatedBlueprints[index % generatedBlueprints.length];
   const author = generatedPublicProfiles[index % generatedPublicProfiles.length];
   const signaledBy = pickHandles(index + 1, 9 + (index % 19));
