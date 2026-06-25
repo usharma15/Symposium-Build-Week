@@ -121,6 +121,10 @@ const communityRenders = {
   selected: "/symposium-renders/community-selected.png"
 };
 
+const preloadRenders = Array.from(
+  new Set([...Object.values(roomRenders), ...Object.values(patronageRenders), ...Object.values(communityRenders)])
+);
+
 const getRoom = (roomId: RoomId) => rooms.find((room) => room.id === roomId) ?? rooms[0];
 
 const topicTerms: Record<string, string[]> = {
@@ -252,6 +256,19 @@ const uniqueItemsById = (items: InquiryItem[]) => [...new Map(items.map((item) =
 
 const inferredLikesPublic = (person: ResearchProfile) => person.likesPublic ?? person.handle.length % 5 !== 0;
 const inferredResharesPublic = (person: ResearchProfile) => person.resharesPublic ?? person.handle.length % 4 !== 0;
+
+const fallbackCommunityCount = 8;
+
+const communityMembershipIds = (communities: ResearchCommunity[], person: ResearchProfile) => {
+  const explicit = communities.filter((community) => community.memberHandles.includes(person.handle));
+  if (explicit.length > 0) return new Set(explicit.map((community) => community.id));
+
+  const maxOffset = Math.max(1, communities.length - fallbackCommunityCount + 1);
+  const offset =
+    Array.from(person.handle).reduce((total, character) => total + character.charCodeAt(0), 0) % maxOffset;
+  const fallback = communities.slice(offset, offset + fallbackCommunityCount);
+  return new Set(fallback.map((community) => community.id));
+};
 
 const initial = (name: string) =>
   name
@@ -906,6 +923,11 @@ export function SymposiumV0() {
       style={{ "--room-bg": `url(${activeRoomRender})` } as CSSProperties}
     >
       <div className="ambient-layer" aria-hidden="true" />
+      <div className="render-preload" aria-hidden="true">
+        {preloadRenders.map((render) => (
+          <Image key={render} src={render} alt="" width={16} height={10} priority />
+        ))}
+      </div>
 
       <header className="topbar">
         <button className="brand" type="button" onClick={() => enterRoom("hall")}>
@@ -1405,12 +1427,14 @@ function CommunitiesDirectoryView({
 }) {
   const term = normalizeSearchPhrase(query);
   const matches = (community: ResearchCommunity) => !term || communitySearchText(community).includes(term);
-  const myCommunities = communities.filter((community) => community.memberHandles.includes(currentProfile.handle) && matches(community));
+  const memberships = communityMembershipIds(communities, currentProfile);
+  const myCommunities = communities.filter((community) => memberships.has(community.id) && matches(community));
   const discoverCommunities = communities
-    .filter((community) => !community.memberHandles.includes(currentProfile.handle) && matches(community))
+    .filter((community) => !memberships.has(community.id) && matches(community))
     .sort((a, b) => b.online - a.online);
+  const canExpandMyCommunities = myCommunities.length > 6;
   const visibleMyCommunities = expanded ? myCommunities : myCommunities.slice(0, 6);
-  const visibleDiscover = term ? discoverCommunities.slice(0, 6) : discoverCommunities.slice(0, 3);
+  const visibleDiscover = discoverCommunities;
 
   return (
     <section className="communities-layout" aria-label="Communities">
@@ -1436,22 +1460,22 @@ function CommunitiesDirectoryView({
           items={items}
           expanded={expanded}
           total={myCommunities.length}
-          onToggle={() => onExpanded(!expanded)}
+          onToggle={canExpandMyCommunities ? () => onExpanded(!expanded) : undefined}
           onOpenCommunity={onOpenCommunity}
           emptyText="Join communities to keep them here."
           scrollable={expanded}
         />
 
-        {!expanded ? (
-          <CommunityLayer
-            title="Discover"
-            communities={visibleDiscover}
-            items={items}
-            total={discoverCommunities.length}
-            onOpenCommunity={onOpenCommunity}
-            emptyText="No community matches yet."
-          />
-        ) : null}
+        <CommunityLayer
+          title="Discover"
+          communities={visibleDiscover}
+          items={items}
+          total={discoverCommunities.length}
+          onOpenCommunity={onOpenCommunity}
+          emptyText="No community matches yet."
+          scrollable
+          discover
+        />
       </div>
     </section>
   );
@@ -1464,6 +1488,7 @@ function CommunityLayer({
   total,
   expanded,
   scrollable = false,
+  discover = false,
   onToggle,
   onOpenCommunity,
   emptyText
@@ -1474,6 +1499,7 @@ function CommunityLayer({
   total: number;
   expanded?: boolean;
   scrollable?: boolean;
+  discover?: boolean;
   onToggle?: () => void;
   onOpenCommunity: (communityId: string) => void;
   emptyText: string;
@@ -1482,13 +1508,13 @@ function CommunityLayer({
     <section className="community-layer">
       <header>
         <button type="button" onClick={onToggle ?? (() => undefined)} disabled={!onToggle}>
-          <ArrowRight size={16} className={expanded ? "expanded" : ""} />
+          {onToggle ? <ArrowRight size={16} className={expanded ? "expanded" : ""} /> : null}
           <span>{title}</span>
           <small>{total}</small>
         </button>
       </header>
       {communities.length ? (
-        <div className={`community-grid ${scrollable ? "scrollable" : ""}`}>
+        <div className={`community-grid ${scrollable ? "scrollable" : ""} ${discover ? "discover-scroll" : ""}`}>
           {communities.map((community) => (
             <CommunityCard
               key={community.id}
@@ -1555,13 +1581,9 @@ function SelectedCommunityView({
   onAction: (itemId: string, action: PostAction) => void;
   onDummyCall: (mode: "Voice" | "Video") => void;
 }) {
-  const stats = getCommunityStats(items, community);
-  const isMember = community.memberHandles.includes(currentProfile.handle);
+  const memberships = communityMembershipIds(researchCommunities, currentProfile);
+  const isMember = memberships.has(community.id);
   const relatedItems = sortCommunityItems(getCommunityItems(items, community));
-  const publicNote =
-    community.visibility === "public"
-      ? "Public thoughts and opportunities from this community can surface in the other rooms."
-      : "Private thoughts stay here; papers still travel into the Library.";
 
   return (
     <section className="selected-community-layout" aria-label={community.name}>
@@ -1577,29 +1599,10 @@ function SelectedCommunityView({
           <span>{community.field}</span>
         </header>
 
-        <div className="selected-community-stats" aria-label={`${community.name} activity`}>
-          <span>
-            <strong>{community.online}</strong>
-            online
-          </span>
-          <span>
-            <strong>{stats.papers}</strong>
-            papers shared
-          </span>
-          <span>
-            <strong>{stats.thoughts}</strong>
-            thoughts shared
-          </span>
-          <span>
-            <strong>{stats.opportunities}</strong>
-            opportunities
-          </span>
-        </div>
-
         <section className="community-call-panel" aria-label="Community calls">
           <div>
             <strong>Group call</strong>
-            <span>{isMember ? community.callStatus : "members only"}</span>
+            <span>{isMember ? `${community.online} online · ${community.callStatus}` : "members only"}</span>
           </div>
           <button type="button" disabled={!isMember} onClick={() => onDummyCall("Voice")}>
             Voice
@@ -1608,8 +1611,6 @@ function SelectedCommunityView({
             Video
           </button>
         </section>
-
-        <p className="community-rule-note">{publicNote}</p>
       </div>
 
       <section className="selected-community-work" aria-label={`${community.name} shared work`}>
