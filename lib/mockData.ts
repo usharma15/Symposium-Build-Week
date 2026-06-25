@@ -173,14 +173,14 @@ export const rooms: Room[] = [
   },
   {
     id: "funding",
-    name: "Funding",
-    shortName: "Funding",
+    name: "Patronage",
+    shortName: "Patronage",
     icon: Sparkles,
-    eyebrow: "Backing and patronage",
+    eyebrow: "Civic and private backing",
     title: "Support serious work before it looks obvious.",
     description:
-      "Grant sketches, patron notes, experiment budgets, backer questions, and funding routes for live research work.",
-    feedLabel: "Backing desk",
+      "Civic backing, bounties, donations, grants, investors, family offices, and patronage routes for live research work.",
+    feedLabel: "Patronage desk",
     location: "Left under the library stair",
     ambient: "Quiet negotiations, budgets, small tables, practical pressure",
     includes: ["paper", "thought", "draft", "note"]
@@ -227,7 +227,7 @@ export const roomChips = [
   "Rogue Youth Labs",
   "History Of Discovery",
   "Tools And Instruments",
-  "Funding",
+  "Patronage",
   "Communities",
   "Opportunities"
 ];
@@ -372,7 +372,7 @@ const generatedLocations = [
   "Independent review desk",
   "Rogue youth lab notes",
   "Field methods room",
-  "Funding alcove",
+  "Patronage hall",
   "Community path",
   "Opportunity board"
 ];
@@ -384,7 +384,7 @@ const generatedFieldSets = [
   ["History of discovery", "Anomalies", "Institutions"],
   ["Youth labs", "Proof-of-work", "Mentorship"],
   ["Product systems", "Dialogue", "Research UX"],
-  ["Funding", "Patronage", "Budgets"],
+  ["Patronage", "Budgets", "Backers"],
   ["Communities", "Events", "Calls"],
   ["Opportunities", "Open problems", "Roles"]
 ];
@@ -1023,22 +1023,22 @@ const generatedBlueprints: Array<{
   {
     room: "funding",
     kind: "draft",
-    status: "Seeking backers",
+    status: "Civic patronage",
     title: "Microgrant packet for blind rediscovery weekends",
     excerpt: "A compact budget for running small rediscovery sessions with public logs and critic review.",
     body:
-      "The funding note asks for small, fast support: facilitator time, participant stipends, hosting, and review honoraria. The output would be public packets, failed attempts, and a repeatable format for other communities.",
-    tags: ["funding", "microgrants", "rediscovery", "review"]
+      "The civic patronage note asks for small, fast support: facilitator time, participant stipends, hosting, and review honoraria. The output would be public packets, failed attempts, and a repeatable format for other communities.",
+    tags: ["patronage", "civic", "microgrants", "rediscovery", "review"]
   },
   {
     room: "funding",
     kind: "thought",
-    status: "Backer question",
+    status: "Private patronage",
     title: "What evidence should unlock the second tranche?",
-    excerpt: "Funding should reward reality contact, not the ability to write heroic updates.",
+    excerpt: "Patronage should reward reality contact, not the ability to write heroic updates.",
     body:
       "A staged grant can be honest if the unlock condition is visible work: logs, critique response, replication attempts, or a working artifact. The hard part is choosing evidence that does not become theater.",
-    tags: ["funding", "milestones", "evidence", "patronage"]
+    tags: ["patronage", "private", "grants", "milestones", "evidence"]
   },
   {
     room: "communities",

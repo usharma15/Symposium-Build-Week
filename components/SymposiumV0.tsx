@@ -52,12 +52,14 @@ type Theme = "day" | "night";
 type ProfileTab = "all" | "papers" | "thoughts" | "comments" | "reshares" | "likes" | "saved";
 type EntryMode = "loading" | "approach" | "auth" | "complete";
 type OfficeMode = "desk" | "saved" | "notes";
+type PatronageMode = "lobby" | "civic" | "private";
 
 type ViewSnapshot = {
   activeRoom: RoomId;
   selectedItemId: string | null;
   selectedProfileName: string | null;
   officeMode: OfficeMode;
+  patronageMode: PatronageMode;
   scrollY: number;
 };
 
@@ -100,9 +102,15 @@ const roomRenders: Record<RoomId, string> = {
   symposium: "/symposium-renders/symposium.png",
   library: "/symposium-renders/library-1.png",
   amphitheater: "/symposium-renders/amphitheatre-2.png",
-  funding: "/symposium-renders/main-hall-new.png",
+  funding: "/symposium-renders/patronage.png",
   communities: "/symposium-renders/main-hall-new.png",
   opportunities: "/symposium-renders/main-hall-new.png"
+};
+
+const patronageRenders: Record<PatronageMode, string> = {
+  lobby: "/symposium-renders/patronage.png",
+  civic: "/symposium-renders/patronage-civic.png",
+  private: "/symposium-renders/patronage-private.png"
 };
 
 const getRoom = (roomId: RoomId) => rooms.find((room) => room.id === roomId) ?? rooms[0];
@@ -113,9 +121,14 @@ const topicTerms: Record<string, string[]> = {
   "Rogue Youth Labs": ["youth lab", "youth labs", "pilot", "proof-of-work"],
   "History Of Discovery": ["history", "discovery", "accident", "anomaly", "prepared"],
   "Tools And Instruments": ["tool", "tools", "code", "instrument", "runner", "notebook"],
-  Funding: ["funding", "grant", "backer", "budget", "patronage"],
+  Patronage: ["funding", "grant", "backer", "budget", "patronage", "civic", "private"],
   Communities: ["community", "communities", "events", "calls", "groups"],
   Opportunities: ["opportunity", "opportunities", "call", "fellowship", "role", "residency"]
+};
+
+const patronageTerms: Record<Exclude<PatronageMode, "lobby">, string[]> = {
+  civic: ["civic", "crowdfund", "crowdfunding", "bounty", "bounties", "donation", "donations", "microgrant", "microgrants", "public", "stipend", "stipends"],
+  private: ["private", "investor", "investors", "grant", "grants", "family office", "funds", "patron", "patronage", "backer", "backers", "tranche"]
 };
 
 const commentSearchText = (comments: InquiryComment[]): string =>
@@ -171,6 +184,15 @@ const matchesTopic = (item: InquiryItem, chip: string) => {
   return terms.some((term) => text.includes(term));
 };
 
+const matchesPatronageMode = (item: InquiryItem, mode: PatronageMode) => {
+  if (mode === "lobby") return false;
+  const text = searchableText(item);
+  return patronageTerms[mode].some((term) => {
+    if (term.includes(" ")) return text.includes(term);
+    return new RegExp(`\\b${term}\\b`, "i").test(text);
+  });
+};
+
 const handleFromName = (name: string) =>
   cleanHandle(name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, ""));
 
@@ -209,6 +231,7 @@ export function SymposiumV0() {
   const [feedScope, setFeedScope] = useState<FeedScope>("suggested");
   const [roomChip, setRoomChip] = useState(roomChips[0]);
   const [officeMode, setOfficeMode] = useState<OfficeMode>("desk");
+  const [patronageMode, setPatronageMode] = useState<PatronageMode>("lobby");
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [tabletOpen, setTabletOpen] = useState(false);
   const [notebookOpen, setNotebookOpen] = useState(false);
@@ -227,6 +250,7 @@ export function SymposiumV0() {
   );
 
   const activeRoomData = getRoom(activeRoom);
+  const activeRoomRender = activeRoom === "funding" ? patronageRenders[patronageMode] : roomRenders[activeRoom];
   const selectedItem = items.find((item) => item.id === selectedItemId) ?? null;
   const profileList = useMemo(() => Object.values(profiles), [profiles]);
   const findProfile = (nameOrHandle: string) =>
@@ -239,6 +263,15 @@ export function SymposiumV0() {
     [...nextItems].sort((a, b) => getPublishedRecency(b) - getPublishedRecency(a));
 
   const visibleItems = useMemo(() => {
+    const patronageItems = items.filter((item) => item.room === "funding");
+    const selectedPatronageItems =
+      patronageMode === "lobby"
+        ? []
+        : patronageItems.filter((item) => matchesPatronageMode(item, patronageMode));
+    const patronageFallbackItems =
+      patronageMode === "lobby" || selectedPatronageItems.length ? selectedPatronageItems : patronageItems;
+    const patronageIds = new Set(patronageFallbackItems.map((item) => item.id));
+
     const roomFiltered = items
       .filter((item) => {
         if (activeRoom === "hall") return item.kind === "paper" || item.kind === "thought";
@@ -252,7 +285,7 @@ export function SymposiumV0() {
         if (activeRoom === "symposium") return item.kind === "paper" || item.kind === "thought";
         if (activeRoom === "library") return item.kind === "paper";
         if (activeRoom === "amphitheater") return item.kind === "thought" || item.kind === "note";
-        if (activeRoom === "funding") return item.room === "funding";
+        if (activeRoom === "funding") return patronageIds.has(item.id);
         if (activeRoom === "communities") return item.room === "communities";
         if (activeRoom === "opportunities") return item.room === "opportunities";
         return true;
@@ -264,7 +297,7 @@ export function SymposiumV0() {
       });
 
     return sortByPublishedRecency(roomFiltered);
-  }, [activeRoom, currentProfile.handle, currentProfile.name, feedScope, items, officeMode, roomChip]);
+  }, [activeRoom, currentProfile.handle, currentProfile.name, feedScope, items, officeMode, patronageMode, roomChip]);
 
   const readLocalSnapshot = (): LocalSnapshot | null => {
     try {
@@ -383,6 +416,7 @@ export function SymposiumV0() {
     selectedItemId,
     selectedProfileName,
     officeMode,
+    patronageMode,
     scrollY: window.scrollY
   });
 
@@ -391,6 +425,7 @@ export function SymposiumV0() {
     setSelectedItemId(snapshot.selectedItemId);
     setSelectedProfileName(snapshot.selectedProfileName);
     setOfficeMode(snapshot.officeMode);
+    setPatronageMode(snapshot.patronageMode);
     setTabletOpen(false);
     setNotebookOpen(false);
     setComposerOpen(false);
@@ -409,6 +444,7 @@ export function SymposiumV0() {
     if (next.selectedItemId !== undefined) setSelectedItemId(next.selectedItemId);
     if (next.selectedProfileName !== undefined) setSelectedProfileName(next.selectedProfileName);
     if (next.officeMode !== undefined) setOfficeMode(next.officeMode);
+    if (next.patronageMode !== undefined) setPatronageMode(next.patronageMode);
     setTabletOpen(false);
     setNotebookOpen(false);
     setComposerOpen(false);
@@ -442,12 +478,23 @@ export function SymposiumV0() {
       activeRoom: roomId,
       selectedItemId: null,
       selectedProfileName: null,
-      officeMode: roomId === "office" ? mode : "desk"
+      officeMode: roomId === "office" ? mode : "desk",
+      patronageMode: roomId === "funding" ? "lobby" : patronageMode
     });
   };
 
   const toggleOfficeMode = (mode: Exclude<OfficeMode, "desk">) => {
     enterRoom("office", activeRoom === "office" && officeMode === mode ? "desk" : mode);
+  };
+
+  const openPatronageMode = (mode: Exclude<PatronageMode, "lobby">) => {
+    navigateView({
+      activeRoom: "funding",
+      selectedItemId: null,
+      selectedProfileName: null,
+      officeMode: "desk",
+      patronageMode: mode
+    });
   };
 
   const openProfile = (name: string) => {
@@ -593,6 +640,7 @@ export function SymposiumV0() {
     setEntryMode("complete");
     setActiveRoom("hall");
     setOfficeMode("desk");
+    setPatronageMode("lobby");
     setSelectedItemId(null);
     setSelectedProfileName(null);
     setViewHistory([]);
@@ -773,8 +821,9 @@ export function SymposiumV0() {
     <main
       className={`symposium-shell ${theme}`}
       data-room={activeRoom}
+      data-patronage-mode={activeRoom === "funding" ? patronageMode : undefined}
       data-view={selectedProfile ? "profile" : selectedItem ? "detail" : activeRoom === "hall" ? "hall" : "room"}
-      style={{ "--room-bg": `url(${roomRenders[activeRoom]})` } as CSSProperties}
+      style={{ "--room-bg": `url(${activeRoomRender})` } as CSSProperties}
     >
       <div className="ambient-layer" aria-hidden="true" />
 
@@ -856,15 +905,23 @@ export function SymposiumV0() {
             onOpenSaved={() => toggleOfficeMode("saved")}
             onOpenNotes={() => toggleOfficeMode("notes")}
           />
+        ) : activeRoom === "funding" && patronageMode === "lobby" ? (
+          <PatronageLobbyView
+            room={activeRoomData}
+            onOpenCivic={() => openPatronageMode("civic")}
+            onOpenPrivate={() => openPatronageMode("private")}
+          />
         ) : (
           <RoomView
             room={activeRoomData}
             items={visibleItems}
             officeMode={activeRoom === "office" ? officeMode : undefined}
+            patronageMode={activeRoom === "funding" ? patronageMode : undefined}
             feedScope={feedScope}
             roomChip={roomChip}
             onFeedScope={setFeedScope}
             onRoomChip={setRoomChip}
+            onPatronageMode={openPatronageMode}
             onSelect={openPost}
             onOpenProfile={openProfile}
             onAction={applyAction}
@@ -1203,14 +1260,38 @@ function OfficeDeskView({
   );
 }
 
+function PatronageLobbyView({
+  room,
+  onOpenCivic,
+  onOpenPrivate
+}: {
+  room: Room;
+  onOpenCivic: () => void;
+  onOpenPrivate: () => void;
+}) {
+  return (
+    <div className="patronage-lobby-view">
+      <RoomRender
+        room={room}
+        onOpenNotebook={() => undefined}
+        onOpenCivic={onOpenCivic}
+        onOpenPrivate={onOpenPrivate}
+        showPatronageHotspots
+      />
+    </div>
+  );
+}
+
 function RoomView({
   room,
   items,
   officeMode,
+  patronageMode,
   feedScope,
   roomChip,
   onFeedScope,
   onRoomChip,
+  onPatronageMode,
   onSelect,
   onOpenProfile,
   onAction,
@@ -1221,10 +1302,12 @@ function RoomView({
   room: Room;
   items: InquiryItem[];
   officeMode?: OfficeMode;
+  patronageMode?: PatronageMode;
   feedScope: FeedScope;
   roomChip: string;
   onFeedScope: (scope: FeedScope) => void;
   onRoomChip: (chip: string) => void;
+  onPatronageMode: (mode: Exclude<PatronageMode, "lobby">) => void;
   onSelect: (id: string) => void;
   onOpenProfile: (name: string) => void;
   onAction: (itemId: string, action: PostAction) => void;
@@ -1232,6 +1315,27 @@ function RoomView({
   onOpenSaved: () => void;
   actorHandle: string;
 }) {
+  const roomTitle =
+    room.id === "funding" && patronageMode === "civic"
+      ? "Civic Patronage"
+      : room.id === "funding" && patronageMode === "private"
+        ? "Private Patronage"
+        : officeMode === "saved"
+          ? "Saved for later"
+          : officeMode === "notes"
+            ? "Notes"
+            : room.name;
+  const roomDescription =
+    room.id === "funding" && patronageMode === "civic"
+      ? "Crowdfunding, bounties, donations, microgrants, and public backing for work that deserves early oxygen."
+      : room.id === "funding" && patronageMode === "private"
+        ? "Investors, grants, family offices, funds, and larger patronage routes for serious research and institutions."
+        : officeMode === "saved"
+          ? "Work you marked for return."
+          : officeMode === "notes"
+            ? "Your desk notes and authored fragments."
+            : room.description;
+
   return (
     <div className="room-layout">
       <RoomRender room={room} onOpenNotebook={onOpenNotes} onOpenSaved={onOpenSaved} />
@@ -1239,15 +1343,28 @@ function RoomView({
       <section className="feed-toolbar" aria-label="Feed controls">
         <div className="room-mini-title">
           <p className="eyebrow">{room.eyebrow}</p>
-          <h1>{officeMode === "saved" ? "Saved for later" : officeMode === "notes" ? "Notes" : room.name}</h1>
-          <p>
-            {officeMode === "saved"
-              ? "Work you marked for return."
-              : officeMode === "notes"
-                ? "Your desk notes and authored fragments."
-                : room.description}
-          </p>
+          <h1>{roomTitle}</h1>
+          <p>{roomDescription}</p>
         </div>
+
+        {room.id === "funding" ? (
+          <div className="segmented patronage-switch" aria-label="Patronage section">
+            <button
+              type="button"
+              className={patronageMode === "civic" ? "active" : ""}
+              onClick={() => onPatronageMode("civic")}
+            >
+              Civic
+            </button>
+            <button
+              type="button"
+              className={patronageMode === "private" ? "active" : ""}
+              onClick={() => onPatronageMode("private")}
+            >
+              Private
+            </button>
+          </div>
+        ) : null}
 
         <div className="segmented">
           {feedScopes.map((scope) => (
@@ -1308,13 +1425,20 @@ function RoomView({
 function RoomRender({
   room,
   onOpenNotebook,
-  onOpenSaved
+  onOpenSaved,
+  onOpenCivic,
+  onOpenPrivate,
+  showPatronageHotspots = false
 }: {
   room: Room;
   onOpenNotebook: () => void;
   onOpenSaved?: () => void;
+  onOpenCivic?: () => void;
+  onOpenPrivate?: () => void;
+  showPatronageHotspots?: boolean;
 }) {
   const isOffice = room.id === "office";
+  const isPatronage = room.id === "funding";
 
   return (
     <section
@@ -1341,6 +1465,26 @@ function RoomRender({
               <span>Saved for later</span>
             </button>
           </>
+        </div>
+      ) : null}
+      {isPatronage && showPatronageHotspots ? (
+        <div className="room-hotspots patronage-hotspots" aria-label="Patronage sections">
+          <button
+            className="patronage-hotspot patronage-hotspot-civic"
+            type="button"
+            onClick={onOpenCivic}
+            aria-label="Open Civic Patronage"
+          >
+            <span>Civic</span>
+          </button>
+          <button
+            className="patronage-hotspot patronage-hotspot-private"
+            type="button"
+            onClick={onOpenPrivate}
+            aria-label="Open Private Patronage"
+          >
+            <span>Private</span>
+          </button>
         </div>
       ) : null}
     </section>
