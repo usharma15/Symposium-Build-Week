@@ -2266,7 +2266,7 @@ button {
 .hall-world {
   position: fixed;
   left: 50%;
-  top: 50%;
+  bottom: 0;
   width: max(100vw, 159.88vh);
   height: max(100vh, 62.55vw);
   min-height: 0;
@@ -2278,7 +2278,7 @@ button {
   background-repeat: no-repeat;
   background-size: 100% 100%;
   box-shadow: none;
-  transform: translate(-50%, -50%);
+  transform: translateX(-50%);
 }
 
 .hall-world::after,
@@ -2400,11 +2400,11 @@ button {
 }
 
 .hall-door-symposium {
-  right: 5.7%;
-  top: 37.1%;
-  width: 19.3%;
-  height: 36.7%;
-  clip-path: polygon(100% 0, 100% 96%, 4% 91%, 0 37%);
+  right: 10.7%;
+  top: 36.8%;
+  width: 18%;
+  height: 38.2%;
+  clip-path: polygon(100% 0, 98% 98%, 8% 94%, 0 37%);
 }
 
 .hall-door-communities {
@@ -2416,11 +2416,11 @@ button {
 }
 
 .hall-door-opportunities {
-  right: 0.7%;
-  top: 45.9%;
-  width: 5.1%;
-  height: 17.6%;
-  clip-path: polygon(8% 0, 100% 4%, 96% 100%, 0 94%);
+  right: 2.5%;
+  top: 43.8%;
+  width: 6.1%;
+  height: 23.5%;
+  clip-path: polygon(8% 0, 96% 0, 98% 100%, 0 96%);
 }
 
 .room-layout {
@@ -2643,17 +2643,22 @@ button {
   top: 104px;
   z-index: 7;
   display: grid;
-  gap: 8px;
+  gap: 7px;
   width: 280px;
   max-height: calc(100vh - 294px);
   overflow: auto;
-  padding: 20px;
+  padding: 16px;
 }
 
 .communities-context .eyebrow,
 .selected-community-header .eyebrow {
   margin: 0;
   color: rgba(30, 101, 108, 0.96);
+}
+
+.communities-context .eyebrow {
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
 }
 
 .communities-context h1,
@@ -2665,6 +2670,11 @@ button {
   letter-spacing: 0;
 }
 
+.communities-context h1 {
+  font-size: clamp(1.7rem, 2.2vw, 2.45rem);
+  line-height: 1;
+}
+
 .communities-context p,
 .selected-community-header p {
   max-width: 760px;
@@ -2672,6 +2682,11 @@ button {
   color: rgba(20, 32, 31, 0.72);
   font-size: 1rem;
   line-height: 1.45;
+}
+
+.communities-context p {
+  font-size: 0.88rem;
+  line-height: 1.35;
 }
 
 .communities-search {

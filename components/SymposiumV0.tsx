@@ -1472,7 +1472,7 @@ function CommunitiesDirectoryView({
   return (
     <section className="communities-layout" aria-label="Communities">
       <aside className="communities-context">
-        <p className="eyebrow">Campus threshold</p>
+        <p className="eyebrow">Directory</p>
         <h1>Communities</h1>
         <p>Find the groups around shared work, live calls, and public artifacts.</p>
       </aside>
