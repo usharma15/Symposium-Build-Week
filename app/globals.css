@@ -2285,13 +2285,17 @@ button {
     linear-gradient(180deg, rgba(3, 8, 13, 0.12), rgba(3, 8, 13, 0.05) 52%, rgba(3, 8, 13, 0.24));
 }
 
-.symposium-shell.night[data-room="amphitheater"]::before {
+.symposium-shell.night[data-room="office"]::before,
+.symposium-shell.night[data-room="amphitheater"]::before,
+.symposium-shell.night[data-room="funding"]::before {
   background: var(--room-bg) center center / cover no-repeat;
   opacity: 1;
   filter: none;
 }
 
-.symposium-shell.night[data-room="amphitheater"]::after {
+.symposium-shell.night[data-room="office"]::after,
+.symposium-shell.night[data-room="amphitheater"]::after,
+.symposium-shell.night[data-room="funding"]::after {
   background: transparent;
 }
 
