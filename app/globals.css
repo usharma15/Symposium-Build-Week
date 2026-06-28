@@ -346,7 +346,6 @@ button {
 .symposium-shell.night .communities-context,
 .symposium-shell.night .communities-search,
 .symposium-shell.night .selected-community-panel,
-.symposium-shell.night .selected-community-work,
 .symposium-shell.night .search-modal,
 .symposium-shell.night .profile-settings-modal,
 .symposium-shell.night .messages-modal {
@@ -2744,7 +2743,7 @@ button {
 .communities-layout {
   position: relative;
   z-index: 5;
-  width: min(760px, calc(100vw - 520px));
+  width: min(800px, calc(100vw - 520px));
   min-height: calc(100vh - 220px);
   margin: 28px auto 96px;
 }
@@ -2757,8 +2756,7 @@ button {
 
 .communities-panel,
 .communities-context,
-.selected-community-panel,
-.selected-community-work {
+.selected-community-panel {
   border: 1px solid rgba(255, 253, 245, 0.28);
   border-radius: 10px;
   background: rgba(255, 253, 245, 0.62);
@@ -3002,7 +3000,7 @@ button {
 
 .selected-community-layout {
   display: block;
-  width: min(760px, calc(100vw - 520px));
+  width: min(800px, calc(100vw - 520px));
   margin: 28px auto 0;
 }
 
@@ -3091,8 +3089,14 @@ button {
 .selected-community-work {
   display: grid;
   gap: 14px;
-  padding: 14px;
-  background: rgba(255, 253, 245, 0.28);
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 .selected-community-work .feed-post {
