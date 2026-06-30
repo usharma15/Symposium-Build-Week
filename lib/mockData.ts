@@ -1193,7 +1193,7 @@ export const researchCommunities: ResearchCommunity[] = [
     summary: "People turning failed attempts into visible packets instead of letting them disappear.",
     visibility: "public",
     online: 27,
-    memberHandles: [profile.handle, "@n_arvind", "@ruth_bell", "@owen_markham", "@greta_holm"],
+    memberHandles: [profile.handle, "@narvind", "@ruth_bell", "@owen_markham", "@greta_holm"],
     keywords: ["replication", "negative results", "methods", "failure", "denominator"],
     seedCounts: { papers: 28, thoughts: 21, opportunities: 7 },
     callStatus: "quiet"
@@ -1277,7 +1277,7 @@ export const researchCommunities: ResearchCommunity[] = [
     summary: "A private workshop for source-packet review, missing evidence, and summaries that carry their spine.",
     visibility: "private",
     online: 12,
-    memberHandles: ["@mira_sato", "@leahk", "@n_arvind", "@priya_menon"],
+    memberHandles: ["@mira_sato", "@leahk", "@narvind", "@priya_menon"],
     keywords: ["source packets", "source packet", "synthesis", "review", "evidence spine"],
     seedCounts: { papers: 17, thoughts: 8, opportunities: 5 },
     callStatus: "video live"
@@ -1373,7 +1373,7 @@ export const researchCommunities: ResearchCommunity[] = [
     summary: "People making evidence portable: datasets, provenance notes, missing-denominator logs, and repair trails.",
     visibility: "public",
     online: 28,
-    memberHandles: ["@n_arvind", "@ruth_bell", "@owen_markham", "@mateo_ibarra", "@noor_al_khatib"],
+    memberHandles: ["@narvind", "@ruth_bell", "@owen_markham", "@mateo_ibarra", "@noor_al_khatib"],
     keywords: ["data", "dataset", "provenance", "evidence", "replication", "methods"],
     seedCounts: { papers: 29, thoughts: 13, opportunities: 8 },
     callStatus: "quiet"
@@ -1397,7 +1397,7 @@ export const researchCommunities: ResearchCommunity[] = [
     summary: "A clinic for failed runs, negative results, and the stubborn work of making non-success legible.",
     visibility: "public",
     online: 23,
-    memberHandles: ["@ruth_bell", "@n_arvind", "@greta_holm", "@owen_markham", "@dario_silva"],
+    memberHandles: ["@ruth_bell", "@narvind", "@greta_holm", "@owen_markham", "@dario_silva"],
     keywords: ["negative results", "failure", "replication", "repair", "methods"],
     seedCounts: { papers: 31, thoughts: 16, opportunities: 7 },
     callStatus: "quiet"
