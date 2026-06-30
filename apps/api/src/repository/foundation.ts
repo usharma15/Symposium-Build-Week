@@ -39,7 +39,7 @@ export type CommentRow = {
   authorName: string;
   stance: string;
   body: string;
-  createdAt: string;
+  createdAt: Date | string;
 };
 
 let seedReady: Promise<void> | null = null;
@@ -452,7 +452,7 @@ const commentTreesFromRows = (rows: CommentRow[]) => {
       authorHandle: row.authorHandle ?? undefined,
       stance: row.stance,
       body: row.body,
-      createdAt: row.createdAt,
+      createdAt: new Date(row.createdAt).toISOString(),
       replies: buildTree(byParent, row.id)
     }));
 
