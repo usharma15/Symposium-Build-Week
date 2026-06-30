@@ -93,6 +93,20 @@ When `SYMPOSIUM_API_URL` is configured on Vercel, the Next API bridge treats Ren
 
 ## Deployment Preflight
 
+Before entering provider values into Render or Vercel, generate the secret-safe live env report:
+
+```bash
+npm run live:env:report
+```
+
+Once the live env vars are present in the shell or platform environment, use the strict form:
+
+```bash
+npm run live:env:check
+```
+
+`live:env:report` prints only key names and configured/missing status. It does not print secret values.
+
 Before deploying the Render API, set the provider env vars and run:
 
 ```bash
@@ -192,9 +206,10 @@ Still intentionally next:
 2. Create the Neon database and set `DATABASE_URL` or `POSTGRES_URL` locally for the migration pass.
 3. Create the Upstash Redis database.
 4. Create the Cloudflare R2 bucket and API token.
-5. Put the backend env vars in Render and run `npm run deploy:api:check`.
-6. Run `npm run db:migrate` against Neon.
-7. Deploy the Render API and run `SYMPOSIUM_SMOKE_URL=<render-url> npm run api:smoke`.
-8. Open `<render-url>/readyz` and confirm `status: "ready"` with no issues.
-9. Put frontend env vars in Vercel: `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, and `SYMPOSIUM_API_URL`.
-10. Redeploy Vercel and verify sign-in, `/api/auth/sync`, `/api/bootstrap`, post creation, comments, saves, and community browsing against the live API.
+5. Run `npm run live:env:report` locally with the captured values loaded, then run `npm run live:env:check`.
+6. Put the backend env vars in Render and run `npm run deploy:api:check`.
+7. Run `npm run db:migrate` against Neon.
+8. Deploy the Render API and run `SYMPOSIUM_SMOKE_URL=<render-url> npm run api:smoke`.
+9. Open `<render-url>/readyz` and confirm `status: "ready"` with no issues.
+10. Put frontend env vars in Vercel: `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, and `SYMPOSIUM_API_URL`.
+11. Redeploy Vercel and verify sign-in, `/api/auth/sync`, `/api/bootstrap`, post creation, comments, saves, and community browsing against the live API.
