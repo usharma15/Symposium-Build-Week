@@ -7,6 +7,7 @@ import { ZodError } from "zod";
 import { bootstrapResponseSchema } from "../../../packages/contracts/src";
 import { env, webOrigins } from "./config/env";
 import { assertDeploymentEnv } from "./config/preflight";
+import { getRuntimeReadiness } from "./config/readiness";
 import { ensureDatabase } from "./db/migrate";
 import {
   addComment,
@@ -108,6 +109,15 @@ export const buildApp = async () => {
     service: "symposium-api",
     time: new Date().toISOString()
   }));
+
+  app.get("/readyz", async (_request, reply) => {
+    try {
+      const readiness = await getRuntimeReadiness();
+      return reply.status(readiness.ok ? 200 : 503).send(readiness);
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
 
   await app.register(fastifyTRPCPlugin, {
     prefix: "/trpc",

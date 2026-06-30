@@ -16,6 +16,18 @@ const main = async () => {
     throw new Error(`/healthz failed with ${health.status}: ${JSON.stringify(health.body)}`);
   }
 
+  const readiness = await readJson<{
+    ok?: boolean;
+    status?: string;
+    strict?: boolean;
+    checks?: unknown[];
+    issues?: unknown[];
+  }>("/readyz");
+
+  if (readiness.status !== 200 || !readiness.body.ok || !Array.isArray(readiness.body.checks)) {
+    throw new Error(`/readyz failed with ${readiness.status}: ${JSON.stringify(readiness.body)}`);
+  }
+
   const bootstrap = await readJson<{
     profiles?: Record<string, unknown>;
     items?: unknown[];
@@ -75,6 +87,8 @@ const main = async () => {
         ok: true,
         baseUrl,
         service: health.body.service,
+        readiness: readiness.body.status,
+        strict: readiness.body.strict,
         profiles: profileCount,
         items: itemCount,
         communities: communityCount,

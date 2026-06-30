@@ -29,6 +29,8 @@ npm run db:migrate
 npm run api:smoke
 ```
 
+Use `.env.example` as the provider checklist. The API exposes `/healthz` for liveness and `/readyz` for live provider readiness without returning secret values.
+
 The current Next API routes proxy to the live backend when `SYMPOSIUM_API_URL` is set. Without that env var, local development continues to use the v0 file/Postgres fallback.
 Once `SYMPOSIUM_API_URL` is set, the bridge treats the live backend as authoritative and returns a controlled 503 if Render is unavailable.
 

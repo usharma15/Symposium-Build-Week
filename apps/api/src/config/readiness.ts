@@ -1,0 +1,156 @@
+import { cleanHandle } from "@/lib/symposiumCore";
+import { getPool } from "../db/client";
+import {
+  databaseUrl,
+  env,
+  hasR2Config,
+  hasRedisConfig,
+  requireAuthForWrites,
+  webOrigins
+} from "./env";
+import { deploymentEnvIssues } from "./preflight";
+
+type RuntimeCheck = {
+  key: string;
+  label: string;
+  configured: boolean;
+  required: boolean;
+  ok: boolean;
+  detail?: string;
+};
+
+export type RuntimeReadiness = {
+  ok: boolean;
+  status: "ready" | "local" | "not_ready";
+  strict: boolean;
+  checkedAt: string;
+  checks: RuntimeCheck[];
+  issues: string[];
+};
+
+const localOriginPattern = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/;
+
+const requiredCheck = (
+  key: string,
+  label: string,
+  configured: boolean,
+  required: boolean,
+  detail?: string
+): RuntimeCheck => ({
+  key,
+  label,
+  configured,
+  required,
+  ok: !required || configured,
+  detail
+});
+
+export const getRuntimeReadiness = async (): Promise<RuntimeReadiness> => {
+  const strict = env.SYMPOSIUM_STRICT_ENV;
+  const ownerHandle = cleanHandle(env.SYMPOSIUM_OWNER_HANDLE);
+  const ownerBindingReady = ownerHandle !== "@usharma" || Boolean(env.SYMPOSIUM_OWNER_CLERK_USER_ID);
+  const issues = [...deploymentEnvIssues()];
+  const checks: RuntimeCheck[] = [];
+
+  const databaseCheck = requiredCheck(
+    "database",
+    "Neon/Postgres connection string",
+    Boolean(databaseUrl),
+    strict,
+    databaseUrl ? "configured" : "missing"
+  );
+
+  if (databaseUrl) {
+    try {
+      await getPool().query("SELECT 1");
+      databaseCheck.detail = "connection verified";
+    } catch {
+      databaseCheck.ok = false;
+      databaseCheck.detail = "connection failed";
+      issues.push("Database connection check failed.");
+    }
+  }
+
+  checks.push(
+    databaseCheck,
+    requiredCheck(
+      "clerk_secret",
+      "Clerk backend secret",
+      Boolean(env.CLERK_SECRET_KEY),
+      strict || requireAuthForWrites,
+      env.CLERK_SECRET_KEY ? "configured" : "missing"
+    ),
+    {
+      key: "write_auth",
+      label: "Authenticated writes",
+      configured: requireAuthForWrites,
+      required: strict,
+      ok: !strict || requireAuthForWrites,
+      detail: requireAuthForWrites ? "required" : "not enforced"
+    },
+    {
+      key: "dev_actor",
+      label: "Development actor fallback disabled",
+      configured: !env.SYMPOSIUM_ALLOW_DEV_ACTOR,
+      required: strict,
+      ok: !strict || !env.SYMPOSIUM_ALLOW_DEV_ACTOR,
+      detail: env.SYMPOSIUM_ALLOW_DEV_ACTOR ? "enabled" : "disabled"
+    },
+    {
+      key: "web_origins",
+      label: "Deployed web origins",
+      configured: webOrigins.length > 0,
+      required: strict,
+      ok:
+        !strict ||
+        (webOrigins.length > 0 && webOrigins.every((origin) => !localOriginPattern.test(origin))),
+      detail: `${webOrigins.length} origin${webOrigins.length === 1 ? "" : "s"} configured`
+    },
+    requiredCheck(
+      "redis",
+      "Upstash Redis",
+      hasRedisConfig,
+      strict,
+      hasRedisConfig ? "configured" : "missing"
+    ),
+    requiredCheck(
+      "r2",
+      "Cloudflare R2 attachments",
+      hasR2Config,
+      strict,
+      hasR2Config ? "configured" : "missing"
+    ),
+    {
+      key: "owner_binding",
+      label: "Reserved owner handle binding",
+      configured: ownerBindingReady,
+      required: strict,
+      ok: !strict || ownerBindingReady,
+      detail: env.SYMPOSIUM_OWNER_CLERK_USER_ID ? "configured" : "missing"
+    },
+    {
+      key: "ai_provider",
+      label: "AI tablet provider",
+      configured: Boolean(env.OPENAI_API_KEY),
+      required: false,
+      ok: true,
+      detail: env.OPENAI_API_KEY ? "configured" : "fallback mode"
+    }
+  );
+
+  const requiredFailures = checks
+    .filter((check) => check.required && !check.ok)
+    .map((check) => `${check.label} is not ready.`);
+
+  const uniqueIssues = [...new Set([...issues, ...requiredFailures])];
+  const ok = uniqueIssues.length === 0;
+
+  return {
+    ok,
+    status: ok ? (strict ? "ready" : "local") : "not_ready",
+    strict,
+    checkedAt: new Date().toISOString(),
+    checks,
+    issues: uniqueIssues
+  };
+};

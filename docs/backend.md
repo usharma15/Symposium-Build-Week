@@ -18,6 +18,7 @@ The API listens on `http://localhost:4000` by default.
 Useful endpoints:
 
 - `GET /healthz`
+- `GET /readyz`
 - `GET /v1/bootstrap`
 - `GET /v1/posts`
 - `POST /v1/posts`
@@ -115,11 +116,13 @@ For a smoke test against a running API:
 npm run api:smoke
 ```
 
-By default this checks `http://localhost:4000`. To check Render:
+By default this checks `http://localhost:4000`. It verifies liveness, readiness, bootstrap data, communities, community call reads, opportunity reads, and public validation error handling. To check Render:
 
 ```bash
 SYMPOSIUM_SMOKE_URL=https://your-render-api.onrender.com npm run api:smoke
 ```
+
+`/healthz` is a cheap process liveness check. `/readyz` is the safer deployment-readiness check: it reports whether the live provider boundary is configured without returning secret values. In strict live mode it expects Neon/Postgres, Clerk, non-local web origins, authenticated writes, disabled dev actors, Upstash, R2, and the reserved owner handle binding. The AI tablet provider is reported separately because the fallback response is valid until model execution policy is finalized.
 
 ## Database
 
@@ -184,5 +187,6 @@ Still intentionally next:
 5. Put the backend env vars in Render and run `npm run deploy:api:check`.
 6. Run `npm run db:migrate` against Neon.
 7. Deploy the Render API and run `SYMPOSIUM_SMOKE_URL=<render-url> npm run api:smoke`.
-8. Put frontend env vars in Vercel: `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, and `SYMPOSIUM_API_URL`.
-9. Redeploy Vercel and verify sign-in, `/api/auth/sync`, `/api/bootstrap`, post creation, comments, saves, and community browsing against the live API.
+8. Open `<render-url>/readyz` and confirm `status: "ready"` with no issues.
+9. Put frontend env vars in Vercel: `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, and `SYMPOSIUM_API_URL`.
+10. Redeploy Vercel and verify sign-in, `/api/auth/sync`, `/api/bootstrap`, post creation, comments, saves, and community browsing against the live API.

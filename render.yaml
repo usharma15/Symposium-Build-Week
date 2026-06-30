@@ -45,3 +45,7 @@ services:
         sync: false
       - key: R2_PUBLIC_BASE_URL
         sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: SYMPOSIUM_AI_MODEL
+        value: gpt-5.4-mini
