@@ -2,7 +2,7 @@ services:
   - type: web
     name: symposium-api
     env: node
-    plan: free
+    plan: starter
     buildCommand: npm ci && npm run deploy:api:check
     startCommand: npm run api:start
     healthCheckPath: /healthz
