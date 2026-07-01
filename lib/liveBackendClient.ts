@@ -11,6 +11,8 @@ type LiveBackendOptions = {
 
 export const hasLiveBackend = Boolean(backendUrl);
 
+export const liveBackendPath = (path: string) => (backendUrl ? `${backendUrl}${path}` : null);
+
 export const proxyLiveBackend = async (path: string, options: LiveBackendOptions = {}) => {
   if (!backendUrl) return null;
 
@@ -42,5 +44,34 @@ export const proxyLiveBackend = async (path: string, options: LiveBackendOptions
       },
       { status: 503 }
     );
+  }
+};
+
+export const proxyLiveBackendStream = async (path: string) => {
+  const url = liveBackendPath(path);
+  if (!url) return null;
+
+  try {
+    const token = clerkEnabled ? await (await auth()).getToken().catch(() => null) : null;
+    const response = await fetch(url, {
+      headers: {
+        Accept: "text/event-stream",
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+      },
+      cache: "no-store"
+    });
+
+    return new Response(response.body, {
+      status: response.status,
+      headers: {
+        "Content-Type": response.headers.get("content-type") ?? "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no"
+      }
+    });
+  } catch (error) {
+    console.error("SYMPOSIUM live event stream unavailable.", error);
+    return null;
   }
 };

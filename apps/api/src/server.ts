@@ -9,6 +9,7 @@ import { attachRealtime } from "./realtime";
 import { appRouter } from "./router";
 import { registerAttachmentRoutes } from "./routes/attachmentRoutes";
 import { registerCommunityRoutes } from "./routes/communityRoutes";
+import { registerEventRoutes } from "./routes/eventRoutes";
 import { registerPostRoutes } from "./routes/postRoutes";
 import { registerProfileRoutes } from "./routes/profileRoutes";
 import { registerSystemRoutes } from "./routes/systemRoutes";
@@ -41,6 +42,7 @@ export const buildApp = async () => {
   registerCommunityRoutes(app);
   registerAttachmentRoutes(app);
   registerWorkspaceRoutes(app);
+  registerEventRoutes(app);
 
   attachRealtime(app);
   return app;

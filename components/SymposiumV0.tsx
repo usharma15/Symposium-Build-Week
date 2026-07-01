@@ -108,6 +108,23 @@ type AttachmentUploadResponse = {
   publicUrl?: string | null;
 };
 
+type LiveEventPayload = {
+  item?: unknown;
+  follow?: ProfileFollowRecord;
+  action?: PostAction;
+};
+
+type SymposiumLiveEvent = {
+  id?: string;
+  cursor?: string;
+  kind: string;
+  actorHandle?: string;
+  subjectType: string;
+  subjectId: string;
+  payload?: LiveEventPayload;
+  createdAt?: string;
+};
+
 type SymposiumAuthState = {
   clerkEnabled: boolean;
   authLoaded: boolean;
@@ -314,6 +331,15 @@ const commentTreeHasAuthor = (comments: InquiryComment[], person: ResearchProfil
 const itemAuthoredByProfile = (item: InquiryItem, person: ResearchProfile) =>
   item.authorHandle ? item.authorHandle === person.handle : item.author === person.name;
 
+const isLiveInquiryItem = (value: unknown): value is InquiryItem =>
+  typeof value === "object" &&
+  value !== null &&
+  typeof (value as InquiryItem).id === "string" &&
+  typeof (value as InquiryItem).title === "string" &&
+  typeof (value as InquiryItem).kind === "string" &&
+  typeof (value as InquiryItem).room === "string" &&
+  typeof (value as InquiryItem).metrics === "object";
+
 const uniqueItemsById = (items: InquiryItem[]) => [...new Map(items.map((item) => [item.id, item])).values()];
 
 const inferredLikesPublic = (person: ResearchProfile) => person.likesPublic ?? person.handle.length % 5 !== 0;
@@ -406,8 +432,12 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   const [authError, setAuthError] = useState("");
   const itemsRef = useRef(items);
   const profilesRef = useRef(profiles);
+  const currentProfileRef = useRef(currentProfile);
+  const selectedProfileNameRef = useRef(selectedProfileName);
   const actionVersionsRef = useRef<Record<string, number>>({});
   const actionDesiredStateRef = useRef<Record<string, boolean | undefined>>({});
+  const liveEventCursorRef = useRef("");
+  const liveRefreshTimerRef = useRef<number | null>(null);
   const [syncedClerkUserId, setSyncedClerkUserId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState(
     "First note: make the thing feel alive without pretending the whole world is built yet."
@@ -440,6 +470,14 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   useEffect(() => {
     profilesRef.current = profiles;
   }, [profiles]);
+
+  useEffect(() => {
+    currentProfileRef.current = currentProfile;
+  }, [currentProfile]);
+
+  useEffect(() => {
+    selectedProfileNameRef.current = selectedProfileName;
+  }, [selectedProfileName]);
   const getPublishedRecency = (item: InquiryItem) => relativeDateScore(item.date);
   const profileActivityKey = (handle: string, action: PostAction, itemId: string) =>
     `profile:${cleanHandle(handle)}:${action}:${itemId}`;
@@ -606,6 +644,179 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     const data = (await response.json()) as ProfileFollowResponse;
     applySocialLists(normalizedHandle, socialListsFromResponse(data));
   };
+
+  const mergeLiveItem = (incoming: InquiryItem) => {
+    const currentItems = itemsRef.current;
+    const existingIndex = currentItems.findIndex((item) => item.id === incoming.id);
+    const nextItems =
+      existingIndex >= 0
+        ? currentItems.map((item) => (item.id === incoming.id ? incoming : item))
+        : [incoming, ...currentItems];
+
+    itemsRef.current = nextItems;
+    setItems(nextItems);
+    persistLocalSnapshot(nextItems, profilesRef.current, currentProfileRef.current);
+  };
+
+  const mergeLiveFollow = (record: ProfileFollowRecord | undefined, active: boolean) => {
+    const followerHandle = cleanHandle(String(record?.followerHandle ?? ""));
+    const followingHandle = cleanHandle(String(record?.followingHandle ?? ""));
+    if (!followerHandle || !followingHandle || followerHandle === "@" || followingHandle === "@") return;
+
+    setProfileSocialLists((current) => {
+      const followerLists = current[followerHandle] ?? { following: [], followers: [] };
+      const followingLists = current[followingHandle] ?? { following: [], followers: [] };
+      const nextFollowerFollowing = active
+        ? Array.from(new Set([...followerLists.following, followingHandle]))
+        : followerLists.following.filter((handle) => handle !== followingHandle);
+      const nextFollowingFollowers = active
+        ? Array.from(new Set([...followingLists.followers, followerHandle]))
+        : followingLists.followers.filter((handle) => handle !== followerHandle);
+
+      return {
+        ...current,
+        [followerHandle]: { ...followerLists, following: nextFollowerFollowing },
+        [followingHandle]: { ...followingLists, followers: nextFollowingFollowers }
+      };
+    });
+
+    if (followerHandle === currentProfileRef.current.handle) {
+      setFollowingHandles((currentHandles) => {
+        const storedHandles = readLocalFollowing(followerHandle);
+        const merged = Array.from(new Set([...currentHandles, ...storedHandles]));
+        const next = active
+          ? Array.from(new Set([...merged, followingHandle]))
+          : merged.filter((handle) => handle !== followingHandle);
+        persistLocalFollowing(followerHandle, next);
+        return next;
+      });
+    }
+  };
+
+  const scheduleLiveRefresh = () => {
+    if (liveRefreshTimerRef.current) return;
+
+    liveRefreshTimerRef.current = window.setTimeout(() => {
+      liveRefreshTimerRef.current = null;
+      const handle = currentProfileRef.current.handle;
+      refreshData(handle).catch(() => undefined);
+      refreshFollowing(handle).catch(() => undefined);
+      const selectedKey = selectedProfileNameRef.current;
+      const selected = selectedKey
+        ? profilesRef.current[selectedKey] ??
+          Object.values(profilesRef.current).find((person) => person.name === selectedKey) ??
+          getProfileForName(selectedKey)
+        : null;
+      if (selected?.handle) refreshProfileFollows(selected.handle).catch(() => undefined);
+    }, 650);
+  };
+
+  const itemActionActive = (item: InquiryItem, action: PostAction, handle: string) => {
+    if (action === "save") return isSavedBy(item, handle, profile.handle);
+    if (action === "signal") return hasHandle(item.signaledBy, handle);
+    if (action === "fork") return hasHandle(item.forkedBy, handle);
+    return undefined;
+  };
+
+  const mergeLiveEvent = (event: SymposiumLiveEvent) => {
+    if (event.cursor) liveEventCursorRef.current = event.cursor;
+
+    const payload = event.payload ?? {};
+    if (payload.follow || event.kind === "profile.followed" || event.kind === "profile.unfollowed") {
+      mergeLiveFollow(payload.follow, event.kind !== "profile.unfollowed");
+    }
+
+    if (isLiveInquiryItem(payload.item)) {
+      const action = payload.action;
+      if (action && event.actorHandle === currentProfileRef.current.handle) {
+        const key = `${payload.item.id}:${action}:${currentProfileRef.current.handle}`;
+        const desired = actionDesiredStateRef.current[key];
+        const serverActive = itemActionActive(payload.item, action, currentProfileRef.current.handle);
+        if (desired !== undefined && serverActive !== desired) return;
+      }
+
+      mergeLiveItem(payload.item);
+      return;
+    }
+
+    if (
+      event.kind.startsWith("post.") ||
+      event.kind.startsWith("comment.") ||
+      event.kind.startsWith("profile.") ||
+      event.kind.startsWith("community.") ||
+      event.kind.startsWith("note.")
+    ) {
+      scheduleLiveRefresh();
+    }
+  };
+
+  const fetchLiveEvents = async () => {
+    const cursor = liveEventCursorRef.current;
+    const response = await fetch(`/api/events${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`, {
+      cache: "no-store"
+    });
+    if (!response.ok) return;
+
+    const data = (await response.json()) as { events?: SymposiumLiveEvent[]; cursor?: string | null };
+    for (const event of data.events ?? []) mergeLiveEvent(event);
+    if (data.cursor) liveEventCursorRef.current = data.cursor;
+  };
+
+  useEffect(() => {
+    if (entryMode === "loading") return undefined;
+
+    let closed = false;
+    let pollTimer: number | null = null;
+    let source: EventSource | null = null;
+
+    const startPolling = () => {
+      if (pollTimer) return;
+      void fetchLiveEvents().catch(() => undefined);
+      pollTimer = window.setInterval(() => {
+        if (!closed) void fetchLiveEvents().catch(() => undefined);
+      }, 2500);
+    };
+
+    if ("EventSource" in window) {
+      const cursor = liveEventCursorRef.current;
+      source = new EventSource(`/api/events/stream${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`);
+      source.onopen = () => {
+        if (pollTimer) {
+          window.clearInterval(pollTimer);
+          pollTimer = null;
+        }
+      };
+      source.addEventListener("symposium-ready", () => {
+        if (!closed) setSyncStatus((status) => (status === "Loading live data" ? "Live updates connected" : status));
+      });
+      source.addEventListener("symposium-event", (message) => {
+        if (closed) return;
+        try {
+          mergeLiveEvent(JSON.parse((message as MessageEvent<string>).data) as SymposiumLiveEvent);
+        } catch {
+          scheduleLiveRefresh();
+        }
+      });
+      source.onerror = () => {
+        if (!closed) {
+          setSyncStatus("Live updates reconnecting");
+          startPolling();
+        }
+      };
+    } else {
+      startPolling();
+    }
+
+    return () => {
+      closed = true;
+      source?.close();
+      if (pollTimer) window.clearInterval(pollTimer);
+      if (liveRefreshTimerRef.current) {
+        window.clearTimeout(liveRefreshTimerRef.current);
+        liveRefreshTimerRef.current = null;
+      }
+    };
+  }, [entryMode]);
 
   useEffect(() => {
     const storedTheme = window.localStorage.getItem("symposium-theme") as Theme | null;

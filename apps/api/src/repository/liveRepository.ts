@@ -307,7 +307,7 @@ export const createPost = async (rawInput: unknown, actor: Actor) => {
     actorHandle: item.authorHandle,
     subjectType: "post",
     subjectId: item.id,
-    payload: { room: item.room, kind: item.kind, title: item.title }
+    payload: { item, room: item.room, kind: item.kind, title: item.title }
   });
 
   return item;
@@ -334,29 +334,101 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
 
   if (!hasDatabase()) return comment;
 
-  const nextCritiques = String(metricNumber(existing.metrics.critiques) + 1);
-  const nextSignals = updateSignalValue(existing.signals, "Critiques", nextCritiques);
+  await ensureLiveData();
+  const client = await getPool().connect();
+  let updatedItem: InquiryItemContract | null = null;
 
-  await getPool().query(
-    `INSERT INTO comments (id, post_id, parent_id, author_handle, author_name, stance, body)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [comment.id, postId, comment.parentId, comment.authorHandle, comment.author, comment.stance, comment.body]
-  );
-  await getPool().query(
-    `UPDATE posts
-     SET metrics = jsonb_set(metrics, '{critiques}', to_jsonb(($2)::text)),
-         signals = $3,
-         updated_at = now()
-     WHERE id = $1`,
-    [postId, nextCritiques, JSON.stringify(nextSignals)]
-  );
+  try {
+    await client.query("BEGIN");
+    const postResult = await client.query<SnapshotRow>(
+      `SELECT
+        id,
+        kind,
+        room,
+        title,
+        author_handle AS "authorHandle",
+        author_name AS "authorName",
+        affiliation,
+        date_label AS "dateLabel",
+        status,
+        metrics,
+        gathering_reason AS "gatheringReason",
+        excerpt,
+        body,
+        tags,
+        signals,
+        claims,
+        objections,
+        evidence,
+        tests,
+        forks,
+        saved,
+        saved_by AS "savedBy",
+        signaled_by AS "signaledBy",
+        forked_by AS "forkedBy"
+       FROM posts
+       WHERE id = $1
+       FOR UPDATE`,
+      [postId]
+    );
+
+    const row = postResult.rows[0];
+    if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+
+    const lockedItem = rowToItem(row, []);
+    const nextCritiques = String(metricNumber(lockedItem.metrics.critiques) + 1);
+    const nextMetrics = { ...lockedItem.metrics, critiques: nextCritiques };
+    const nextSignals = updateSignalValue(lockedItem.signals, "Critiques", nextCritiques);
+
+    await client.query(
+      `INSERT INTO comments (id, post_id, parent_id, author_handle, author_name, stance, body)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [comment.id, postId, comment.parentId, comment.authorHandle, comment.author, comment.stance, comment.body]
+    );
+    await client.query(
+      `UPDATE posts
+       SET metrics = $2,
+           signals = $3,
+           updated_at = now()
+       WHERE id = $1`,
+      [postId, JSON.stringify(nextMetrics), JSON.stringify(nextSignals)]
+    );
+
+    const commentsResult = await client.query<CommentRow>(
+      `SELECT
+        id,
+        post_id AS "postId",
+        parent_id AS "parentId",
+        author_handle AS "authorHandle",
+        author_name AS "authorName",
+        stance,
+        body,
+        created_at AS "createdAt"
+       FROM comments
+       WHERE post_id = $1
+       ORDER BY created_at ASC`,
+      [postId]
+    );
+    const commentsByPost = commentTreesFromRows(commentsResult.rows);
+    updatedItem = rowToItem(
+      { ...row, metrics: nextMetrics, signals: nextSignals },
+      commentsByPost.get(postId) ?? []
+    );
+
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 
   await emitEvent({
     kind: "comment.created",
     actorHandle: comment.authorHandle,
     subjectType: "post",
     subjectId: postId,
-    payload: { commentId: comment.id, parentId: comment.parentId }
+    payload: { comment, item: updatedItem, commentId: comment.id, parentId: comment.parentId }
   });
 
   return comment;
@@ -494,7 +566,8 @@ export const applyPostAction = async (postId: string, rawInput: unknown, actor: 
     kind: `post.${input.action}`,
     actorHandle: handle,
     subjectType: "post",
-    subjectId: postId
+    subjectId: postId,
+    payload: { action: input.action, active: input.active, item: updated }
   });
 
   return updated;
@@ -525,7 +598,8 @@ export const followProfile = async (rawInput: unknown, actor: Actor) => {
     kind: "profile.followed",
     actorHandle: follower,
     subjectType: "profile",
-    subjectId: following
+    subjectId: following,
+    payload: { follow: { followerHandle: follower, followingHandle: following, status: input.status } }
   });
 
   return { followerHandle: follower, followingHandle: following, status: input.status };
@@ -548,7 +622,8 @@ export const unfollowProfile = async (rawInput: unknown, actor: Actor) => {
     kind: "profile.unfollowed",
     actorHandle: follower,
     subjectType: "profile",
-    subjectId: following
+    subjectId: following,
+    payload: { follow: { followerHandle: follower, followingHandle: following, status: "none" } }
   });
 
   return { followerHandle: follower, followingHandle: following, status: "none" };
