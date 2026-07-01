@@ -14,10 +14,15 @@ export const postRooms = [
 
 export type PostAction = "signal" | "save" | "fork" | "read";
 
+const legacyHandleAliases: Record<string, string> = {
+  "@usharma": "@udayan"
+};
+
 export const cleanHandle = (handle: string) => {
   const trimmed = handle.trim().toLowerCase();
   const withAt = trimmed.startsWith("@") ? trimmed : `@${trimmed}`;
-  return withAt.replace(/[^@a-z0-9_]+/g, "_").replace(/_+/g, "_").replace(/^@_/, "@").replace(/_$/, "");
+  const clean = withAt.replace(/[^@a-z0-9_]+/g, "_").replace(/_+/g, "_").replace(/^@_/, "@").replace(/_$/, "");
+  return legacyHandleAliases[clean] ?? clean;
 };
 
 export const normalizeSearchPhrase = (value: string) => value.trim().toLowerCase().replace(/\s+/g, " ");

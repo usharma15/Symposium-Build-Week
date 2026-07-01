@@ -48,7 +48,7 @@ export const deploymentEnvIssues = () => {
   }
 
   const ownerHandle = cleanHandle(env.SYMPOSIUM_OWNER_HANDLE);
-  if (ownerHandle === "@usharma" && !env.SYMPOSIUM_OWNER_CLERK_USER_ID) {
+  if (ownerHandle === "@udayan" && !env.SYMPOSIUM_OWNER_CLERK_USER_ID) {
     issues.push("Set SYMPOSIUM_OWNER_CLERK_USER_ID before the owner handle is allowed to bind to a Clerk account.");
   }
 

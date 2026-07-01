@@ -23,7 +23,7 @@ const envSchema = z.object({
   CLERK_SECRET_KEY: z.string().optional(),
   CLERK_JWT_AUDIENCE: z.string().optional(),
   SYMPOSIUM_OWNER_CLERK_USER_ID: z.string().optional(),
-  SYMPOSIUM_OWNER_HANDLE: z.string().default("@usharma"),
+  SYMPOSIUM_OWNER_HANDLE: z.string().default("@udayan"),
   SYMPOSIUM_WEB_ORIGINS: z.string().default("http://localhost:3000,http://127.0.0.1:3000"),
   SYMPOSIUM_REQUIRE_AUTH: booleanFromEnv(process.env.NODE_ENV === "production"),
   SYMPOSIUM_ALLOW_DEV_ACTOR: booleanFromEnv(process.env.NODE_ENV !== "production"),

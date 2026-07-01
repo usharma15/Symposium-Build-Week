@@ -45,7 +45,7 @@ const section = (checks: EnvCheck[]): EnvSection => ({
 });
 
 const ownerHandle = cleanHandle(env.SYMPOSIUM_OWNER_HANDLE);
-const ownerBindingReady = ownerHandle !== "@usharma" || isSet(env.SYMPOSIUM_OWNER_CLERK_USER_ID);
+const ownerBindingReady = ownerHandle !== "@udayan" || isSet(env.SYMPOSIUM_OWNER_CLERK_USER_ID);
 const hasNonLocalWebOrigin =
   webOrigins.length > 0 && webOrigins.every((origin) => !localOriginPattern.test(origin));
 

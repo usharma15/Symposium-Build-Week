@@ -4,7 +4,7 @@ const baseUrl = (
   "http://localhost:4000"
 ).replace(/\/$/, "");
 
-const smokeHandle = process.env.SYMPOSIUM_SMOKE_HANDLE ?? "@usharma";
+const smokeHandle = process.env.SYMPOSIUM_SMOKE_HANDLE ?? "@udayan";
 const smokeName = process.env.SYMPOSIUM_SMOKE_NAME ?? "SYMPOSIUM Smoke";
 const smokeToken = process.env.SYMPOSIUM_SMOKE_TOKEN;
 

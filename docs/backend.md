@@ -58,7 +58,7 @@ SYMPOSIUM_WEB_ORIGINS=https://your-vercel-domain.vercel.app
 SYMPOSIUM_REQUIRE_AUTH=true
 SYMPOSIUM_ALLOW_DEV_ACTOR=false
 SYMPOSIUM_OWNER_CLERK_USER_ID=user_...
-SYMPOSIUM_OWNER_HANDLE=@usharma
+SYMPOSIUM_OWNER_HANDLE=@udayan
 UPSTASH_REDIS_REST_URL=https://...
 UPSTASH_REDIS_REST_TOKEN=...
 R2_ACCOUNT_ID=...
@@ -122,7 +122,7 @@ With `SYMPOSIUM_STRICT_ENV=true`, the API refuses to start unless the live provi
 - dev actor fallback disabled.
 - Upstash Redis config.
 - Cloudflare R2 config.
-- owner Clerk user mapping for the reserved `@usharma` handle.
+- owner Clerk user mapping for the reserved `@udayan` handle.
 
 For a smoke test against a running API:
 

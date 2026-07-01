@@ -48,7 +48,7 @@ const requiredCheck = (
 export const getRuntimeReadiness = async (): Promise<RuntimeReadiness> => {
   const strict = env.SYMPOSIUM_STRICT_ENV;
   const ownerHandle = cleanHandle(env.SYMPOSIUM_OWNER_HANDLE);
-  const ownerBindingReady = ownerHandle !== "@usharma" || Boolean(env.SYMPOSIUM_OWNER_CLERK_USER_ID);
+  const ownerBindingReady = ownerHandle !== "@udayan" || Boolean(env.SYMPOSIUM_OWNER_CLERK_USER_ID);
   const issues = [...deploymentEnvIssues()];
   const checks: RuntimeCheck[] = [];
 

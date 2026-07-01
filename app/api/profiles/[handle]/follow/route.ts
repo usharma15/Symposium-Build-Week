@@ -34,7 +34,7 @@ export async function POST(request: Request, context: Context) {
   });
   if (live) return live;
 
-  const followerHandle = cleanHandle(String(body.actorHandle ?? "@usharma"));
+  const followerHandle = cleanHandle(String(body.actorHandle ?? "@udayan"));
 
   if (followerHandle === targetHandle) {
     return jsonError("You cannot follow yourself.", 400);
@@ -61,7 +61,7 @@ export async function DELETE(request: Request, context: Context) {
 
   return Response.json({
     follow: {
-      followerHandle: cleanHandle(String(body.actorHandle ?? "@usharma")),
+      followerHandle: cleanHandle(String(body.actorHandle ?? "@udayan")),
       followingHandle: targetHandle,
       status: "none"
     }

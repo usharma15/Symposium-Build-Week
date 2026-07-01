@@ -94,7 +94,7 @@ export const getActorFromRequest = async (request: FastifyRequest): Promise<Acto
 
 export const requireActor = (actor: Actor) => {
   if (!requireAuthForWrites && env.SYMPOSIUM_ALLOW_DEV_ACTOR) {
-    return actor.handle ? actor : { ...actor, handle: "@usharma", isAuthenticated: true, source: "dev" as const };
+    return actor.handle ? actor : { ...actor, handle: "@udayan", isAuthenticated: true, source: "dev" as const };
   }
 
   if (!actor.isAuthenticated) {

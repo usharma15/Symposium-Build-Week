@@ -465,6 +465,177 @@ const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS ai_conversations_context_idx ON ai_conversations (context_type, context_id);
       CREATE INDEX IF NOT EXISTS ai_messages_conversation_idx ON ai_messages (conversation_id);
     `
+  },
+  {
+    id: "0003_canonicalize_udayan_handle",
+    sql: `
+      DO $$
+      DECLARE
+        legacy_handle CONSTANT TEXT := '@usharma';
+        canonical_handle CONSTANT TEXT := '@udayan';
+      BEGIN
+        IF EXISTS (SELECT 1 FROM profiles WHERE handle = legacy_handle)
+           AND NOT EXISTS (SELECT 1 FROM profiles WHERE handle = canonical_handle) THEN
+          INSERT INTO profiles (
+            handle, user_id, email, name, avatar_url, likes_public, reshares_public,
+            role, location, bio, fields, preferences, created_at, updated_at
+          )
+          SELECT
+            canonical_handle, user_id, email, name, avatar_url, likes_public, reshares_public,
+            role, location, bio, fields, preferences, created_at, now()
+          FROM profiles
+          WHERE handle = legacy_handle;
+        END IF;
+
+        IF EXISTS (SELECT 1 FROM profiles WHERE handle = canonical_handle) THEN
+          IF EXISTS (SELECT 1 FROM users WHERE handle = canonical_handle) THEN
+            UPDATE users SET handle = NULL, updated_at = now() WHERE handle = legacy_handle;
+          ELSE
+            UPDATE users SET handle = canonical_handle, updated_at = now() WHERE handle = legacy_handle;
+          END IF;
+
+          DELETE FROM profile_follows
+          WHERE (follower_handle = legacy_handle AND following_handle = canonical_handle)
+             OR (follower_handle = canonical_handle AND following_handle = legacy_handle)
+             OR (follower_handle = legacy_handle AND following_handle = legacy_handle);
+
+          WITH normalized AS (
+            SELECT
+              CASE WHEN follower_handle = legacy_handle THEN canonical_handle ELSE follower_handle END AS follower_handle,
+              CASE WHEN following_handle = legacy_handle THEN canonical_handle ELSE following_handle END AS following_handle,
+              status,
+              created_at,
+              updated_at
+            FROM profile_follows
+            WHERE follower_handle = legacy_handle OR following_handle = legacy_handle
+          )
+          INSERT INTO profile_follows (follower_handle, following_handle, status, created_at, updated_at)
+          SELECT follower_handle, following_handle, status, created_at, updated_at
+          FROM normalized
+          WHERE follower_handle <> following_handle
+          ON CONFLICT (follower_handle, following_handle) DO NOTHING;
+
+          DELETE FROM profile_follows
+          WHERE follower_handle = legacy_handle OR following_handle = legacy_handle;
+
+          INSERT INTO community_memberships (community_id, profile_handle, role, status, created_at)
+          SELECT community_id, canonical_handle, role, status, created_at
+          FROM community_memberships
+          WHERE profile_handle = legacy_handle
+          ON CONFLICT (community_id, profile_handle) DO NOTHING;
+          DELETE FROM community_memberships WHERE profile_handle = legacy_handle;
+
+          INSERT INTO call_participants (call_id, profile_handle, role, joined_at, left_at)
+          SELECT call_id, canonical_handle, role, joined_at, left_at
+          FROM call_participants
+          WHERE profile_handle = legacy_handle
+          ON CONFLICT (call_id, profile_handle) DO NOTHING;
+          DELETE FROM call_participants WHERE profile_handle = legacy_handle;
+
+          INSERT INTO conversation_participants (conversation_id, profile_handle, role, last_read_at, created_at)
+          SELECT conversation_id, canonical_handle, role, last_read_at, created_at
+          FROM conversation_participants
+          WHERE profile_handle = legacy_handle
+          ON CONFLICT (conversation_id, profile_handle) DO NOTHING;
+          DELETE FROM conversation_participants WHERE profile_handle = legacy_handle;
+
+          INSERT INTO message_reads (message_id, profile_handle, read_at)
+          SELECT message_id, canonical_handle, read_at
+          FROM message_reads
+          WHERE profile_handle = legacy_handle
+          ON CONFLICT (message_id, profile_handle) DO NOTHING;
+          DELETE FROM message_reads WHERE profile_handle = legacy_handle;
+
+          INSERT INTO post_actions (post_id, actor_handle, action, count, created_at, updated_at)
+          SELECT post_id, canonical_handle, action, count, created_at, updated_at
+          FROM post_actions
+          WHERE actor_handle = legacy_handle
+          ON CONFLICT (post_id, actor_handle, action) DO UPDATE SET
+            count = GREATEST(post_actions.count, EXCLUDED.count),
+            updated_at = now();
+          DELETE FROM post_actions WHERE actor_handle = legacy_handle;
+
+          UPDATE posts SET author_handle = canonical_handle, updated_at = now() WHERE author_handle = legacy_handle;
+          UPDATE comments SET author_handle = canonical_handle, updated_at = now() WHERE author_handle = legacy_handle;
+          UPDATE attachments SET uploader_handle = canonical_handle, updated_at = now() WHERE uploader_handle = legacy_handle;
+          UPDATE attachments SET owner_id = canonical_handle, updated_at = now()
+            WHERE owner_type = 'profile' AND owner_id = legacy_handle;
+          UPDATE community_calls SET host_handle = canonical_handle, updated_at = now() WHERE host_handle = legacy_handle;
+          UPDATE opportunity_posts SET creator_handle = canonical_handle, updated_at = now() WHERE creator_handle = legacy_handle;
+          UPDATE note_publications SET publisher_handle = canonical_handle WHERE publisher_handle = legacy_handle;
+          UPDATE ai_conversations SET owner_handle = canonical_handle, updated_at = now() WHERE owner_handle = legacy_handle;
+          UPDATE messages SET sender_handle = canonical_handle, updated_at = now() WHERE sender_handle = legacy_handle;
+          UPDATE notifications SET profile_handle = canonical_handle WHERE profile_handle = legacy_handle;
+          UPDATE moderation_reports SET reporter_handle = canonical_handle, updated_at = now() WHERE reporter_handle = legacy_handle;
+          UPDATE credit_ledger_entries SET actor_handle = canonical_handle WHERE actor_handle = legacy_handle;
+          UPDATE bounties SET creator_handle = canonical_handle, updated_at = now() WHERE creator_handle = legacy_handle;
+          UPDATE pledges SET pledger_handle = canonical_handle, updated_at = now() WHERE pledger_handle = legacy_handle;
+          UPDATE events SET actor_handle = canonical_handle WHERE actor_handle = legacy_handle;
+          UPDATE audit_logs SET actor_handle = canonical_handle WHERE actor_handle = legacy_handle;
+          UPDATE external_links SET owner_id = canonical_handle WHERE owner_type = 'profile' AND owner_id = legacy_handle;
+
+          UPDATE workspaces AS workspace
+          SET owner_handle = canonical_handle, updated_at = now()
+          WHERE owner_handle = legacy_handle
+            AND NOT EXISTS (
+              SELECT 1
+              FROM workspaces AS existing
+              WHERE existing.owner_handle = canonical_handle
+                AND existing.name = workspace.name
+            );
+          UPDATE workspaces SET owner_handle = NULL, updated_at = now() WHERE owner_handle = legacy_handle;
+
+          UPDATE credit_accounts AS account
+          SET owner_id = canonical_handle, updated_at = now()
+          WHERE owner_type = 'profile'
+            AND owner_id = legacy_handle
+            AND NOT EXISTS (
+              SELECT 1
+              FROM credit_accounts AS existing
+              WHERE existing.owner_type = account.owner_type
+                AND existing.owner_id = canonical_handle
+                AND existing.currency = account.currency
+            );
+          UPDATE credit_accounts
+          SET owner_type = 'merged_profile', owner_id = canonical_handle, updated_at = now()
+          WHERE owner_type = 'profile' AND owner_id = legacy_handle;
+
+          UPDATE posts
+          SET saved_by = (
+                SELECT COALESCE(jsonb_agg(DISTINCT CASE WHEN item.value = legacy_handle THEN canonical_handle ELSE item.value END), '[]'::jsonb)
+                FROM jsonb_array_elements_text(saved_by) AS item(value)
+              ),
+              updated_at = now()
+          WHERE saved_by ? legacy_handle;
+
+          UPDATE posts
+          SET signaled_by = (
+                SELECT COALESCE(jsonb_agg(DISTINCT CASE WHEN item.value = legacy_handle THEN canonical_handle ELSE item.value END), '[]'::jsonb)
+                FROM jsonb_array_elements_text(signaled_by) AS item(value)
+              ),
+              updated_at = now()
+          WHERE signaled_by ? legacy_handle;
+
+          UPDATE posts
+          SET forked_by = (
+                SELECT COALESCE(jsonb_agg(DISTINCT CASE WHEN item.value = legacy_handle THEN canonical_handle ELSE item.value END), '[]'::jsonb)
+                FROM jsonb_array_elements_text(forked_by) AS item(value)
+              ),
+              updated_at = now()
+          WHERE forked_by ? legacy_handle;
+
+          UPDATE communities
+          SET member_handles = (
+                SELECT COALESCE(jsonb_agg(DISTINCT CASE WHEN item.value = legacy_handle THEN canonical_handle ELSE item.value END), '[]'::jsonb)
+                FROM jsonb_array_elements_text(member_handles) AS item(value)
+              ),
+              updated_at = now()
+          WHERE member_handles ? legacy_handle;
+
+          DELETE FROM profiles WHERE handle = legacy_handle;
+        END IF;
+      END $$;
+    `
   }
 ];
 

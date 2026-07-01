@@ -258,7 +258,7 @@ export const libraryFolders = [
 
 export const profile = {
   name: "Udayan Sharma",
-  handle: "@usharma",
+  handle: "@udayan",
   role: "Independent researcher",
   location: "Science Rebirth",
   bio:

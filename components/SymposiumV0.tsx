@@ -307,10 +307,12 @@ const clientId = (prefix: string) =>
 const commentTreeHasAuthor = (comments: InquiryComment[], person: ResearchProfile): boolean =>
   comments.some(
     (comment) =>
-      comment.authorHandle === person.handle ||
-      comment.author === person.name ||
+      (comment.authorHandle ? comment.authorHandle === person.handle : comment.author === person.name) ||
       commentTreeHasAuthor(comment.replies ?? [], person)
   );
+
+const itemAuthoredByProfile = (item: InquiryItem, person: ResearchProfile) =>
+  item.authorHandle ? item.authorHandle === person.handle : item.author === person.name;
 
 const uniqueItemsById = (items: InquiryItem[]) => [...new Map(items.map((item) => [item.id, item])).values()];
 
@@ -460,7 +462,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
         if (activeRoom === "office") {
           if (officeMode === "saved") return isSavedBy(item, currentProfile.handle, profile.handle);
           if (officeMode === "notes") {
-            return item.authorHandle === currentProfile.handle || item.author === currentProfile.name || item.room === "office";
+            return itemAuthoredByProfile(item, currentProfile) || item.room === "office";
           }
           return false;
         }
@@ -475,8 +477,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       .filter((item) => {
         if (feedScope === "following") {
           return (
-            item.authorHandle === currentProfile.handle ||
-            item.author === currentProfile.name ||
+            itemAuthoredByProfile(item, currentProfile) ||
             Boolean(item.authorHandle && followingHandles.includes(item.authorHandle)) ||
             isSavedBy(item, currentProfile.handle, profile.handle)
           );
@@ -2662,7 +2663,7 @@ function ProfileView({
     [...nextItems].sort((a, b) => getProfileRecency(b, person.handle, kind) - getProfileRecency(a, person.handle, kind));
   const byAllProfileRecency = (nextItems: InquiryItem[]) =>
     [...nextItems].sort((a, b) => getProfileAllRecency(b, person.handle) - getProfileAllRecency(a, person.handle));
-  const isAuthor = (item: InquiryItem) => item.authorHandle === person.handle || item.author === person.name;
+  const isAuthor = (item: InquiryItem) => itemAuthoredByProfile(item, person);
   const canShowLikes = actorHandle === person.handle || inferredLikesPublic(person);
   const canShowReshares = actorHandle === person.handle || inferredResharesPublic(person);
   const canShowSaved = actorHandle === person.handle;
