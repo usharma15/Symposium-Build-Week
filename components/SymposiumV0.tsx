@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { SignInButton, SignUpButton, useAuth, useUser } from "@clerk/nextjs";
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -61,6 +61,7 @@ import {
 type Theme = "day" | "night";
 type ProfileTab = "all" | "papers" | "thoughts" | "comments" | "reshares" | "likes" | "saved";
 type ProfileActivityKind = "authored" | "comments" | "fork" | "signal" | "save";
+type ProfileCommentActivityKind = Exclude<ProfileActivityKind, "authored">;
 type EntryMode = "loading" | "approach" | "auth" | "complete";
 type OfficeMode = "desk" | "saved" | "notes";
 type PatronageMode = "lobby" | "civic" | "private";
@@ -101,7 +102,30 @@ type ProfileCommentActivity = {
   id: string;
   item: InquiryItem;
   comment: InquiryComment;
+  kind: ProfileCommentActivityKind;
+  label: string;
   recency: number;
+};
+
+type ProfileActivityEntry =
+  | { id: string; type: "post"; item: InquiryItem; recency: number }
+  | { id: string; type: "comment"; activity: ProfileCommentActivity; recency: number };
+
+type ProfileActivitySlot =
+  | { id: string; type: "post"; itemId: string; recency: number }
+  | {
+      id: string;
+      type: "comment";
+      itemId: string;
+      commentId: string;
+      kind: ProfileCommentActivityKind;
+      label: string;
+      recency: number;
+    };
+
+type ReplyPageAnchor = {
+  top: number;
+  label: string;
 };
 
 type PostDraft = {
@@ -339,15 +363,22 @@ const communitySearchText = (community: ResearchCommunity) =>
 const clientId = (prefix: string) =>
   `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
-const commentTreeHasAuthor = (comments: InquiryComment[], person: ResearchProfile): boolean =>
-  comments.some(
-    (comment) =>
-      (comment.authorHandle ? comment.authorHandle === person.handle : comment.author === person.name) ||
-      commentTreeHasAuthor(comment.replies ?? [], person)
-  );
-
 const commentTreeHasId = (comments: InquiryComment[], id: string): boolean =>
   comments.some((comment) => comment.id === id || commentTreeHasId(comment.replies ?? [], id));
+
+const findReplyPagingButton = (container: HTMLElement | null, label: string) =>
+  Array.from(container?.querySelectorAll<HTMLButtonElement>(".reply-window-button") ?? []).find(
+    (button) => button.textContent?.trim() === label
+  ) ?? null;
+
+const findCommentById = (comments: InquiryComment[], id: string): InquiryComment | undefined => {
+  for (const comment of comments) {
+    if (comment.id === id) return comment;
+    const found = findCommentById(comment.replies ?? [], id);
+    if (found) return found;
+  }
+  return undefined;
+};
 
 const commentAuthoredByProfile = (comment: InquiryComment, person: ResearchProfile) =>
   comment.authorHandle ? cleanHandle(comment.authorHandle) === person.handle : comment.author === person.name;
@@ -357,20 +388,45 @@ const commentTimestampScore = (comment: InquiryComment) => {
   return Number.isNaN(parsed) ? 0 : parsed;
 };
 
+const profileCommentActivityLabels: Record<ProfileCommentActivityKind, string> = {
+  comments: "Comment",
+  fork: "Reshared comment",
+  signal: "Liked comment",
+  save: "Saved comment"
+};
+
+const commentMatchesProfileActivity = (
+  comment: InquiryComment,
+  person: ResearchProfile,
+  kind: ProfileCommentActivityKind
+) => {
+  if (kind === "comments") return commentAuthoredByProfile(comment, person);
+  if (kind === "fork") return hasHandle(comment.forkedBy, person.handle);
+  if (kind === "signal") return hasHandle(comment.signaledBy, person.handle);
+  if (kind === "save") return hasHandle(comment.savedBy, person.handle);
+  return false;
+};
+
 const collectProfileComments = (
   items: InquiryItem[],
-  person: ResearchProfile
+  person: ResearchProfile,
+  kind: ProfileCommentActivityKind = "comments",
+  recencyForComment?: (item: InquiryItem, comment: InquiryComment, kind: ProfileCommentActivityKind) => number
 ): ProfileCommentActivity[] => {
   const activities: ProfileCommentActivity[] = [];
 
   const visit = (item: InquiryItem, comments: InquiryComment[]) => {
     for (const comment of comments) {
-      if (commentAuthoredByProfile(comment, person) && comment.id) {
+      if (commentMatchesProfileActivity(comment, person, kind) && comment.id) {
         activities.push({
-          id: `${item.id}:${comment.id}`,
+          id: `${kind}:${item.id}:${comment.id}`,
           item,
           comment,
-          recency: commentTimestampScore(comment) || itemTimestampScore(item)
+          kind,
+          label: profileCommentActivityLabels[kind],
+          recency:
+            recencyForComment?.(item, comment, kind) ??
+            (commentTimestampScore(comment) || itemTimestampScore(item))
         });
       }
       visit(item, comment.replies ?? []);
@@ -403,8 +459,6 @@ const isLiveInquiryItem = (value: unknown): value is InquiryItem =>
   typeof (value as InquiryItem).room === "string" &&
   typeof (value as InquiryItem).metrics === "object";
 
-const uniqueItemsById = (items: InquiryItem[]) => [...new Map(items.map((item) => [item.id, item])).values()];
-
 const profileForHandle = (profiles: Record<string, ResearchProfile>, handleOrName?: string) => {
   if (!handleOrName) return undefined;
   return profiles[cleanHandle(handleOrName)] ?? Object.values(profiles).find((person) => person.name === handleOrName);
@@ -416,6 +470,7 @@ const inferredResharesPublic = (person: ResearchProfile) => person.resharesPubli
 const fallbackCommunityCount = 8;
 const initialReplyPageSize = 5;
 const additionalReplyPageSize = 4;
+const commentsSectionTargetId = "__symposium-comments-section__";
 const commentMetricsFallback = { signal: "0", forks: "0", saves: "0", reads: "0" };
 const clientSeedItemById = new Map(inquiryItems.map((item) => [item.id, item]));
 const clientSeedCommentById = new Map<string, InquiryComment>();
@@ -648,6 +703,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   const [viewHistory, setViewHistory] = useState<ViewSnapshot[]>([]);
   const [viewFuture, setViewFuture] = useState<ViewSnapshot[]>([]);
   const [profileActiveTabs, setProfileActiveTabs] = useState<Record<string, ProfileTab>>({});
+  const [profileActivityRevision, setProfileActivityRevision] = useState(0);
   const [editingPost, setEditingPost] = useState<InquiryItem | null>(null);
   const [activityRecency, setActivityRecency] = useState<Record<string, number>>({});
   const [syncStatus, setSyncStatus] = useState("Loading live data");
@@ -658,6 +714,8 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   const selectedProfileNameRef = useRef(selectedProfileName);
   const actionVersionsRef = useRef<Record<string, number>>({});
   const actionDesiredStateRef = useRef<Record<string, boolean | undefined>>({});
+  const activityRecencyRef = useRef(activityRecency);
+  const pendingActivityRecencyRef = useRef<Record<string, number>>({});
   const liveEventCursorRef = useRef("");
   const liveRefreshTimerRef = useRef<number | null>(null);
   const [syncedClerkUserId, setSyncedClerkUserId] = useState<string | null>(null);
@@ -700,20 +758,37 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   useEffect(() => {
     selectedProfileNameRef.current = selectedProfileName;
   }, [selectedProfileName]);
+
+  useEffect(() => {
+    activityRecencyRef.current = activityRecency;
+  }, [activityRecency]);
+
   const getPublishedRecency = (item: InquiryItem) => itemTimestampScore(item);
   const profileActivityKey = (handle: string, action: PostAction, itemId: string) =>
     `profile:${cleanHandle(handle)}:${action}:${itemId}`;
+  const profileCommentActivityKey = (
+    handle: string,
+    action: Exclude<ProfileCommentActivityKind, "comments">,
+    itemId: string,
+    commentId: string
+  ) => `profile:${cleanHandle(handle)}:${action}:${itemId}:comment:${commentId}`;
   const getProfileRecency = (item: InquiryItem, handle: string, kind: ProfileActivityKind) => {
     if (kind === "authored") return getPublishedRecency(item);
     if (kind === "comments") return activityRecency[item.id] ?? getPublishedRecency(item);
     return activityRecency[profileActivityKey(handle, kind, item.id)] ?? getPublishedRecency(item);
   };
-  const getProfileAllRecency = (item: InquiryItem, handle: string) => {
-    const recencies = [getPublishedRecency(item)];
-    if (hasHandle(item.forkedBy, handle)) recencies.push(getProfileRecency(item, handle, "fork"));
-    if (hasHandle(item.signaledBy, handle)) recencies.push(getProfileRecency(item, handle, "signal"));
-    if (isSavedBy(item, handle, profile.handle)) recencies.push(getProfileRecency(item, handle, "save"));
-    return Math.max(...recencies);
+  const getProfileCommentRecency = (
+    item: InquiryItem,
+    comment: InquiryComment,
+    handle: string,
+    kind: ProfileCommentActivityKind
+  ) => {
+    if (kind === "comments" || !comment.id) {
+      return commentTimestampScore(comment) || getPublishedRecency(item);
+    }
+
+    const fallbackRecency = commentTimestampScore(comment) || getPublishedRecency(item);
+    return activityRecency[profileCommentActivityKey(handle, kind, item.id, comment.id)] ?? fallbackRecency;
   };
   const sortByPublishedRecency = (nextItems: InquiryItem[]) =>
     [...nextItems].sort((a, b) => getPublishedRecency(b) - getPublishedRecency(a));
@@ -964,10 +1039,22 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     if (isLiveInquiryItem(payload.item)) {
       const action = payload.action;
       if (action && event.actorHandle === currentProfileRef.current.handle) {
-        const key = `${payload.item.id}:${action}:${currentProfileRef.current.handle}`;
-        const desired = actionDesiredStateRef.current[key];
-        const serverActive = itemActionActive(payload.item, action, currentProfileRef.current.handle);
-        if (desired !== undefined && serverActive !== desired) return;
+        if (typeof payload.commentId === "string" && action !== "read") {
+          const key = `${payload.item.id}:${payload.commentId}:${action}:${currentProfileRef.current.handle}`;
+          const desired = actionDesiredStateRef.current[key];
+          const eventComment = findCommentById(payload.item.comments, payload.commentId);
+          const serverActive = eventComment
+            ? commentActionActive(eventComment, action, currentProfileRef.current.handle)
+            : undefined;
+          if (desired !== undefined && serverActive !== desired) return;
+          touchProfileCommentAction(payload.item.id, payload.commentId, action, currentProfileRef.current.handle);
+        } else {
+          const key = `${payload.item.id}:${action}:${currentProfileRef.current.handle}`;
+          const desired = actionDesiredStateRef.current[key];
+          const serverActive = itemActionActive(payload.item, action, currentProfileRef.current.handle);
+          if (desired !== undefined && serverActive !== desired) return;
+          touchProfileAction(payload.item.id, action, currentProfileRef.current.handle);
+        }
       }
 
       mergeLiveItem(payload.item);
@@ -1062,8 +1149,13 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     }
     if (storedNote) setNoteText(storedNote);
     try {
-      setActivityRecency(JSON.parse(window.localStorage.getItem("symposium-activity-recency") ?? "{}") as Record<string, number>);
+      const storedActivityRecency = JSON.parse(
+        window.localStorage.getItem("symposium-activity-recency") ?? "{}"
+      ) as Record<string, number>;
+      activityRecencyRef.current = storedActivityRecency;
+      setActivityRecency(storedActivityRecency);
     } catch {
+      activityRecencyRef.current = {};
       setActivityRecency({});
     }
     setEntryMode("approach");
@@ -1196,21 +1288,72 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     window.localStorage.setItem("symposium-notebook", noteText);
   }, [noteText]);
 
-  const touchActivity = (itemId: string, timestamp = Date.now()) => {
+  const persistActivityRecency = (next: Record<string, number>) => {
+    activityRecencyRef.current = next;
+    window.localStorage.setItem("symposium-activity-recency", JSON.stringify(next));
+  };
+
+  const recordActivityRecency = (updates: Record<string, number>, deferForProfile = false) => {
+    const cleanUpdates = Object.fromEntries(
+      Object.entries(updates).filter(([, value]) => Number.isFinite(value))
+    ) as Record<string, number>;
+    if (!Object.keys(cleanUpdates).length) return;
+
+    if (deferForProfile) {
+      pendingActivityRecencyRef.current = { ...pendingActivityRecencyRef.current, ...cleanUpdates };
+      persistActivityRecency({ ...activityRecencyRef.current, ...pendingActivityRecencyRef.current });
+      return;
+    }
+
+    const pendingUpdates = pendingActivityRecencyRef.current;
+    pendingActivityRecencyRef.current = {};
     setActivityRecency((current) => {
-      const next = { ...current, [itemId]: timestamp };
-      window.localStorage.setItem("symposium-activity-recency", JSON.stringify(next));
+      const next = { ...current, ...pendingUpdates, ...cleanUpdates };
+      persistActivityRecency(next);
       return next;
     });
   };
 
-  const touchProfileAction = (itemId: string, action: PostAction, handle = currentProfile.handle, timestamp = Date.now()) => {
-    if (action === "read") return;
+  const flushPendingActivityRecency = () => {
+    const pendingUpdates = pendingActivityRecencyRef.current;
+    if (!Object.keys(pendingUpdates).length) {
+      setProfileActivityRevision((revision) => revision + 1);
+      return;
+    }
+
+    pendingActivityRecencyRef.current = {};
     setActivityRecency((current) => {
-      const next = { ...current, [profileActivityKey(handle, action, itemId)]: timestamp };
-      window.localStorage.setItem("symposium-activity-recency", JSON.stringify(next));
+      const next = { ...current, ...pendingUpdates };
+      persistActivityRecency(next);
       return next;
     });
+    setProfileActivityRevision((revision) => revision + 1);
+  };
+
+  const touchActivity = (itemId: string, timestamp = Date.now()) => {
+    recordActivityRecency({ [itemId]: timestamp });
+  };
+
+  const touchProfileAction = (itemId: string, action: PostAction, handle = currentProfile.handle, timestamp = Date.now()) => {
+    if (action === "read") return;
+    recordActivityRecency(
+      { [profileActivityKey(handle, action, itemId)]: timestamp },
+      Boolean(selectedProfileNameRef.current)
+    );
+  };
+
+  const touchProfileCommentAction = (
+    itemId: string,
+    commentId: string,
+    action: CommentAction,
+    handle = currentProfile.handle,
+    timestamp = Date.now()
+  ) => {
+    if (action === "read") return;
+    recordActivityRecency(
+      { [profileCommentActivityKey(handle, action, itemId, commentId)]: timestamp },
+      Boolean(selectedProfileNameRef.current)
+    );
   };
 
   const snapshotView = (): ViewSnapshot => ({
@@ -1225,6 +1368,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   });
 
   const restoreView = (snapshot: ViewSnapshot) => {
+    if (snapshot.selectedProfileName) flushPendingActivityRecency();
     setActiveRoom(snapshot.activeRoom);
     setSelectedItemId(snapshot.selectedItemId);
     setSelectedCommentId(snapshot.selectedCommentId);
@@ -1245,6 +1389,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     next: Partial<Omit<ViewSnapshot, "scrollY">>,
     scrollY: number | null = 0
   ) => {
+    if (next.selectedProfileName) flushPendingActivityRecency();
     setViewHistory((history) => [...history, snapshotView()]);
     setViewFuture([]);
     if (next.activeRoom !== undefined) setActiveRoom(next.activeRoom);
@@ -1338,7 +1483,13 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   };
 
   const openProfile = (profileKey: string) => {
+    flushPendingActivityRecency();
     navigateView({ selectedProfileName: profileKey, selectedItemId: null, selectedCommentId: null });
+  };
+
+  const changeProfileTab = (handle: string, tab: ProfileTab) => {
+    flushPendingActivityRecency();
+    setProfileActiveTabs((current) => ({ ...current, [handle]: tab }));
   };
 
   const openNotebook = () => {
@@ -1779,6 +1930,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     itemsRef.current = optimisticItems;
     setItems(optimisticItems);
     persistLocalSnapshot(optimisticItems, profilesRef.current);
+    touchProfileCommentAction(itemId, commentId, action);
 
     try {
       const response = await fetch(`/api/posts/${itemId}/comments/${commentId}/actions`, {
@@ -2029,11 +2181,10 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
             profiles={profiles}
             socialLists={profileSocialLists[selectedProfile.handle] ?? { following: [], followers: [] }}
             getProfileRecency={getProfileRecency}
-            getProfileAllRecency={getProfileAllRecency}
+            getProfileCommentRecency={getProfileCommentRecency}
             activeTab={profileActiveTabs[selectedProfile.handle] ?? "all"}
-            onActiveTabChange={(tab) =>
-              setProfileActiveTabs((current) => ({ ...current, [selectedProfile.handle]: tab }))
-            }
+            activityRevision={profileActivityRevision}
+            onActiveTabChange={(tab) => changeProfileTab(selectedProfile.handle, tab)}
             onEditPost={setEditingPost}
             onDeletePost={deletePost}
           />
@@ -3083,7 +3234,13 @@ function FeedPost({
         <h2>{item.title}</h2>
         <p>{item.excerpt}</p>
         <PostTimeFooter item={item} />
-        <SocialActions item={item} commentCount={countComments(item.comments)} onAction={onAction} actorHandle={actorHandle} />
+        <SocialActions
+          item={item}
+          commentCount={countComments(item.comments)}
+          onAction={onAction}
+          onCommentsClick={() => onSelect(item.id, commentsSectionTargetId)}
+          actorHandle={actorHandle}
+        />
       </div>
     </article>
   );
@@ -3127,11 +3284,13 @@ function SocialActions({
   item,
   commentCount,
   onAction,
+  onCommentsClick,
   actorHandle
 }: {
   item: InquiryItem;
   commentCount: number;
   onAction: (itemId: string, action: PostAction) => void;
+  onCommentsClick?: () => void;
   actorHandle: string;
 }) {
   const savedByActor = isSavedBy(item, actorHandle, profile.handle);
@@ -3159,6 +3318,7 @@ function SocialActions({
             onClick={(event) => {
               event.stopPropagation();
               if (action.action) onAction(item.id, action.action);
+              else if (action.label === "Comments") onCommentsClick?.();
             }}
           >
             <Icon size={16} fill={fillActiveIcon ? "currentColor" : "none"} />
@@ -3203,6 +3363,16 @@ function DetailView({
   const codeSlug = item.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 44);
   const authorProfile = profileForHandle(profiles, item.authorHandle ?? item.author);
   const authorName = authorProfile?.name ?? item.author;
+  const commentsSectionId = `comments-${item.id}`;
+  const scrollToComments = () => {
+    document.getElementById(commentsSectionId)?.scrollIntoView({ block: "start", behavior: "smooth" });
+  };
+  const threadSelectedCommentId = selectedCommentId === commentsSectionTargetId ? null : selectedCommentId;
+
+  useEffect(() => {
+    if (selectedCommentId !== commentsSectionTargetId) return;
+    window.requestAnimationFrame(scrollToComments);
+  }, [selectedCommentId, item.id]);
 
   return (
     <article className={`detail-layout ${isPaper ? "paper-detail" : "simple-detail"}`}>
@@ -3226,16 +3396,22 @@ function DetailView({
         </button>
         <p className="detail-body">{item.body}</p>
         <PostTimeFooter item={item} />
-        <SocialActions item={item} commentCount={countComments(item.comments)} onAction={onAction} actorHandle={actorHandle} />
+        <SocialActions
+          item={item}
+          commentCount={countComments(item.comments)}
+          onAction={onAction}
+          onCommentsClick={scrollToComments}
+          actorHandle={actorHandle}
+        />
 
-        <section className="comments-section">
+        <section className="comments-section" id={commentsSectionId}>
           <h2>Discussion</h2>
           <CommentComposer itemId={item.id} onAddComment={onAddComment} />
           <CommentThread
             comments={item.comments}
             itemId={item.id}
             profiles={profiles}
-            selectedCommentId={selectedCommentId}
+            selectedCommentId={threadSelectedCommentId}
             onOpenProfile={onOpenProfile}
             onAddComment={onAddComment}
             onCommentAction={onCommentAction}
@@ -3381,6 +3557,7 @@ function CommentNode({
   });
   const nodeRef = useRef<HTMLElement | null>(null);
   const replyWindowRef = useRef<HTMLDivElement | null>(null);
+  const pendingReplyAnchorRef = useRef<ReplyPageAnchor | null>(null);
   const authorProfile = profileForHandle(profiles, comment.authorHandle ?? comment.author);
   const authorName = authorProfile?.name ?? comment.author;
   const highlighted = Boolean(selectedCommentId && comment.id === selectedCommentId);
@@ -3401,13 +3578,21 @@ function CommentNode({
     nodeRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [highlighted]);
 
-  const changeReplyPage = (nextPage: number) => {
-    const top = replyWindowRef.current?.getBoundingClientRect().top;
+  useLayoutEffect(() => {
+    if (!pendingReplyAnchorRef.current || !replyWindowRef.current) return;
+    const previousAnchor = pendingReplyAnchorRef.current;
+    pendingReplyAnchorRef.current = null;
+    const anchorElement = findReplyPagingButton(replyWindowRef.current, previousAnchor.label) ?? replyWindowRef.current;
+    const nextTop = anchorElement.getBoundingClientRect().top;
+    window.scrollBy({ top: nextTop - previousAnchor.top, behavior: "auto" });
+  }, [replyPage, visibleReplies.length]);
+
+  const changeReplyPage = (nextPage: number, anchor: HTMLButtonElement) => {
+    pendingReplyAnchorRef.current = {
+      top: anchor.getBoundingClientRect().top,
+      label: anchor.textContent?.trim() ?? ""
+    };
     setReplyPage(nextPage);
-    window.requestAnimationFrame(() => {
-      if (top === undefined || !replyWindowRef.current) return;
-      window.scrollBy({ top: replyWindowRef.current.getBoundingClientRect().top - top, behavior: "auto" });
-    });
   };
 
   return (
@@ -3463,7 +3648,11 @@ function CommentNode({
       ) : replies.length ? (
         <div className="reply-window" ref={replyWindowRef}>
           {hasPreviousReplies ? (
-            <button className="reply-window-button" type="button" onClick={() => changeReplyPage(Math.max(0, replyPage - 1))}>
+            <button
+              className="reply-window-button"
+              type="button"
+              onClick={(event) => changeReplyPage(Math.max(0, replyPage - 1), event.currentTarget)}
+            >
               Show previous replies
             </button>
           ) : null}
@@ -3479,7 +3668,11 @@ function CommentNode({
             depth={depth + 1}
           />
           {hasMoreReplies ? (
-            <button className="reply-window-button" type="button" onClick={() => changeReplyPage(replyPage + 1)}>
+            <button
+              className="reply-window-button"
+              type="button"
+              onClick={(event) => changeReplyPage(replyPage + 1, event.currentTarget)}
+            >
               Show more replies
             </button>
           ) : null}
@@ -3513,6 +3706,7 @@ function LinearReplyWindow({
     return selectedIndex >= 0 ? replyPageForIndex(selectedIndex) : 0;
   });
   const windowRef = useRef<HTMLDivElement | null>(null);
+  const pendingAnchorRef = useRef<ReplyPageAnchor | null>(null);
   const start = replyPageStart(page);
   const currentPageSize = replyPageSize(page);
   const segment = buildLinearReplySegment(chain, start, currentPageSize);
@@ -3525,19 +3719,31 @@ function LinearReplyWindow({
     if (selectedIndex >= 0) setPage(replyPageForIndex(selectedIndex));
   }, [chain, selectedCommentId]);
 
-  const changePage = (nextPage: number) => {
-    const top = windowRef.current?.getBoundingClientRect().top;
+  useLayoutEffect(() => {
+    if (!pendingAnchorRef.current || !windowRef.current) return;
+    const previousAnchor = pendingAnchorRef.current;
+    pendingAnchorRef.current = null;
+    const anchorElement = findReplyPagingButton(windowRef.current, previousAnchor.label) ?? windowRef.current;
+    const nextTop = anchorElement.getBoundingClientRect().top;
+    window.scrollBy({ top: nextTop - previousAnchor.top, behavior: "auto" });
+  }, [page, segment.length]);
+
+  const changePage = (nextPage: number, anchor: HTMLButtonElement) => {
+    pendingAnchorRef.current = {
+      top: anchor.getBoundingClientRect().top,
+      label: anchor.textContent?.trim() ?? ""
+    };
     setPage(nextPage);
-    window.requestAnimationFrame(() => {
-      if (top === undefined || !windowRef.current) return;
-      window.scrollBy({ top: windowRef.current.getBoundingClientRect().top - top, behavior: "auto" });
-    });
   };
 
   return (
     <div className="reply-window reset-thread" ref={windowRef}>
       {hasPrevious ? (
-        <button className="reply-window-button" type="button" onClick={() => changePage(Math.max(0, page - 1))}>
+        <button
+          className="reply-window-button"
+          type="button"
+          onClick={(event) => changePage(Math.max(0, page - 1), event.currentTarget)}
+        >
           Show previous replies
         </button>
       ) : null}
@@ -3553,7 +3759,11 @@ function LinearReplyWindow({
         depth={0}
       />
       {hasMore ? (
-        <button className="reply-window-button" type="button" onClick={() => changePage(page + 1)}>
+        <button
+          className="reply-window-button"
+          type="button"
+          onClick={(event) => changePage(page + 1, event.currentTarget)}
+        >
           Show more replies
         </button>
       ) : null}
@@ -3700,8 +3910,9 @@ function ProfileView({
   profiles,
   socialLists,
   getProfileRecency,
-  getProfileAllRecency,
+  getProfileCommentRecency,
   activeTab,
+  activityRevision,
   onActiveTabChange,
   onEditPost,
   onDeletePost
@@ -3719,19 +3930,49 @@ function ProfileView({
   profiles: Record<string, ResearchProfile>;
   socialLists: ProfileSocialLists;
   getProfileRecency: (item: InquiryItem, handle: string, kind: ProfileActivityKind) => number;
-  getProfileAllRecency: (item: InquiryItem, handle: string) => number;
+  getProfileCommentRecency: (
+    item: InquiryItem,
+    comment: InquiryComment,
+    handle: string,
+    kind: ProfileCommentActivityKind
+  ) => number;
   activeTab: ProfileTab;
+  activityRevision: number;
   onActiveTabChange: (tab: ProfileTab) => void;
   onEditPost: (item: InquiryItem) => void;
   onDeletePost: (itemId: string) => void;
 }) {
   const [activeSocialList, setActiveSocialList] = useState<"following" | "followers" | null>(null);
+  const [visibleSlots, setVisibleSlots] = useState<ProfileActivitySlot[]>([]);
   const byPublishedRecency = (nextItems: InquiryItem[]) =>
     [...nextItems].sort((a, b) => getProfileRecency(b, person.handle, "authored") - getProfileRecency(a, person.handle, "authored"));
   const byProfileRecency = (nextItems: InquiryItem[], kind: ProfileActivityKind) =>
     [...nextItems].sort((a, b) => getProfileRecency(b, person.handle, kind) - getProfileRecency(a, person.handle, kind));
-  const byAllProfileRecency = (nextItems: InquiryItem[]) =>
-    [...nextItems].sort((a, b) => getProfileAllRecency(b, person.handle) - getProfileAllRecency(a, person.handle));
+  const postEntry = (item: InquiryItem, recency: number): ProfileActivityEntry => ({
+    id: `post:${item.id}`,
+    type: "post",
+    item,
+    recency
+  });
+  const commentEntry = (activity: ProfileCommentActivity): ProfileActivityEntry => ({
+    id: `comment:${activity.id}`,
+    type: "comment",
+    activity,
+    recency: activity.recency
+  });
+  const sortEntries = (entries: ProfileActivityEntry[]) => [...entries].sort((a, b) => b.recency - a.recency);
+  const entryToSlot = (entry: ProfileActivityEntry): ProfileActivitySlot =>
+    entry.type === "post"
+      ? { id: entry.id, type: "post", itemId: entry.item.id, recency: entry.recency }
+      : {
+          id: entry.id,
+          type: "comment",
+          itemId: entry.activity.item.id,
+          commentId: entry.activity.comment.id as string,
+          kind: entry.activity.kind,
+          label: entry.activity.label,
+          recency: entry.recency
+        };
   const isAuthor = (item: InquiryItem) => itemAuthoredByProfile(item, person);
   const canShowLikes = actorHandle === person.handle || inferredLikesPublic(person);
   const canShowReshares = actorHandle === person.handle || inferredResharesPublic(person);
@@ -3739,8 +3980,12 @@ function ProfileView({
   const authored = byPublishedRecency(items.filter(isAuthor));
   const papers = authored.filter((item) => item.kind === "paper");
   const thoughts = authored.filter((item) => item.kind === "thought" || item.kind === "note");
-  const commentActivities = collectProfileComments(items, person);
-  const commentedItems = byProfileRecency(items.filter((item) => !isAuthor(item) && commentTreeHasAuthor(item.comments, person)), "comments");
+  const commentRecency = (item: InquiryItem, comment: InquiryComment, kind: ProfileCommentActivityKind) =>
+    getProfileCommentRecency(item, comment, person.handle, kind);
+  const commentActivities = collectProfileComments(items, person, "comments", commentRecency);
+  const commentReshares = canShowReshares ? collectProfileComments(items, person, "fork", commentRecency) : [];
+  const commentLikes = canShowLikes ? collectProfileComments(items, person, "signal", commentRecency) : [];
+  const commentSaved = canShowSaved ? collectProfileComments(items, person, "save", commentRecency) : [];
   const reshares = canShowReshares
     ? byProfileRecency(items.filter((item) => !isAuthor(item) && hasHandle(item.forkedBy, person.handle)), "fork")
     : [];
@@ -3748,16 +3993,31 @@ function ProfileView({
     ? byProfileRecency(items.filter((item) => !isAuthor(item) && hasHandle(item.signaledBy, person.handle)), "signal")
     : [];
   const saved = canShowSaved ? byProfileRecency(items.filter((item) => !isAuthor(item) && isSavedBy(item, person.handle, profile.handle)), "save") : [];
-  const allActivity = byAllProfileRecency(uniqueItemsById([...authored, ...commentedItems, ...reshares, ...likes, ...saved]));
+  const authoredEntries = authored.map((item) => postEntry(item, getProfileRecency(item, person.handle, "authored")));
+  const paperEntries = papers.map((item) => postEntry(item, getProfileRecency(item, person.handle, "authored")));
+  const thoughtEntries = thoughts.map((item) => postEntry(item, getProfileRecency(item, person.handle, "authored")));
+  const reshareEntries = reshares.map((item) => postEntry(item, getProfileRecency(item, person.handle, "fork")));
+  const likeEntries = likes.map((item) => postEntry(item, getProfileRecency(item, person.handle, "signal")));
+  const savedEntries = saved.map((item) => postEntry(item, getProfileRecency(item, person.handle, "save")));
+  const commentEntries = commentActivities.map(commentEntry);
+  const commentReshareEntries = commentReshares.map(commentEntry);
+  const commentLikeEntries = commentLikes.map(commentEntry);
+  const commentSavedEntries = commentSaved.map(commentEntry);
+  const allActivity = sortEntries([
+    ...authoredEntries,
+    ...commentEntries,
+    ...reshareEntries,
+    ...commentReshareEntries
+  ]);
 
-  const tabItems: Record<ProfileTab, InquiryItem[]> = {
+  const tabEntries: Record<ProfileTab, ProfileActivityEntry[]> = {
     all: allActivity,
-    papers,
-    thoughts,
-    comments: commentedItems,
-    reshares,
-    likes,
-    saved
+    papers: paperEntries,
+    thoughts: thoughtEntries,
+    comments: commentEntries,
+    reshares: sortEntries([...reshareEntries, ...commentReshareEntries]),
+    likes: sortEntries([...likeEntries, ...commentLikeEntries]),
+    saved: sortEntries([...savedEntries, ...commentSavedEntries])
   };
 
   const tabCounts: Record<ProfileTab, number> = {
@@ -3765,9 +4025,9 @@ function ProfileView({
     papers: papers.length,
     thoughts: thoughts.length,
     comments: commentActivities.length,
-    reshares: reshares.length,
-    likes: likes.length,
-    saved: saved.length
+    reshares: reshareEntries.length + commentReshareEntries.length,
+    likes: likeEntries.length + commentLikeEntries.length,
+    saved: savedEntries.length + commentSavedEntries.length
   };
 
   const tabs: Array<{ id: ProfileTab; label: string }> = [
@@ -3783,6 +4043,38 @@ function ProfileView({
   useEffect(() => {
     if (!tabs.some((tab) => tab.id === activeTab)) onActiveTabChange("all");
   }, [activeTab, onActiveTabChange, tabs]);
+
+  useLayoutEffect(() => {
+    setVisibleSlots(tabEntries[activeTab].map(entryToSlot));
+  }, [activeTab, person.handle, activityRevision]);
+
+  const resolveSlot = (slot: ProfileActivitySlot): ProfileActivityEntry | null => {
+    const item = items.find((candidate) => candidate.id === slot.itemId);
+    if (!item) return null;
+
+    if (slot.type === "post") {
+      return { id: slot.id, type: "post", item, recency: slot.recency };
+    }
+
+    const comment = findCommentById(item.comments, slot.commentId);
+    if (!comment) return null;
+
+    return {
+      id: slot.id,
+      type: "comment",
+      activity: {
+        id: `${slot.kind}:${item.id}:${comment.id}`,
+        item,
+        comment,
+        kind: slot.kind,
+        label: slot.label,
+        recency: slot.recency
+      },
+      recency: slot.recency
+    };
+  };
+
+  const visibleEntries = visibleSlots.map(resolveSlot).filter((entry): entry is ProfileActivityEntry => Boolean(entry));
 
   return (
     <article className="profile-page">
@@ -3836,37 +4128,30 @@ function ProfileView({
       </section>
 
       <section className="feed-stream profile-stream" aria-label={`${person.name} profile feed`}>
-        {activeTab === "comments" ? (
-          commentActivities.length ? (
-            commentActivities.map((activity) => (
+        {visibleEntries.length ? (
+          visibleEntries.map((entry) =>
+            entry.type === "comment" ? (
               <ProfileCommentCard
-                key={activity.id}
-                activity={activity}
+                key={entry.id}
+                activity={entry.activity}
                 profiles={profiles}
                 onSelect={onSelect}
                 onOpenProfile={onOpenProfile}
               />
-            ))
-          ) : (
-            <div className="empty-feed">
-              <strong>No comments here yet.</strong>
-              <span>This section will fill as the profile joins discussion threads.</span>
-            </div>
+            ) : (
+              <FeedPost
+                key={entry.id}
+                item={entry.item}
+                onSelect={onSelect}
+                onOpenProfile={onOpenProfile}
+                onAction={onAction}
+                onEditPost={onEditPost}
+                onDeletePost={onDeletePost}
+                actorHandle={actorHandle}
+                profiles={profiles}
+              />
+            )
           )
-        ) : tabItems[activeTab].length ? (
-          tabItems[activeTab].map((item) => (
-            <FeedPost
-              key={item.id}
-              item={item}
-              onSelect={onSelect}
-              onOpenProfile={onOpenProfile}
-              onAction={onAction}
-              onEditPost={onEditPost}
-              onDeletePost={onDeletePost}
-              actorHandle={actorHandle}
-              profiles={profiles}
-            />
-          ))
         ) : (
           <div className="empty-feed">
             <strong>No items here yet.</strong>
@@ -3936,7 +4221,7 @@ function ProfileCommentCard({
         </button>
         <span>
           <MessageCircle size={15} />
-          Comment
+          {activity.label}
         </span>
       </header>
       <p>{activity.comment.body}</p>
