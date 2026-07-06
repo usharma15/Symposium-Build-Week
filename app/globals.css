@@ -1711,10 +1711,14 @@ button {
 }
 
 .comment-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   justify-content: center;
   min-height: 30px;
   border: 1px solid transparent;
   border-radius: var(--radius);
+  background: transparent;
   color: var(--muted);
   padding: 0 8px;
   font-size: 0.76rem;
@@ -3873,11 +3877,39 @@ button {
 }
 
 .profile-comment-card .comment-actions {
+  align-items: center;
+  gap: 14px;
   margin: 0;
 }
 
 .profile-comment-card .comment-actions button {
-  padding-inline: 0;
+  gap: 5px;
+  min-height: 24px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 0;
+  font-size: 0.82rem;
+}
+
+.profile-comment-card .comment-actions button:hover {
+  transform: none;
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink);
+}
+
+.profile-comment-card .comment-actions button.active {
+  color: var(--aqua);
+}
+
+.profile-comment-card .comment-actions svg {
+  flex: 0 0 auto;
+}
+
+.profile-comment-card .comment-actions strong {
+  color: inherit;
 }
 
 .profile-comment-card footer {
@@ -4259,6 +4291,20 @@ button {
 .symposium-shell.night .comment-actions button.active,
 .symposium-shell.night .comment-actions button.active strong,
 .symposium-shell.night .comment-actions button.active span {
+  color: #83cbd1;
+}
+
+.symposium-shell.night .profile-comment-card .comment-actions button {
+  color: rgba(246, 234, 212, 0.72);
+}
+
+.symposium-shell.night .profile-comment-card .comment-actions button:hover {
+  color: rgba(255, 248, 234, 0.92);
+}
+
+.symposium-shell.night .profile-comment-card .comment-actions button.active,
+.symposium-shell.night .profile-comment-card .comment-actions button.active strong,
+.symposium-shell.night .profile-comment-card .comment-actions button.active span {
   color: #83cbd1;
 }
 
