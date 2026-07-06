@@ -2162,6 +2162,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
             actorHandle={currentProfile.handle}
             profiles={profiles}
             selectedCommentId={selectedCommentId}
+            onClearSelectedComment={() => setSelectedCommentId(null)}
           />
         ) : activeRoom === "hall" ? (
           <HallView onEnter={enterRoom} />
@@ -3303,7 +3304,8 @@ function DetailView({
   onDeletePost,
   actorHandle,
   profiles,
-  selectedCommentId
+  selectedCommentId,
+  onClearSelectedComment
 }: {
   item: InquiryItem;
   room: Room;
@@ -3317,6 +3319,7 @@ function DetailView({
   actorHandle: string;
   profiles: Record<string, ResearchProfile>;
   selectedCommentId: string | null;
+  onClearSelectedComment: () => void;
 }) {
   const isPaper = item.kind === "paper";
   const doiSlug = item.id.replace(/[^a-z0-9]+/gi, ".").replace(/\.+/g, ".").replace(/\.$/, "");
@@ -3376,6 +3379,7 @@ function DetailView({
             onAddComment={onAddComment}
             onCommentAction={onCommentAction}
             actorHandle={actorHandle}
+            onClearSelectedComment={onClearSelectedComment}
           />
         </section>
       </section>
@@ -3453,6 +3457,7 @@ function CommentThread({
   onAddComment,
   onCommentAction,
   actorHandle,
+  onClearSelectedComment,
   depth = 0
 }: {
   comments: InquiryComment[];
@@ -3463,6 +3468,7 @@ function CommentThread({
   onAddComment: (itemId: string, body: string, stance: string, parentId?: string | null) => void;
   onCommentAction: (itemId: string, commentId: string, action: CommentAction) => void;
   actorHandle: string;
+  onClearSelectedComment: () => void;
   depth?: number;
 }) {
   return (
@@ -3478,6 +3484,7 @@ function CommentThread({
           onAddComment={onAddComment}
           onCommentAction={onCommentAction}
           actorHandle={actorHandle}
+          onClearSelectedComment={onClearSelectedComment}
           depth={depth}
         />
       ))}
@@ -3511,6 +3518,7 @@ function CommentRootSegment({
   onAddComment,
   onCommentAction,
   actorHandle,
+  onClearSelectedComment,
   depth
 }: {
   comment: InquiryComment;
@@ -3521,6 +3529,7 @@ function CommentRootSegment({
   onAddComment: (itemId: string, body: string, stance: string, parentId?: string | null) => void;
   onCommentAction: (itemId: string, commentId: string, action: CommentAction) => void;
   actorHandle: string;
+  onClearSelectedComment: () => void;
   depth: number;
 }) {
   const [segmentStack, setSegmentStack] = useState<string[]>(() =>
@@ -3554,11 +3563,13 @@ function CommentRootSegment({
   }, [segmentStack]);
 
   const openReplySegment = (commentId: string) => {
+    onClearSelectedComment();
     pendingSegmentScrollRef.current = true;
     setSegmentStack((current) => (current.at(-1) === commentId ? current : [...current, commentId]));
   };
 
   const showPreviousSegment = () => {
+    onClearSelectedComment();
     pendingSegmentScrollRef.current = true;
     setSegmentStack((current) => current.slice(0, -1));
   };
@@ -3586,6 +3597,7 @@ function CommentRootSegment({
         depth={depth}
         segmentDepth={1}
         onOpenReplySegment={openReplySegment}
+        onClearSelectedComment={onClearSelectedComment}
       />
     </div>
   );
@@ -3602,7 +3614,8 @@ function CommentNode({
   actorHandle,
   depth,
   segmentDepth,
-  onOpenReplySegment
+  onOpenReplySegment,
+  onClearSelectedComment
 }: {
   comment: InquiryComment;
   itemId: string;
@@ -3615,6 +3628,7 @@ function CommentNode({
   depth: number;
   segmentDepth: number;
   onOpenReplySegment: (commentId: string) => void;
+  onClearSelectedComment: () => void;
 }) {
   const [replyOpen, setReplyOpen] = useState(false);
   const replies = comment.replies ?? [];
@@ -3700,6 +3714,7 @@ function CommentNode({
                 depth={depth + 1}
                 segmentDepth={segmentDepth + 1}
                 onOpenReplySegment={onOpenReplySegment}
+                onClearSelectedComment={onClearSelectedComment}
               />
             ))}
           </div>
