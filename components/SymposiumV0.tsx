@@ -1368,6 +1368,16 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     scrollY: window.scrollY
   });
 
+  const restoreScrollPosition = (scrollY: number) => {
+    const scroll = () => window.scrollTo({ top: scrollY, behavior: "auto" });
+    window.setTimeout(() => {
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(scroll);
+      });
+    }, 0);
+    window.setTimeout(scroll, 120);
+  };
+
   const restoreView = (snapshot: ViewSnapshot) => {
     if (snapshot.selectedProfileName) flushPendingActivityRecency();
     setActiveRoom(snapshot.activeRoom);
@@ -1386,7 +1396,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     setSettingsOpen(false);
     setSearchOpen(false);
     setMessagesOpen(false);
-    window.setTimeout(() => window.scrollTo({ top: snapshot.scrollY, behavior: "auto" }), 0);
+    restoreScrollPosition(snapshot.scrollY);
   };
 
   const navigateView = (
@@ -3619,7 +3629,6 @@ function CommentRootSegment({
     const selectedStack = segmentStackForSelectedComment(comment, selectedCommentId);
     const currentStack = segmentStack ?? [];
     if (selectedStack.join("|") === currentStack.join("|")) return;
-    pendingSegmentScrollRef.current = true;
     onSegmentStackChange(selectedStack);
   }, [comment, onSegmentStackChange, selectedCommentId, segmentStack]);
 
