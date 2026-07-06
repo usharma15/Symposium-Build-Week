@@ -45,8 +45,8 @@ export const registerPostRoutes = (app: FastifyInstance) => {
   app.delete<{ Params: RouteParams }>("/v1/posts/:id", async (request, reply) => {
     try {
       const actor = await withWriteActor(request);
-      const deleted = await deletePost(request.params.id, actor);
-      return reply.send({ deleted });
+      const item = await deletePost(request.params.id, actor);
+      return reply.send({ item, deleted: { id: item.id } });
     } catch (error) {
       return sendError(app, reply, error);
     }

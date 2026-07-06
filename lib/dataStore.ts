@@ -15,7 +15,9 @@ import {
 import {
   cleanHandle,
   incrementMetric,
+  isDeletedPost,
   mutateItemForActor,
+  tombstonePost,
   toggleHandle,
   updateSignalValue,
   type PostAction
@@ -255,6 +257,7 @@ const ensureSchema = async () => {
           signaled_by JSONB DEFAULT '[]'::jsonb,
           forked_by JSONB DEFAULT '[]'::jsonb,
           edited_at TIMESTAMPTZ,
+          deleted_at TIMESTAMPTZ,
           created_at TIMESTAMPTZ DEFAULT now()
         );
 
@@ -284,6 +287,7 @@ const ensureSchema = async () => {
         ALTER TABLE items ADD COLUMN IF NOT EXISTS signaled_by JSONB DEFAULT '[]'::jsonb;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS forked_by JSONB DEFAULT '[]'::jsonb;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
+        ALTER TABLE items ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
         ALTER TABLE comments ADD COLUMN IF NOT EXISTS metrics JSONB NOT NULL DEFAULT '{"signal":"0","forks":"0","saves":"0","reads":"0"}'::jsonb;
         ALTER TABLE comments ADD COLUMN IF NOT EXISTS saved_by JSONB NOT NULL DEFAULT '[]'::jsonb;
         ALTER TABLE comments ADD COLUMN IF NOT EXISTS signaled_by JSONB NOT NULL DEFAULT '[]'::jsonb;
@@ -506,6 +510,7 @@ const loadPostgres = async (): Promise<AppData> => {
       date_label: string;
       created_at: string;
       edited_at: string | null;
+      deleted_at: string | null;
       status: string;
       metrics: InquiryItem["metrics"];
       gathering_reason: string;
@@ -551,11 +556,12 @@ const loadPostgres = async (): Promise<AppData> => {
       room: item.room,
       title: item.title,
       author: item.author_name,
-      authorHandle: item.author_handle,
+      authorHandle: item.author_handle || undefined,
       affiliation: item.affiliation,
       date: item.date_label,
       createdAt: item.created_at ? new Date(item.created_at).toISOString() : undefined,
       editedAt: item.edited_at ? new Date(item.edited_at).toISOString() : undefined,
+      deletedAt: item.deleted_at ? new Date(item.deleted_at).toISOString() : undefined,
       status: item.status,
       metrics: item.metrics,
       gatheringReason: item.gathering_reason,
@@ -807,6 +813,7 @@ export const applyPostAction = async (itemId: string, action: PostAction, actorH
     const data = await getSnapshot();
     const existing = data.items.find((item) => item.id === itemId);
     if (!existing) return null;
+    if (isDeletedPost(existing)) return existing;
     const updated = mutateItemForActor(existing, action, actorHandle, defaultProfile.handle, active);
     await getPool().query(
       `UPDATE items
@@ -834,6 +841,10 @@ export const applyPostAction = async (itemId: string, action: PostAction, actorH
   let updated: InquiryItem | null = null;
   local.items = local.items.map((item) => {
     if (item.id !== itemId) return item;
+    if (isDeletedPost(item)) {
+      updated = item;
+      return item;
+    }
     updated = mutateItemForActor(item, action, actorHandle, defaultProfile.handle, active);
     return updated;
   });
@@ -863,7 +874,7 @@ export const updatePost = async (itemId: string, input: UpdatePostInput, actorHa
   if (usePostgres) {
     const data = await getSnapshot();
     const existing = data.items.find((item) => item.id === itemId);
-    if (!existing || !canManagePost(existing, actorHandle)) return null;
+    if (!existing || isDeletedPost(existing) || !canManagePost(existing, actorHandle)) return null;
 
     const updated = updatePostShape(existing, cleanInput);
     await getPool().query(
@@ -882,7 +893,7 @@ export const updatePost = async (itemId: string, input: UpdatePostInput, actorHa
   const local = await readLocal();
   let updated: InquiryItem | null = null;
   local.items = local.items.map((item) => {
-    if (item.id !== itemId || !canManagePost(item, actorHandle)) return item;
+    if (item.id !== itemId || isDeletedPost(item) || !canManagePost(item, actorHandle)) return item;
     updated = updatePostShape(item, cleanInput);
     return updated;
   });
@@ -895,18 +906,59 @@ export const deletePost = async (itemId: string, actorHandle = defaultProfile.ha
   if (usePostgres) {
     const data = await getSnapshot();
     const existing = data.items.find((item) => item.id === itemId);
-    if (!existing || !canManagePost(existing, actorHandle)) return null;
+    if (!existing || isDeletedPost(existing) || !canManagePost(existing, actorHandle)) return null;
 
-    await getPool().query("DELETE FROM items WHERE id = $1", [itemId]);
-    return { id: itemId };
+    const deleted = tombstonePost(existing);
+    await getPool().query(
+      `UPDATE items
+       SET title = $2,
+           author_handle = $3,
+           author_name = $4,
+           affiliation = $5,
+           status = $6,
+           gathering_reason = $7,
+           excerpt = $8,
+           body = $9,
+           tags = $10,
+           signals = $11,
+           claims = $12,
+           objections = $13,
+           evidence = $14,
+           tests = $15,
+           forks = $16,
+           edited_at = NULL,
+           deleted_at = $17
+       WHERE id = $1`,
+      [
+        itemId,
+        deleted.title,
+        deleted.authorHandle ?? "",
+        deleted.author,
+        deleted.affiliation,
+        deleted.status,
+        deleted.gatheringReason,
+        deleted.excerpt,
+        deleted.body,
+        JSON.stringify(deleted.tags),
+        JSON.stringify(deleted.signals),
+        JSON.stringify(deleted.claims),
+        JSON.stringify(deleted.objections),
+        JSON.stringify(deleted.evidence),
+        JSON.stringify(deleted.tests),
+        JSON.stringify(deleted.forks),
+        deleted.deletedAt
+      ]
+    );
+    return deleted;
   }
 
   const local = await readLocal();
   const existing = local.items.find((item) => item.id === itemId);
-  if (!existing || !canManagePost(existing, actorHandle)) return null;
-  local.items = local.items.filter((item) => item.id !== itemId);
+  if (!existing || isDeletedPost(existing) || !canManagePost(existing, actorHandle)) return null;
+  const deleted = tombstonePost(existing);
+  local.items = local.items.map((item) => (item.id === itemId ? deleted : item));
   await writeLocal(local);
-  return { id: itemId };
+  return deleted;
 };
 
 const mutateCommentForActor = (

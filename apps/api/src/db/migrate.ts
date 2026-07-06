@@ -686,6 +686,12 @@ const migrations: Migration[] = [
         ADD COLUMN IF NOT EXISTS forked_by JSONB NOT NULL DEFAULT '[]'::jsonb,
         ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
     `
+  },
+  {
+    id: "0006_post_tombstones",
+    sql: `
+      ALTER TABLE posts ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+    `
   }
 ];
 

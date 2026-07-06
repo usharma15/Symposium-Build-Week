@@ -54,10 +54,10 @@ export async function DELETE(request: Request, context: Context) {
   });
   if (live) return live;
 
-  const deleted = await deletePost(id, actorHandle ?? "");
-  if (!deleted) {
+  const item = await deletePost(id, actorHandle ?? "");
+  if (!item) {
     return jsonError("Post not found or cannot be deleted by this profile.", 404);
   }
 
-  return Response.json({ deleted });
+  return Response.json({ item, deleted: { id: item.id } });
 }

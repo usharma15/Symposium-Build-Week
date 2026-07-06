@@ -1424,6 +1424,22 @@ button {
   text-align: left;
 }
 
+.deleted-post-author {
+  cursor: default;
+  color: var(--muted);
+}
+
+.deleted-post-author:hover {
+  transform: none;
+  border-color: transparent;
+  background: transparent;
+}
+
+.deleted-avatar {
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 84%, transparent);
+}
+
 .post-author > span:last-child,
 .detail-byline-button > span:last-child,
 .comment button > span:last-child {
@@ -1510,6 +1526,16 @@ button {
   color: inherit;
   padding: 0 7px;
   font-size: 0.82rem;
+}
+
+.social-actions button:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.social-actions button:disabled:hover {
+  transform: none;
+  background: transparent;
 }
 
 .social-actions strong {

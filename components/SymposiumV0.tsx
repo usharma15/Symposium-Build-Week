@@ -45,9 +45,12 @@ import type { CommentAction, PostAction } from "@/lib/dataStore";
 import {
   cleanHandle,
   countComments,
+  deletedMetricLabel,
+  deletedPostContextTitle,
   formatMetric,
   hasHandle,
   incrementMetric,
+  isDeletedPost,
   itemTimestampScore,
   isSavedBy,
   localDateTimeLabel,
@@ -55,6 +58,7 @@ import {
   mutateItemForActor,
   normalizeSearchPhrase,
   relativeTimeLabel,
+  tombstonePost,
   toggleHandle
 } from "@/lib/symposiumCore";
 
@@ -383,17 +387,6 @@ const commentRootStackKey = (itemId: string, comment: InquiryComment, index: num
 const cloneCommentSegmentStacks = (stacks: CommentSegmentStacks): CommentSegmentStacks =>
   Object.fromEntries(Object.entries(stacks).map(([key, stack]) => [key, [...stack]]));
 
-const removePostCommentSegmentStacks = (stacks: CommentSegmentStacks, itemId: string): CommentSegmentStacks =>
-  Object.fromEntries(Object.entries(stacks).filter(([key]) => !key.startsWith(`${itemId}:`)));
-
-const pruneDeletedPostSnapshots = (snapshots: ViewSnapshot[], itemId: string): ViewSnapshot[] =>
-  snapshots
-    .filter((snapshot) => snapshot.selectedItemId !== itemId)
-    .map((snapshot) => ({
-      ...snapshot,
-      commentSegmentStacks: removePostCommentSegmentStacks(snapshot.commentSegmentStacks ?? {}, itemId)
-    }));
-
 const parseCommentSegmentStack = (value: string | undefined) => {
   if (!value) return [];
   try {
@@ -493,7 +486,7 @@ const updateCommentsForProfile = (
   }));
 
 const itemAuthoredByProfile = (item: InquiryItem, person: ResearchProfile) =>
-  item.authorHandle ? item.authorHandle === person.handle : item.author === person.name;
+  !isDeletedPost(item) && (item.authorHandle ? item.authorHandle === person.handle : item.author === person.name);
 
 const isLiveInquiryItem = (value: unknown): value is InquiryItem =>
   typeof value === "object" &&
@@ -1077,37 +1070,18 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     return undefined;
   };
 
-  const finalizeDeletedPostState = (itemId: string) => {
-    setEditingPost((current) => (current?.id === itemId ? null : current));
-    setViewHistory((history) => pruneDeletedPostSnapshots(history, itemId));
-    setViewFuture((future) => pruneDeletedPostSnapshots(future, itemId));
-
-    const nextSegmentStacks = removePostCommentSegmentStacks(commentSegmentStacksRef.current, itemId);
-    commentSegmentStacksRef.current = nextSegmentStacks;
-    setCommentSegmentStacks(nextSegmentStacks);
-    visibleCommentSegmentStacksRef.current = removePostCommentSegmentStacks(
-      visibleCommentSegmentStacksRef.current,
-      itemId
-    );
-
-    if (selectedItemIdRef.current === itemId) {
-      selectedItemIdRef.current = null;
-      selectedCommentIdRef.current = null;
-      setSelectedItemId(null);
-      setSelectedCommentId(null);
-    }
-  };
-
   const mergeLiveEvent = (event: SymposiumLiveEvent) => {
     if (event.cursor) liveEventCursorRef.current = event.cursor;
 
     const payload = event.payload ?? {};
-    if (event.kind === "post.deleted" && typeof payload.itemId === "string") {
-      const nextItems = itemsRef.current.filter((item) => item.id !== payload.itemId);
-      itemsRef.current = nextItems;
-      setItems(nextItems);
-      persistLocalSnapshot(nextItems, profilesRef.current, currentProfileRef.current);
-      finalizeDeletedPostState(payload.itemId);
+    if (event.kind === "post.deleted") {
+      if (isLiveInquiryItem(payload.item)) {
+        const deletedItem = payload.item;
+        mergeLiveItem(deletedItem);
+        setEditingPost((current) => (current?.id === deletedItem.id ? null : current));
+      } else {
+        scheduleLiveRefresh();
+      }
       return;
     }
 
@@ -2033,6 +2007,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     let desiredActive: boolean | undefined;
     const optimisticItems = previousItems.map((item) => {
       if (item.id !== itemId) return item;
+      if (isDeletedPost(item)) return item;
       actionApplied = true;
       const nextItem = mutateItemForActor(item, action, actorHandle, profile.handle);
       if (action === "save") desiredActive = isSavedBy(nextItem, actorHandle, profile.handle);
@@ -2153,6 +2128,8 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     if (!cleanTitle || !cleanBody) return;
 
     const previousItems = itemsRef.current;
+    const existing = previousItems.find((item) => item.id === itemId);
+    if (!existing || isDeletedPost(existing)) return;
     const editedAt = new Date().toISOString();
     const optimisticItems = previousItems.map((item) =>
       item.id === itemId
@@ -2191,23 +2168,16 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
 
   const deletePost = async (itemId: string) => {
     const item = itemsRef.current.find((current) => current.id === itemId);
-    if (!item || cleanHandle(item.authorHandle ?? item.author) !== currentProfile.handle) return;
+    if (!item || isDeletedPost(item) || cleanHandle(item.authorHandle ?? item.author) !== currentProfile.handle) return;
     if (!window.confirm(`Delete "${item.title}"?`)) return;
 
     const previousItems = itemsRef.current;
-    const previousSelectedItemId = selectedItemIdRef.current;
-    const previousSelectedCommentId = selectedCommentIdRef.current;
-    const nextItems = previousItems.filter((current) => current.id !== itemId);
+    const deleted = tombstonePost(item);
+    const nextItems = previousItems.map((current) => (current.id === itemId ? deleted : current));
     itemsRef.current = nextItems;
     setItems(nextItems);
     persistLocalSnapshot(nextItems, profilesRef.current);
     setEditingPost(null);
-    if (previousSelectedItemId === itemId) {
-      selectedItemIdRef.current = null;
-      selectedCommentIdRef.current = null;
-      setSelectedItemId(null);
-      setSelectedCommentId(null);
-    }
     setSyncStatus("Deleting post");
 
     try {
@@ -2218,18 +2188,18 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       });
 
       if (!response.ok) throw new Error("Post delete failed.");
-      finalizeDeletedPostState(itemId);
+      const data = (await response.json()) as { item?: InquiryItem };
+      if (data.item) {
+        const committedItems = itemsRef.current.map((current) => (current.id === itemId ? data.item! : current));
+        itemsRef.current = committedItems;
+        setItems(committedItems);
+        persistLocalSnapshot(committedItems, profilesRef.current);
+      }
       setSyncStatus("Post deleted");
     } catch {
       itemsRef.current = previousItems;
       setItems(previousItems);
       persistLocalSnapshot(previousItems, profilesRef.current);
-      if (previousSelectedItemId === itemId && selectedItemIdRef.current === null) {
-        selectedItemIdRef.current = previousSelectedItemId;
-        selectedCommentIdRef.current = previousSelectedCommentId;
-        setSelectedItemId(previousSelectedItemId);
-        setSelectedCommentId(previousSelectedCommentId);
-      }
       setSyncStatus("Post delete could not sync");
     }
   };
@@ -2239,7 +2209,10 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       { selectedItemId: id, selectedCommentId: commentId ?? null, selectedProfileName: null },
       commentId ? null : 0
     );
-    void applyAction(id, "read");
+    const targetItem = itemsRef.current.find((item) => item.id === id);
+    if (targetItem && !isDeletedPost(targetItem)) {
+      void applyAction(id, "read");
+    }
   };
 
   const currentContext = selectedItem
@@ -3339,6 +3312,8 @@ function PostEditModal({
 }
 
 function PostTimeFooter({ item }: { item: InquiryItem }) {
+  if (isDeletedPost(item)) return null;
+
   const created = localDateTimeLabel(item.createdAt);
   const edited = localDateTimeLabel(item.editedAt);
 
@@ -3363,7 +3338,7 @@ function PostOwnerControls({
   onEditPost: (item: InquiryItem) => void;
   onDeletePost: (itemId: string) => void;
 }) {
-  if (cleanHandle(item.authorHandle ?? item.author) !== actorHandle) return null;
+  if (isDeletedPost(item) || cleanHandle(item.authorHandle ?? item.author) !== actorHandle) return null;
 
   return (
     <div className="post-owner-actions" aria-label="Post owner actions">
@@ -3435,7 +3410,7 @@ function FeedPost({
         onClickStop={(event) => event.stopPropagation()}
       />
       <div className="post-body">
-        <h2>{item.title}</h2>
+        <h2>{deletedPostContextTitle(item)}</h2>
         <ExpandableBodyText
           text={item.body}
           className="feed-post-text"
@@ -3518,6 +3493,17 @@ function PostAuthor({
   onOpenProfile: (name: string) => void;
   onClickStop?: (event: React.MouseEvent<HTMLButtonElement>) => void;
 }) {
+  if (isDeletedPost(item)) {
+    return (
+      <div className="post-author deleted-post-author" aria-label="Deleted post">
+        <span className="avatar deleted-avatar" aria-hidden="true" />
+        <span>
+          <strong aria-hidden="true">—</strong>
+        </span>
+      </div>
+    );
+  }
+
   const authorProfile = profileForHandle(profiles, item.authorHandle ?? item.author);
   const authorName = authorProfile?.name ?? item.author;
 
@@ -3554,15 +3540,16 @@ function SocialActions({
   onCommentsClick?: () => void;
   actorHandle: string;
 }) {
+  const postDeleted = isDeletedPost(item);
   const savedByActor = isSavedBy(item, actorHandle, profile.handle);
   const signaledByActor = hasHandle(item.signaledBy, actorHandle);
   const forkedByActor = hasHandle(item.forkedBy, actorHandle);
   const actions = [
-    { label: "Likes", active: signaledByActor, value: item.metrics.signal, icon: ThumbsUp, action: "signal" as PostAction },
-    { label: "Comments", value: String(commentCount), icon: MessageCircle, action: null },
-    { label: "Reshares", active: forkedByActor, value: item.metrics.forks, icon: Repeat2, action: "fork" as PostAction },
-    { label: "Saves", active: savedByActor, value: item.metrics.saves, icon: Bookmark, action: "save" as PostAction },
-    { label: "Views", value: item.metrics.reads, icon: Eye, action: null }
+    { label: "Likes", active: !postDeleted && signaledByActor, value: postDeleted ? deletedMetricLabel : item.metrics.signal, icon: ThumbsUp, action: "signal" as PostAction },
+    { label: "Comments", value: postDeleted ? deletedMetricLabel : String(commentCount), icon: MessageCircle, action: null },
+    { label: "Reshares", active: !postDeleted && forkedByActor, value: postDeleted ? deletedMetricLabel : item.metrics.forks, icon: Repeat2, action: "fork" as PostAction },
+    { label: "Saves", active: !postDeleted && savedByActor, value: postDeleted ? deletedMetricLabel : item.metrics.saves, icon: Bookmark, action: "save" as PostAction },
+    { label: "Views", value: postDeleted ? deletedMetricLabel : item.metrics.reads, icon: Eye, action: null }
   ];
 
   return (
@@ -3570,21 +3557,24 @@ function SocialActions({
       {actions.map((action) => {
         const Icon = action.icon;
         const fillActiveIcon = action.active && (action.label === "Likes" || action.label === "Saves");
+        const disabled = postDeleted && Boolean(action.action);
+        const metricValue = action.value === deletedMetricLabel ? deletedMetricLabel : formatMetric(metricNumber(action.value));
         return (
           <button
             key={action.label}
             type="button"
             title={action.label}
             className={action.active ? "active" : ""}
+            disabled={disabled}
             onClick={(event) => {
               event.stopPropagation();
-              if (action.action) onAction(item.id, action.action);
+              if (action.action && !postDeleted) onAction(item.id, action.action);
               else if (action.label === "Comments") onCommentsClick?.();
             }}
           >
             <Icon size={16} fill={fillActiveIcon ? "currentColor" : "none"} />
             <span className="metric-label">{action.label}</span>
-            <strong>{formatMetric(metricNumber(action.value))}</strong>
+            <strong>{metricValue}</strong>
           </button>
         );
       })}
@@ -3628,6 +3618,7 @@ function DetailView({
   onVisibleCommentSegmentStackChange: (key: string, stack: string[]) => void;
 }) {
   const isPaper = item.kind === "paper";
+  const postDeleted = isDeletedPost(item);
   const doiSlug = item.id.replace(/[^a-z0-9]+/gi, ".").replace(/\.+/g, ".").replace(/\.$/, "");
   const codeSlug = item.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 44);
   const authorProfile = profileForHandle(profiles, item.authorHandle ?? item.author);
@@ -3672,16 +3663,25 @@ function DetailView({
       <section className="detail-main">
         <PostOwnerControls item={item} actorHandle={actorHandle} onEditPost={onEditPost} onDeletePost={onDeletePost} />
         <p className="eyebrow">{kindLabels[item.kind]}</p>
-        <h1>{item.title}</h1>
-        <button className="detail-byline-button" type="button" onClick={() => onOpenProfile(authorProfile?.handle ?? item.authorHandle ?? item.author)}>
-          <span className="avatar">
-            {authorProfile?.avatarUrl ? <img src={authorProfile.avatarUrl} alt="" /> : initial(authorName)}
-          </span>
-          <span>
-            <strong>{authorName}</strong>
-            <small>{relativeTimeLabel(item.createdAt, item.date)}</small>
-          </span>
-        </button>
+        <h1>{deletedPostContextTitle(item)}</h1>
+        {postDeleted ? (
+          <div className="detail-byline-button deleted-post-author" aria-label="Deleted post">
+            <span className="avatar deleted-avatar" aria-hidden="true" />
+            <span>
+              <strong aria-hidden="true">—</strong>
+            </span>
+          </div>
+        ) : (
+          <button className="detail-byline-button" type="button" onClick={() => onOpenProfile(authorProfile?.handle ?? item.authorHandle ?? item.author)}>
+            <span className="avatar">
+              {authorProfile?.avatarUrl ? <img src={authorProfile.avatarUrl} alt="" /> : initial(authorName)}
+            </span>
+            <span>
+              <strong>{authorName}</strong>
+              <small>{relativeTimeLabel(item.createdAt, item.date)}</small>
+            </span>
+          </button>
+        )}
         <p className="detail-body">{item.body}</p>
         <PostTimeFooter item={item} />
         <SocialActions
@@ -4566,7 +4566,7 @@ function ProfileCommentCard({
       />
       <footer>
         <span>On</span>
-        <strong>{activity.item.title}</strong>
+        <strong>{deletedPostContextTitle(activity.item)}</strong>
         {activity.comment.createdAt ? <em>{localDateTimeLabel(activity.comment.createdAt)}</em> : null}
       </footer>
     </article>

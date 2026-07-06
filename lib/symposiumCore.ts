@@ -144,6 +144,37 @@ export const mutateItemForActor = (
 export const countComments = (comments: InquiryComment[]): number =>
   comments.reduce((total, comment) => total + 1 + countComments(comment.replies ?? []), 0);
 
+export const deletedPostTitle = "—";
+export const deletedPostBody = "This post has been deleted";
+export const deletedPostAuthor = "—";
+export const deletedMetricLabel = "—";
+
+export const isDeletedPost = (item: Pick<InquiryItem, "deletedAt">) => Boolean(item.deletedAt);
+
+export const deletedPostContextTitle = (item: Pick<InquiryItem, "deletedAt" | "title">) =>
+  isDeletedPost(item) ? deletedPostTitle : item.title;
+
+export const tombstonePost = (item: InquiryItem, deletedAt = new Date().toISOString()): InquiryItem => ({
+  ...item,
+  title: deletedPostTitle,
+  author: deletedPostAuthor,
+  authorHandle: undefined,
+  affiliation: "",
+  editedAt: undefined,
+  deletedAt,
+  status: "Deleted",
+  gatheringReason: "",
+  excerpt: deletedPostBody,
+  body: deletedPostBody,
+  tags: [],
+  signals: [],
+  claims: [],
+  objections: [],
+  evidence: [],
+  tests: [],
+  forks: []
+});
+
 export const relativeDateScore = (label: string) => {
   const normalized = label.trim().toLowerCase();
   const now = Date.now();

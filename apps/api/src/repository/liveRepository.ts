@@ -30,7 +30,9 @@ import {
 import {
   cleanHandle,
   incrementMetric,
+  isDeletedPost,
   mutateItemForActor,
+  tombstonePost,
   toggleHandle,
   updateSignalValue
 } from "@/lib/symposiumCore";
@@ -438,6 +440,7 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
         date_label AS "dateLabel",
         created_at AS "createdAt",
         edited_at AS "editedAt",
+        deleted_at AS "deletedAt",
         status,
         metrics,
         gathering_reason AS "gatheringReason",
@@ -534,6 +537,7 @@ export const applyPostAction = async (postId: string, rawInput: unknown, actor: 
     const snapshot = await getInitialState();
     const existing = snapshot.items.find((item) => item.id === postId);
     if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    if (isDeletedPost(existing)) return existing;
     return mutateItemForActor(existing, input.action, handle, defaultProfile.handle, input.active);
   }
 
@@ -556,6 +560,7 @@ export const applyPostAction = async (postId: string, rawInput: unknown, actor: 
         date_label AS "dateLabel",
         created_at AS "createdAt",
         edited_at AS "editedAt",
+        deleted_at AS "deletedAt",
         status,
         metrics,
         gathering_reason AS "gatheringReason",
@@ -602,6 +607,11 @@ export const applyPostAction = async (postId: string, rawInput: unknown, actor: 
     );
     const commentsByPost = commentTreesFromRows(commentsResult.rows);
     const existing = rowToItem(row, commentsByPost.get(postId) ?? []);
+    if (isDeletedPost(existing)) {
+      updated = existing;
+      await client.query("COMMIT");
+      return updated;
+    }
     updated = mutateItemForActor(existing, input.action, handle, defaultProfile.handle, input.active);
 
     if (input.action === "read") {
@@ -680,6 +690,9 @@ export const updatePost = async (postId: string, rawInput: unknown, actor: Actor
     const snapshot = await getInitialState();
     const existing = snapshot.items.find((item) => item.id === postId);
     if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    if (isDeletedPost(existing)) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "Deleted posts cannot be edited." });
+    }
     if (existing.authorHandle && cleanHandle(existing.authorHandle) !== handle) {
       throw new TRPCError({ code: "FORBIDDEN", message: "Only the author can edit this post." });
     }
@@ -696,6 +709,7 @@ export const updatePost = async (postId: string, rawInput: unknown, actor: Actor
       `SELECT
         id, kind, room, title, author_handle AS "authorHandle", author_name AS "authorName",
         affiliation, date_label AS "dateLabel", created_at AS "createdAt", edited_at AS "editedAt",
+        deleted_at AS "deletedAt",
         status, metrics, gathering_reason AS "gatheringReason", excerpt, body, tags, signals,
         claims, objections, evidence, tests, forks, saved, saved_by AS "savedBy",
         signaled_by AS "signaledBy", forked_by AS "forkedBy"
@@ -706,6 +720,9 @@ export const updatePost = async (postId: string, rawInput: unknown, actor: Actor
     );
     const row = postResult.rows[0];
     if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    if (row.deletedAt) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "Deleted posts cannot be edited." });
+    }
     if (row.authorHandle && cleanHandle(row.authorHandle) !== handle) {
       throw new TRPCError({ code: "FORBIDDEN", message: "Only the author can edit this post." });
     }
@@ -767,24 +784,110 @@ export const updatePost = async (postId: string, rawInput: unknown, actor: Actor
 export const deletePost = async (postId: string, actor: Actor) => {
   const handle = actorHandle(actor);
 
-  if (!hasDatabase()) return { id: postId };
+  if (!hasDatabase()) {
+    const snapshot = await getInitialState();
+    const existing = snapshot.items.find((item) => item.id === postId);
+    if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    if (isDeletedPost(existing)) return existing;
+    if (existing.authorHandle && cleanHandle(existing.authorHandle) !== handle) {
+      throw new TRPCError({ code: "FORBIDDEN", message: "Only the author can delete this post." });
+    }
+    return tombstonePost(existing);
+  }
 
   await ensureLiveData();
   const client = await getPool().connect();
+  let deleted: InquiryItemContract | null = null;
+  let didDelete = false;
 
   try {
     await client.query("BEGIN");
-    const postResult = await client.query<{ authorHandle: string | null }>(
-      `SELECT author_handle AS "authorHandle" FROM posts WHERE id = $1 FOR UPDATE`,
+    const postResult = await client.query<SnapshotRow>(
+      `SELECT
+        id, kind, room, title, author_handle AS "authorHandle", author_name AS "authorName",
+        affiliation, date_label AS "dateLabel", created_at AS "createdAt", edited_at AS "editedAt",
+        deleted_at AS "deletedAt",
+        status, metrics, gathering_reason AS "gatheringReason", excerpt, body, tags, signals,
+        claims, objections, evidence, tests, forks, saved, saved_by AS "savedBy",
+        signaled_by AS "signaledBy", forked_by AS "forkedBy"
+       FROM posts
+       WHERE id = $1
+       FOR UPDATE`,
       [postId]
     );
     const row = postResult.rows[0];
     if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
-    if (row.authorHandle && cleanHandle(row.authorHandle) !== handle) {
-      throw new TRPCError({ code: "FORBIDDEN", message: "Only the author can delete this post." });
+
+    const commentsResult = await client.query<CommentRow>(
+      `SELECT id, post_id AS "postId", parent_id AS "parentId", author_handle AS "authorHandle",
+        author_name AS "authorName", stance, body, metrics, saved_by AS "savedBy",
+        signaled_by AS "signaledBy", forked_by AS "forkedBy", created_at AS "createdAt"
+       FROM comments
+       WHERE post_id = $1
+       ORDER BY created_at ASC`,
+      [postId]
+    );
+    const commentsByPost = commentTreesFromRows(commentsResult.rows);
+    const existing = rowToItem(row, commentsByPost.get(postId) ?? []);
+
+    if (isDeletedPost(existing)) {
+      deleted = existing;
+      await client.query("COMMIT");
+    } else {
+      if (row.authorHandle && cleanHandle(row.authorHandle) !== handle) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Only the author can delete this post." });
+      }
+      deleted = tombstonePost(existing);
+      await client.query(
+        `UPDATE posts
+         SET title = $2,
+             author_handle = NULL,
+             author_name = $3,
+             affiliation = $4,
+             status = $5,
+             gathering_reason = $6,
+             excerpt = $7,
+             body = $8,
+             tags = $9,
+             signals = $10,
+             claims = $11,
+             objections = $12,
+             evidence = $13,
+             tests = $14,
+             forks = $15,
+             search_text = $16,
+             edited_at = NULL,
+             deleted_at = $17,
+             updated_at = now()
+         WHERE id = $1`,
+        [
+          postId,
+          deleted.title,
+          deleted.author,
+          deleted.affiliation,
+          deleted.status,
+          deleted.gatheringReason,
+          deleted.excerpt,
+          deleted.body,
+          JSON.stringify(deleted.tags),
+          JSON.stringify(deleted.signals),
+          JSON.stringify(deleted.claims),
+          JSON.stringify(deleted.objections),
+          JSON.stringify(deleted.evidence),
+          JSON.stringify(deleted.tests),
+          JSON.stringify(deleted.forks),
+          searchablePostText({
+            title: deleted.title,
+            body: deleted.body,
+            excerpt: deleted.excerpt,
+            authorName: deleted.author
+          }),
+          deleted.deletedAt
+        ]
+      );
+      didDelete = true;
+      await client.query("COMMIT");
     }
-    await client.query("DELETE FROM posts WHERE id = $1", [postId]);
-    await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
@@ -792,15 +895,19 @@ export const deletePost = async (postId: string, actor: Actor) => {
     client.release();
   }
 
-  await emitEvent({
-    kind: "post.deleted",
-    actorHandle: handle,
-    subjectType: "post",
-    subjectId: postId,
-    payload: { itemId: postId }
-  });
+  if (!deleted) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
 
-  return { id: postId };
+  if (didDelete) {
+    await emitEvent({
+      kind: "post.deleted",
+      actorHandle: handle,
+      subjectType: "post",
+      subjectId: postId,
+      payload: { itemId: postId, item: deleted }
+    });
+  }
+
+  return deleted;
 };
 
 export const applyCommentAction = async (postId: string, commentId: string, rawInput: unknown, actor: Actor) => {
@@ -829,6 +936,7 @@ export const applyCommentAction = async (postId: string, commentId: string, rawI
       `SELECT
         id, kind, room, title, author_handle AS "authorHandle", author_name AS "authorName",
         affiliation, date_label AS "dateLabel", created_at AS "createdAt", edited_at AS "editedAt",
+        deleted_at AS "deletedAt",
         status, metrics, gathering_reason AS "gatheringReason", excerpt, body, tags, signals,
         claims, objections, evidence, tests, forks, saved, saved_by AS "savedBy",
         signaled_by AS "signaledBy", forked_by AS "forkedBy"
@@ -1212,7 +1320,7 @@ export const search = async (rawInput: unknown) => {
       `SELECT
         id, kind, room, title, author_handle AS "authorHandle", author_name AS "authorName",
         affiliation, date_label AS "dateLabel", status, metrics, gathering_reason AS "gatheringReason",
-        created_at AS "createdAt", edited_at AS "editedAt",
+        created_at AS "createdAt", edited_at AS "editedAt", deleted_at AS "deletedAt",
         excerpt, body, tags, signals, claims, objections, evidence, tests, forks, saved,
         saved_by AS "savedBy", signaled_by AS "signaledBy", forked_by AS "forkedBy"
        FROM posts

@@ -117,6 +117,7 @@ export const inquiryItemSchema = z.object({
   date: z.string(),
   createdAt: z.string().optional(),
   editedAt: z.string().optional(),
+  deletedAt: z.string().optional(),
   status: z.string(),
   metrics: inquiryMetricsSchema,
   gatheringReason: z.string(),

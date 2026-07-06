@@ -57,6 +57,7 @@ export type InquiryItem = {
   date: string;
   createdAt?: string;
   editedAt?: string;
+  deletedAt?: string;
   status: string;
   metrics: InquiryMetrics;
   gatheringReason: string;

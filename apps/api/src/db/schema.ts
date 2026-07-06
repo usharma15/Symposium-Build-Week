@@ -222,6 +222,7 @@ export const posts = pgTable(
     visibility: text("visibility").default("public").notNull(),
     searchText: text("search_text").notNull(),
     editedAt: timestamp("edited_at", { withTimezone: true }),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn()
   },

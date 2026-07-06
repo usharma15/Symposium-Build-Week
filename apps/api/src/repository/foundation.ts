@@ -30,6 +30,7 @@ export type SnapshotRow = Omit<InquiryItemContract, "author" | "date" | "comment
   dateLabel: string;
   createdAt?: Date | string | null;
   editedAt?: Date | string | null;
+  deletedAt?: Date | string | null;
   comments?: InquiryCommentContract[];
 };
 
@@ -488,6 +489,7 @@ export const rowToItem = (row: SnapshotRow, comments: InquiryCommentContract[]):
   date: row.dateLabel,
   createdAt: row.createdAt ? new Date(row.createdAt).toISOString() : undefined,
   editedAt: row.editedAt ? new Date(row.editedAt).toISOString() : undefined,
+  deletedAt: row.deletedAt ? new Date(row.deletedAt).toISOString() : undefined,
   status: row.status,
   metrics: json(row.metrics, { signal: "0", critiques: "0", forks: "0", saves: "0", reads: "0" }),
   gatheringReason: row.gatheringReason,
@@ -543,6 +545,7 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
         date_label AS "dateLabel",
         created_at AS "createdAt",
         edited_at AS "editedAt",
+        deleted_at AS "deletedAt",
         status,
         metrics,
         gathering_reason AS "gatheringReason",
