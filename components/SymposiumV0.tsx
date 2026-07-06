@@ -76,6 +76,7 @@ type ViewSnapshot = {
   patronageMode: PatronageMode;
   selectedCommunityId: string | null;
   commentSegmentStacks: CommentSegmentStacks;
+  scrollAnchor: { id: string; top: number } | null;
   scrollY: number;
 };
 
@@ -1356,6 +1357,13 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     });
   };
 
+  const currentScrollAnchor = () => {
+    const comments = Array.from(document.querySelectorAll<HTMLElement>(".comment[id]"));
+    const anchor = comments.find((comment) => comment.getBoundingClientRect().bottom > 104);
+    if (!anchor) return null;
+    return { id: anchor.id, top: anchor.getBoundingClientRect().top };
+  };
+
   const snapshotView = (): ViewSnapshot => ({
     activeRoom,
     selectedItemId,
@@ -1365,17 +1373,29 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     patronageMode,
     selectedCommunityId,
     commentSegmentStacks: cloneCommentSegmentStacks(commentSegmentStacksRef.current),
+    scrollAnchor: currentScrollAnchor(),
     scrollY: window.scrollY
   });
 
-  const restoreScrollPosition = (scrollY: number) => {
-    const scroll = () => window.scrollTo({ top: scrollY, behavior: "auto" });
+  const restoreScrollPosition = (snapshot: ViewSnapshot) => {
+    const scroll = () => {
+      if (snapshot.scrollAnchor) {
+        const anchor = document.getElementById(snapshot.scrollAnchor.id);
+        if (anchor) {
+          const top = anchor.getBoundingClientRect().top;
+          window.scrollBy({ top: top - snapshot.scrollAnchor.top, behavior: "auto" });
+          return;
+        }
+      }
+      window.scrollTo({ top: snapshot.scrollY, behavior: "auto" });
+    };
     window.setTimeout(() => {
       window.requestAnimationFrame(() => {
         window.requestAnimationFrame(scroll);
       });
     }, 0);
     window.setTimeout(scroll, 120);
+    window.setTimeout(scroll, 320);
   };
 
   const restoreView = (snapshot: ViewSnapshot) => {
@@ -1396,7 +1416,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     setSettingsOpen(false);
     setSearchOpen(false);
     setMessagesOpen(false);
-    restoreScrollPosition(snapshot.scrollY);
+    restoreScrollPosition(snapshot);
   };
 
   const navigateView = (
@@ -1961,6 +1981,15 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
 
       const data = (await response.json()) as { item: InquiryItem };
       if (actionVersionsRef.current[actionKey] !== version) return;
+
+      const committedComment = findCommentById(data.item.comments, commentId);
+      const committedActive = committedComment
+        ? commentActionActive(committedComment, action, actorHandle)
+        : undefined;
+      if (desiredActive !== undefined && committedActive !== desiredActive) {
+        setSyncStatus("Comment action syncing");
+        return;
+      }
 
       const committedItems = itemsRef.current.map((item) => (item.id === itemId ? data.item : item));
       itemsRef.current = committedItems;
@@ -3400,6 +3429,25 @@ function DetailView({
     if (selectedCommentId !== commentsSectionTargetId) return;
     window.requestAnimationFrame(scrollToComments);
   }, [selectedCommentId, item.id]);
+
+  useEffect(() => {
+    if (!threadSelectedCommentId) return;
+
+    const scrollToSelectedComment = () => {
+      document
+        .getElementById(`comment-${threadSelectedCommentId}`)
+        ?.scrollIntoView({ block: "center", behavior: "auto" });
+    };
+
+    window.requestAnimationFrame(() => window.requestAnimationFrame(scrollToSelectedComment));
+    const shortTimer = window.setTimeout(scrollToSelectedComment, 120);
+    const settledTimer = window.setTimeout(scrollToSelectedComment, 320);
+
+    return () => {
+      window.clearTimeout(shortTimer);
+      window.clearTimeout(settledTimer);
+    };
+  }, [commentSegmentStacks, item.id, threadSelectedCommentId]);
 
   return (
     <article className={`detail-layout ${isPaper ? "paper-detail" : "simple-detail"}`}>
