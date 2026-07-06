@@ -1599,6 +1599,7 @@ button {
 .detail-section,
 .comments-section {
   margin-top: 28px;
+  scroll-margin-top: 104px;
 }
 
 .detail-section h2,
@@ -1734,6 +1735,7 @@ button {
 .reply-window {
   display: grid;
   gap: 8px;
+  scroll-margin-top: 104px;
 }
 
 .reply-window.reset-thread {

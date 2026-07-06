@@ -123,11 +123,6 @@ type ProfileActivitySlot =
       recency: number;
     };
 
-type ReplyPageAnchor = {
-  top: number;
-  label: string;
-};
-
 type PostDraft = {
   title: string;
   body: string;
@@ -365,11 +360,6 @@ const clientId = (prefix: string) =>
 
 const commentTreeHasId = (comments: InquiryComment[], id: string): boolean =>
   comments.some((comment) => comment.id === id || commentTreeHasId(comment.replies ?? [], id));
-
-const findReplyPagingButton = (container: HTMLElement | null, label: string) =>
-  Array.from(container?.querySelectorAll<HTMLButtonElement>(".reply-window-button") ?? []).find(
-    (button) => button.textContent?.trim() === label
-  ) ?? null;
 
 const findCommentById = (comments: InquiryComment[], id: string): InquiryComment | undefined => {
   for (const comment of comments) {
@@ -3557,7 +3547,7 @@ function CommentNode({
   });
   const nodeRef = useRef<HTMLElement | null>(null);
   const replyWindowRef = useRef<HTMLDivElement | null>(null);
-  const pendingReplyAnchorRef = useRef<ReplyPageAnchor | null>(null);
+  const pendingReplyPageScrollRef = useRef(false);
   const authorProfile = profileForHandle(profiles, comment.authorHandle ?? comment.author);
   const authorName = authorProfile?.name ?? comment.author;
   const highlighted = Boolean(selectedCommentId && comment.id === selectedCommentId);
@@ -3579,19 +3569,13 @@ function CommentNode({
   }, [highlighted]);
 
   useLayoutEffect(() => {
-    if (!pendingReplyAnchorRef.current || !replyWindowRef.current) return;
-    const previousAnchor = pendingReplyAnchorRef.current;
-    pendingReplyAnchorRef.current = null;
-    const anchorElement = findReplyPagingButton(replyWindowRef.current, previousAnchor.label) ?? replyWindowRef.current;
-    const nextTop = anchorElement.getBoundingClientRect().top;
-    window.scrollBy({ top: nextTop - previousAnchor.top, behavior: "auto" });
+    if (!pendingReplyPageScrollRef.current || !replyWindowRef.current) return;
+    pendingReplyPageScrollRef.current = false;
+    replyWindowRef.current.scrollIntoView({ block: "start", behavior: "smooth" });
   }, [replyPage, visibleReplies.length]);
 
-  const changeReplyPage = (nextPage: number, anchor: HTMLButtonElement) => {
-    pendingReplyAnchorRef.current = {
-      top: anchor.getBoundingClientRect().top,
-      label: anchor.textContent?.trim() ?? ""
-    };
+  const changeReplyPage = (nextPage: number) => {
+    pendingReplyPageScrollRef.current = true;
     setReplyPage(nextPage);
   };
 
@@ -3651,7 +3635,7 @@ function CommentNode({
             <button
               className="reply-window-button"
               type="button"
-              onClick={(event) => changeReplyPage(Math.max(0, replyPage - 1), event.currentTarget)}
+              onClick={() => changeReplyPage(Math.max(0, replyPage - 1))}
             >
               Show previous replies
             </button>
@@ -3671,7 +3655,7 @@ function CommentNode({
             <button
               className="reply-window-button"
               type="button"
-              onClick={(event) => changeReplyPage(replyPage + 1, event.currentTarget)}
+              onClick={() => changeReplyPage(replyPage + 1)}
             >
               Show more replies
             </button>
@@ -3706,7 +3690,7 @@ function LinearReplyWindow({
     return selectedIndex >= 0 ? replyPageForIndex(selectedIndex) : 0;
   });
   const windowRef = useRef<HTMLDivElement | null>(null);
-  const pendingAnchorRef = useRef<ReplyPageAnchor | null>(null);
+  const pendingPageScrollRef = useRef(false);
   const start = replyPageStart(page);
   const currentPageSize = replyPageSize(page);
   const segment = buildLinearReplySegment(chain, start, currentPageSize);
@@ -3720,19 +3704,13 @@ function LinearReplyWindow({
   }, [chain, selectedCommentId]);
 
   useLayoutEffect(() => {
-    if (!pendingAnchorRef.current || !windowRef.current) return;
-    const previousAnchor = pendingAnchorRef.current;
-    pendingAnchorRef.current = null;
-    const anchorElement = findReplyPagingButton(windowRef.current, previousAnchor.label) ?? windowRef.current;
-    const nextTop = anchorElement.getBoundingClientRect().top;
-    window.scrollBy({ top: nextTop - previousAnchor.top, behavior: "auto" });
+    if (!pendingPageScrollRef.current || !windowRef.current) return;
+    pendingPageScrollRef.current = false;
+    windowRef.current.scrollIntoView({ block: "start", behavior: "smooth" });
   }, [page, segment.length]);
 
-  const changePage = (nextPage: number, anchor: HTMLButtonElement) => {
-    pendingAnchorRef.current = {
-      top: anchor.getBoundingClientRect().top,
-      label: anchor.textContent?.trim() ?? ""
-    };
+  const changePage = (nextPage: number) => {
+    pendingPageScrollRef.current = true;
     setPage(nextPage);
   };
 
@@ -3742,7 +3720,7 @@ function LinearReplyWindow({
         <button
           className="reply-window-button"
           type="button"
-          onClick={(event) => changePage(Math.max(0, page - 1), event.currentTarget)}
+          onClick={() => changePage(Math.max(0, page - 1))}
         >
           Show previous replies
         </button>
@@ -3762,7 +3740,7 @@ function LinearReplyWindow({
         <button
           className="reply-window-button"
           type="button"
-          onClick={(event) => changePage(page + 1, event.currentTarget)}
+          onClick={() => changePage(page + 1)}
         >
           Show more replies
         </button>
