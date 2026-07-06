@@ -358,9 +358,6 @@ const communitySearchText = (community: ResearchCommunity) =>
 const clientId = (prefix: string) =>
   `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
-const commentTreeHasId = (comments: InquiryComment[], id: string): boolean =>
-  comments.some((comment) => comment.id === id || commentTreeHasId(comment.replies ?? [], id));
-
 const findCommentById = (comments: InquiryComment[], id: string): InquiryComment | undefined => {
   for (const comment of comments) {
     if (comment.id === id) return comment;
@@ -368,6 +365,15 @@ const findCommentById = (comments: InquiryComment[], id: string): InquiryComment
     if (found) return found;
   }
   return undefined;
+};
+
+const findCommentPathById = (comments: InquiryComment[], id: string): InquiryComment[] | null => {
+  for (const comment of comments) {
+    if (comment.id === id) return [comment];
+    const childPath = findCommentPathById(comment.replies ?? [], id);
+    if (childPath) return [comment, ...childPath];
+  }
+  return null;
 };
 
 const commentAuthoredByProfile = (comment: InquiryComment, person: ResearchProfile) =>
@@ -458,8 +464,6 @@ const inferredLikesPublic = (person: ResearchProfile) => person.likesPublic ?? p
 const inferredResharesPublic = (person: ResearchProfile) => person.resharesPublic ?? person.handle.length % 4 !== 0;
 
 const fallbackCommunityCount = 8;
-const initialReplyPageSize = 5;
-const additionalReplyPageSize = 4;
 const commentsSectionTargetId = "__symposium-comments-section__";
 const commentMetricsFallback = { signal: "0", forks: "0", saves: "0", reads: "0" };
 const clientSeedItemById = new Map(inquiryItems.map((item) => [item.id, item]));
@@ -575,41 +579,7 @@ const mapCommentTree = (
   return { comments: nextComments, updated };
 };
 
-const getLinearReplyChain = (comments: InquiryComment[]) => {
-  const chain: InquiryComment[] = [];
-  let replies = comments;
-
-  while (replies.length === 1) {
-    const [comment] = replies;
-    chain.push(comment);
-    replies = comment.replies ?? [];
-  }
-
-  return chain;
-};
-
-const replyPageStart = (page: number) =>
-  page <= 0 ? 0 : initialReplyPageSize + (page - 1) * additionalReplyPageSize;
-
-const replyPageSize = (page: number) => (page <= 0 ? initialReplyPageSize : additionalReplyPageSize);
-
-const replyPageForIndex = (index: number) =>
-  index < initialReplyPageSize
-    ? 0
-    : Math.floor((index - initialReplyPageSize) / additionalReplyPageSize) + 1;
-
-const buildLinearReplySegment = (chain: InquiryComment[], start: number, size: number) => {
-  const segment = chain.slice(start, start + size).map((comment) => ({
-    ...comment,
-    replies: [] as InquiryComment[]
-  }));
-
-  for (let index = segment.length - 2; index >= 0; index -= 1) {
-    segment[index] = { ...segment[index], replies: [segment[index + 1]] };
-  }
-
-  return segment[0] ? [segment[0]] : [];
-};
+const maxVisibleCommentPathLength = 6;
 
 const communityMembershipIds = (communities: ResearchCommunity[], person: ResearchProfile) => {
   const explicit = communities.filter((community) => community.memberHandles.includes(person.handle));
@@ -3498,7 +3468,7 @@ function CommentThread({
   return (
     <div className={`comment-thread depth-${depth}`}>
       {comments.map((comment) => (
-        <CommentNode
+        <CommentRootSegment
           key={comment.id ?? `${comment.author}-${comment.stance}-${comment.body}`}
           comment={comment}
           itemId={itemId}
@@ -3515,7 +3485,24 @@ function CommentThread({
   );
 }
 
-function CommentNode({
+function segmentStackForSelectedComment(root: InquiryComment, selectedCommentId: string | null) {
+  if (!selectedCommentId) return [];
+  const path = findCommentPathById([root], selectedCommentId);
+  if (!path) return [];
+
+  const stack: string[] = [];
+  let segmentRootIndex = 0;
+  while (path.length - segmentRootIndex > maxVisibleCommentPathLength) {
+    segmentRootIndex += maxVisibleCommentPathLength - 1;
+    const segmentRootId = path[segmentRootIndex]?.id;
+    if (!segmentRootId) break;
+    stack.push(segmentRootId);
+  }
+
+  return stack;
+}
+
+function CommentRootSegment({
   comment,
   itemId,
   profiles,
@@ -3536,48 +3523,106 @@ function CommentNode({
   actorHandle: string;
   depth: number;
 }) {
+  const [segmentStack, setSegmentStack] = useState<string[]>(() =>
+    segmentStackForSelectedComment(comment, selectedCommentId)
+  );
+  const segmentRef = useRef<HTMLDivElement | null>(null);
+  const pendingSegmentScrollRef = useRef(false);
+  const activeSegmentId = segmentStack.at(-1);
+  const activeComment = activeSegmentId ? findCommentById([comment], activeSegmentId) ?? comment : comment;
+
+  useEffect(() => {
+    if (!selectedCommentId) return;
+    const selectedStack = segmentStackForSelectedComment(comment, selectedCommentId);
+    setSegmentStack((current) => {
+      if (selectedStack.join("|") === current.join("|")) return current;
+      pendingSegmentScrollRef.current = true;
+      return selectedStack;
+    });
+  }, [comment, selectedCommentId]);
+
+  useLayoutEffect(() => {
+    if (!pendingSegmentScrollRef.current || !segmentRef.current) return;
+    pendingSegmentScrollRef.current = false;
+    segmentRef.current.scrollIntoView({ block: "start", behavior: "smooth" });
+  }, [segmentStack]);
+
+  const openReplySegment = (commentId: string) => {
+    pendingSegmentScrollRef.current = true;
+    setSegmentStack((current) => (current.at(-1) === commentId ? current : [...current, commentId]));
+  };
+
+  const showPreviousSegment = () => {
+    pendingSegmentScrollRef.current = true;
+    setSegmentStack((current) => current.slice(0, -1));
+  };
+
+  return (
+    <div className="comment-segment" ref={segmentRef}>
+      {segmentStack.length ? (
+        <button
+          className="reply-window-button reply-window-button-previous"
+          type="button"
+          onClick={showPreviousSegment}
+        >
+          Show previous replies
+        </button>
+      ) : null}
+      <CommentNode
+        comment={activeComment}
+        itemId={itemId}
+        profiles={profiles}
+        selectedCommentId={selectedCommentId}
+        onOpenProfile={onOpenProfile}
+        onAddComment={onAddComment}
+        onCommentAction={onCommentAction}
+        actorHandle={actorHandle}
+        depth={depth}
+        segmentDepth={1}
+        onOpenReplySegment={openReplySegment}
+      />
+    </div>
+  );
+}
+
+function CommentNode({
+  comment,
+  itemId,
+  profiles,
+  selectedCommentId,
+  onOpenProfile,
+  onAddComment,
+  onCommentAction,
+  actorHandle,
+  depth,
+  segmentDepth,
+  onOpenReplySegment
+}: {
+  comment: InquiryComment;
+  itemId: string;
+  profiles: Record<string, ResearchProfile>;
+  selectedCommentId: string | null;
+  onOpenProfile: (name: string) => void;
+  onAddComment: (itemId: string, body: string, stance: string, parentId?: string | null) => void;
+  onCommentAction: (itemId: string, commentId: string, action: CommentAction) => void;
+  actorHandle: string;
+  depth: number;
+  segmentDepth: number;
+  onOpenReplySegment: (commentId: string) => void;
+}) {
   const [replyOpen, setReplyOpen] = useState(false);
   const replies = comment.replies ?? [];
-  const linearReplyChain = getLinearReplyChain(replies);
-  const useLinearWindow = linearReplyChain.length > initialReplyPageSize;
-  const [replyPage, setReplyPage] = useState(() => {
-    if (!selectedCommentId) return 0;
-    const selectedReplyIndex = replies.findIndex((reply) => commentTreeHasId([reply], selectedCommentId));
-    return selectedReplyIndex >= 0 ? replyPageForIndex(selectedReplyIndex) : 0;
-  });
   const nodeRef = useRef<HTMLElement | null>(null);
-  const replyWindowRef = useRef<HTMLDivElement | null>(null);
-  const pendingReplyPageScrollRef = useRef(false);
   const authorProfile = profileForHandle(profiles, comment.authorHandle ?? comment.author);
   const authorName = authorProfile?.name ?? comment.author;
   const highlighted = Boolean(selectedCommentId && comment.id === selectedCommentId);
-  const pageStart = replyPageStart(replyPage);
-  const currentPageSize = replyPageSize(replyPage);
-  const visibleReplies = replies.slice(pageStart, pageStart + currentPageSize);
-  const hasPreviousReplies = replyPage > 0;
-  const hasMoreReplies = pageStart + currentPageSize < replies.length;
-
-  useEffect(() => {
-    if (!selectedCommentId || !replies.length) return;
-    const selectedReplyIndex = replies.findIndex((reply) => commentTreeHasId([reply], selectedCommentId));
-    if (selectedReplyIndex >= 0) setReplyPage(replyPageForIndex(selectedReplyIndex));
-  }, [replies, selectedCommentId]);
+  const canShowReplies = segmentDepth < maxVisibleCommentPathLength;
+  const shouldHideReplies = replies.length > 0 && !canShowReplies;
 
   useEffect(() => {
     if (!highlighted) return;
     nodeRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [highlighted]);
-
-  useLayoutEffect(() => {
-    if (!pendingReplyPageScrollRef.current || !replyWindowRef.current) return;
-    pendingReplyPageScrollRef.current = false;
-    replyWindowRef.current.scrollIntoView({ block: "start", behavior: "smooth" });
-  }, [replyPage, visibleReplies.length]);
-
-  const changeReplyPage = (nextPage: number) => {
-    pendingReplyPageScrollRef.current = true;
-    setReplyPage(nextPage);
-  };
 
   return (
     <article
@@ -3618,134 +3663,41 @@ function CommentNode({
           />
         ) : null}
       </div>
-      {useLinearWindow ? (
-        <LinearReplyWindow
-          chain={linearReplyChain}
-          itemId={itemId}
-          profiles={profiles}
-          selectedCommentId={selectedCommentId}
-          onOpenProfile={onOpenProfile}
-          onAddComment={onAddComment}
-          onCommentAction={onCommentAction}
-          actorHandle={actorHandle}
-        />
-      ) : replies.length ? (
-        <div className="reply-window" ref={replyWindowRef}>
-          {hasPreviousReplies ? (
+      {shouldHideReplies ? (
+        <div className="reply-window">
+          {comment.id ? (
             <button
               className="reply-window-button"
               type="button"
-              onClick={() => changeReplyPage(Math.max(0, replyPage - 1))}
-            >
-              Show previous replies
-            </button>
-          ) : null}
-          <CommentThread
-            comments={visibleReplies}
-            itemId={itemId}
-            profiles={profiles}
-            selectedCommentId={selectedCommentId}
-            onOpenProfile={onOpenProfile}
-            onAddComment={onAddComment}
-            onCommentAction={onCommentAction}
-            actorHandle={actorHandle}
-            depth={depth + 1}
-          />
-          {hasMoreReplies ? (
-            <button
-              className="reply-window-button"
-              type="button"
-              onClick={() => changeReplyPage(replyPage + 1)}
+              onClick={() => onOpenReplySegment(comment.id as string)}
             >
               Show more replies
             </button>
           ) : null}
         </div>
+      ) : replies.length ? (
+        <div className="reply-window">
+          <div className={`comment-thread depth-${depth + 1}`}>
+            {replies.map((reply) => (
+              <CommentNode
+                key={reply.id ?? `${reply.author}-${reply.stance}-${reply.body}`}
+                comment={reply}
+                itemId={itemId}
+                profiles={profiles}
+                selectedCommentId={selectedCommentId}
+                onOpenProfile={onOpenProfile}
+                onAddComment={onAddComment}
+                onCommentAction={onCommentAction}
+                actorHandle={actorHandle}
+                depth={depth + 1}
+                segmentDepth={segmentDepth + 1}
+                onOpenReplySegment={onOpenReplySegment}
+              />
+            ))}
+          </div>
+        </div>
       ) : null}
     </article>
-  );
-}
-
-function LinearReplyWindow({
-  chain,
-  itemId,
-  profiles,
-  selectedCommentId,
-  onOpenProfile,
-  onAddComment,
-  onCommentAction,
-  actorHandle
-}: {
-  chain: InquiryComment[];
-  itemId: string;
-  profiles: Record<string, ResearchProfile>;
-  selectedCommentId: string | null;
-  onOpenProfile: (name: string) => void;
-  onAddComment: (itemId: string, body: string, stance: string, parentId?: string | null) => void;
-  onCommentAction: (itemId: string, commentId: string, action: CommentAction) => void;
-  actorHandle: string;
-}) {
-  const [page, setPage] = useState(() => {
-    const selectedIndex = selectedCommentId ? chain.findIndex((comment) => comment.id === selectedCommentId) : -1;
-    return selectedIndex >= 0 ? replyPageForIndex(selectedIndex) : 0;
-  });
-  const windowRef = useRef<HTMLDivElement | null>(null);
-  const pendingPageScrollRef = useRef(false);
-  const start = replyPageStart(page);
-  const currentPageSize = replyPageSize(page);
-  const segment = buildLinearReplySegment(chain, start, currentPageSize);
-  const hasPrevious = page > 0;
-  const hasMore = start + currentPageSize < chain.length;
-
-  useEffect(() => {
-    if (!selectedCommentId) return;
-    const selectedIndex = chain.findIndex((comment) => comment.id === selectedCommentId);
-    if (selectedIndex >= 0) setPage(replyPageForIndex(selectedIndex));
-  }, [chain, selectedCommentId]);
-
-  useLayoutEffect(() => {
-    if (!pendingPageScrollRef.current || !windowRef.current) return;
-    pendingPageScrollRef.current = false;
-    windowRef.current.scrollIntoView({ block: "start", behavior: "smooth" });
-  }, [page, segment.length]);
-
-  const changePage = (nextPage: number) => {
-    pendingPageScrollRef.current = true;
-    setPage(nextPage);
-  };
-
-  return (
-    <div className="reply-window reset-thread" ref={windowRef}>
-      {hasPrevious ? (
-        <button
-          className="reply-window-button"
-          type="button"
-          onClick={() => changePage(Math.max(0, page - 1))}
-        >
-          Show previous replies
-        </button>
-      ) : null}
-      <CommentThread
-        comments={segment}
-        itemId={itemId}
-        profiles={profiles}
-        selectedCommentId={selectedCommentId}
-        onOpenProfile={onOpenProfile}
-        onAddComment={onAddComment}
-        onCommentAction={onCommentAction}
-        actorHandle={actorHandle}
-        depth={0}
-      />
-      {hasMore ? (
-        <button
-          className="reply-window-button"
-          type="button"
-          onClick={() => changePage(page + 1)}
-        >
-          Show more replies
-        </button>
-      ) : null}
-    </div>
   );
 }
 

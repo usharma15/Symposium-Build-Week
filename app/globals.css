@@ -1625,6 +1625,10 @@ button {
   gap: 12px;
 }
 
+.comment-segment {
+  scroll-margin-top: 104px;
+}
+
 .comment-composer {
   display: grid;
   gap: 10px;
@@ -1738,16 +1742,6 @@ button {
   scroll-margin-top: 104px;
 }
 
-.reply-window.reset-thread {
-  margin-left: 39px;
-}
-
-.reply-window.reset-thread > .comment-thread {
-  margin-left: 0;
-  padding-left: 0;
-  border-left: 0;
-}
-
 .reply-window-button {
   width: fit-content;
   min-height: 32px;
@@ -1759,6 +1753,10 @@ button {
   padding: 0 11px;
   font-size: 0.78rem;
   font-weight: 820;
+}
+
+.reply-window-button-previous {
+  margin: 0 0 8px;
 }
 
 .comment-composer.compact {
