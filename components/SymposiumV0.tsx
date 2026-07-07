@@ -355,7 +355,7 @@ const matchesCommunity = (item: InquiryItem, community: ResearchCommunity) => {
 };
 
 const getCommunityItems = (items: InquiryItem[], community: ResearchCommunity) =>
-  items.filter((item) => matchesCommunity(item, community));
+  items.filter((item) => !isDeletedPost(item) && matchesCommunity(item, community));
 
 const getCommunityStats = (items: InquiryItem[], community: ResearchCommunity) => {
   const communityItems = getCommunityItems(items, community);
@@ -778,6 +778,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
         ? themedCommunityRenders.selected
         : themedRoomRenders[activeRoom];
   const selectedItem = items.find((item) => item.id === selectedItemId) ?? null;
+  const activeItems = useMemo(() => items.filter((item) => !isDeletedPost(item)), [items]);
   const editingPostItem = editingPost ? items.find((item) => item.id === editingPost.id) ?? editingPost : null;
   const editingCommentItem = editingComment ? items.find((item) => item.id === editingComment.itemId) ?? null : null;
   const editingCommentValue =
@@ -866,7 +867,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     [...nextItems].sort((a, b) => getPublishedRecency(b) - getPublishedRecency(a));
 
   const visibleItems = useMemo(() => {
-    const patronageItems = items.filter((item) => item.room === "funding");
+    const patronageItems = activeItems.filter((item) => item.room === "funding");
     const selectedPatronageItems =
       patronageMode === "lobby"
         ? []
@@ -875,7 +876,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       patronageMode === "lobby" || selectedPatronageItems.length ? selectedPatronageItems : patronageItems;
     const patronageIds = new Set(patronageFallbackItems.map((item) => item.id));
 
-    const roomFiltered = items
+    const roomFiltered = activeItems
       .filter((item) => {
         if (activeRoom === "hall") return item.kind === "paper" || item.kind === "thought";
         if (activeRoom === "office") {
@@ -906,7 +907,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       });
 
     return sortByPublishedRecency(roomFiltered);
-  }, [activeRoom, currentProfile.handle, currentProfile.name, feedScope, followingHandles, items, officeMode, patronageMode, roomChip]);
+  }, [activeItems, activeRoom, currentProfile, feedScope, followingHandles, officeMode, patronageMode, roomChip]);
 
   const readLocalSnapshot = (): LocalSnapshot | null => {
     try {
@@ -2469,11 +2470,11 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     if (!term) return { titleMatches: [] as InquiryItem[], contentMatches: [] as InquiryItem[], profileMatches: [] as ResearchProfile[] };
 
     const titleMatches = sortByPublishedRecency(
-      items.filter((item) => normalizeSearchPhrase(item.title).includes(term))
+      activeItems.filter((item) => normalizeSearchPhrase(item.title).includes(term))
     );
     const titleIds = new Set(titleMatches.map((item) => item.id));
     const contentMatches = sortByPublishedRecency(
-      items.filter((item) => !titleIds.has(item.id) && normalizeSearchPhrase(searchableContentText(item)).includes(term))
+      activeItems.filter((item) => !titleIds.has(item.id) && normalizeSearchPhrase(searchableContentText(item)).includes(term))
     );
     const profileMatches = profileList
       .filter((person) =>
@@ -2485,7 +2486,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       .slice(0, 8);
 
     return { titleMatches, contentMatches, profileMatches };
-  }, [items, profileList, searchQuery]);
+  }, [activeItems, profileList, searchQuery]);
 
   if (entryMode !== "complete") {
     return (
@@ -4724,12 +4725,12 @@ function ProfileView({
   const commentLikes = canShowLikes ? collectProfileComments(items, person, "signal", commentRecency) : [];
   const commentSaved = canShowSaved ? collectProfileComments(items, person, "save", commentRecency) : [];
   const reshares = canShowReshares
-    ? byProfileRecency(items.filter((item) => !isAuthor(item) && hasHandle(item.forkedBy, person.handle)), "fork")
+    ? byProfileRecency(items.filter((item) => !isDeletedPost(item) && !isAuthor(item) && hasHandle(item.forkedBy, person.handle)), "fork")
     : [];
   const likes = canShowLikes
-    ? byProfileRecency(items.filter((item) => !isAuthor(item) && hasHandle(item.signaledBy, person.handle)), "signal")
+    ? byProfileRecency(items.filter((item) => !isDeletedPost(item) && !isAuthor(item) && hasHandle(item.signaledBy, person.handle)), "signal")
     : [];
-  const saved = canShowSaved ? byProfileRecency(items.filter((item) => !isAuthor(item) && isSavedBy(item, person.handle, profile.handle)), "save") : [];
+  const saved = canShowSaved ? byProfileRecency(items.filter((item) => !isDeletedPost(item) && !isAuthor(item) && isSavedBy(item, person.handle, profile.handle)), "save") : [];
   const authoredEntries = authored.map((item) => postEntry(item, getProfileRecency(item, person.handle, "authored")));
   const paperEntries = papers.map((item) => postEntry(item, getProfileRecency(item, person.handle, "authored")));
   const thoughtEntries = thoughts.map((item) => postEntry(item, getProfileRecency(item, person.handle, "authored")));

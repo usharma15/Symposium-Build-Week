@@ -1554,6 +1554,7 @@ export const search = async (rawInput: unknown) => {
     const snapshot = seedSnapshot();
     return {
       posts: snapshot.items
+        .filter((item) => !isDeletedPost(item))
         .filter((item) => searchablePostText({ ...item, authorName: item.author }).toLowerCase().includes(term))
         .slice(0, input.limit),
       profiles: Object.values(snapshot.profiles)
@@ -1574,7 +1575,7 @@ export const search = async (rawInput: unknown) => {
         excerpt, body, tags, signals, claims, objections, evidence, tests, forks, saved,
         saved_by AS "savedBy", signaled_by AS "signaledBy", forked_by AS "forkedBy"
        FROM posts
-       WHERE search_text ILIKE $1
+       WHERE search_text ILIKE $1 AND deleted_at IS NULL
        ORDER BY created_at DESC
        LIMIT $2`,
       [like, input.limit]
