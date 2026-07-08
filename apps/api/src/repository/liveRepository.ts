@@ -29,14 +29,19 @@ import {
   type ResearchProfileContract
 } from "../../../../packages/contracts/src";
 import {
+  appendCommentToTree,
+  canManageComment,
   cleanHandle,
+  commentMetricsFallback,
+  findCommentInTree,
   incrementMetric,
   isDeletedComment,
   isDeletedPost,
+  mapCommentTree,
+  mutateCommentForActor,
   mutateItemForActor,
   tombstoneComment,
   tombstonePost,
-  toggleHandle,
   updateSignalValue
 } from "@/lib/symposiumCore";
 import { env } from "../config/env";
@@ -337,51 +342,6 @@ export const createPost = async (rawInput: unknown, actor: Actor) => {
   return item;
 };
 
-const commentMetricsFallback = { signal: "0", forks: "0", saves: "0", reads: "0" };
-
-const mutateCommentForActor = (
-  comment: InquiryCommentContract,
-  action: PostActionInputContract["action"],
-  handle: string,
-  active?: boolean
-): InquiryCommentContract => {
-  if (isDeletedComment(comment)) return comment;
-
-  const metrics = { ...commentMetricsFallback, ...(comment.metrics ?? {}) };
-
-  if (action === "save") {
-    const next = toggleHandle(comment.savedBy, handle, active);
-    return {
-      ...comment,
-      savedBy: next.handles,
-      metrics: { ...metrics, saves: incrementMetric(metrics.saves, next.delta) }
-    };
-  }
-
-  if (action === "signal") {
-    const next = toggleHandle(comment.signaledBy, handle, active);
-    return {
-      ...comment,
-      signaledBy: next.handles,
-      metrics: { ...metrics, signal: incrementMetric(metrics.signal, next.delta) }
-    };
-  }
-
-  if (action === "fork") {
-    const next = toggleHandle(comment.forkedBy, handle, active);
-    return {
-      ...comment,
-      forkedBy: next.handles,
-      metrics: { ...metrics, forks: incrementMetric(metrics.forks, next.delta) }
-    };
-  }
-
-  return {
-    ...comment,
-    metrics: { ...metrics, reads: incrementMetric(metrics.reads, 1) }
-  };
-};
-
 const viewDedupeWindowMs = 60 * 60 * 1000;
 type ViewTargetType = "post" | "comment";
 const memoryContentViews = new Map<string, number>();
@@ -429,47 +389,17 @@ const recordContentView = async (
   return (result.rowCount ?? 0) > 0;
 };
 
-const mapCommentTree = (
-  comments: InquiryCommentContract[],
-  commentId: string,
-  mutate: (comment: InquiryCommentContract) => InquiryCommentContract
-): { comments: InquiryCommentContract[]; updated?: InquiryCommentContract } => {
-  let updated: InquiryCommentContract | undefined;
-  const nextComments = comments.map((comment) => {
-    if (comment.id === commentId) {
-      updated = mutate(comment);
-      return updated;
-    }
-
-    const child = mapCommentTree(comment.replies ?? [], commentId, mutate);
-    if (child.updated) {
-      updated = child.updated;
-      return { ...comment, replies: child.comments };
-    }
-
-    return comment;
-  });
-
-  return { comments: nextComments, updated };
-};
-
-const findCommentInTree = (comments: InquiryCommentContract[], commentId: string): InquiryCommentContract | undefined => {
-  for (const comment of comments) {
-    if (comment.id === commentId) return comment;
-    const found = findCommentInTree(comment.replies ?? [], commentId);
-    if (found) return found;
-  }
-  return undefined;
-};
-
-const canManageComment = (comment: InquiryCommentContract, handle: string) =>
-  comment.authorHandle ? cleanHandle(comment.authorHandle) === handle : false;
-
 export const addComment = async (postId: string, rawInput: unknown, actor: Actor) => {
   const input = createCommentInputSchema.parse(rawInput);
   const snapshot = await getInitialState();
   const existing = snapshot.items.find((item) => item.id === postId);
   if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+  if (isDeletedPost(existing)) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "Deleted posts cannot be commented on." });
+  }
+  if (input.parentId && !findCommentInTree(existing.comments, input.parentId)) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "Parent comment was not found on this post." });
+  }
 
   const handle = actorHandle(actor, input.authorHandle);
   const author = snapshot.profiles[handle] ?? defaultProfile;
@@ -481,10 +411,32 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
     stance: input.stance || "Comment",
     body: input.body,
     createdAt: new Date().toISOString(),
+    metrics: { ...commentMetricsFallback },
+    savedBy: [],
+    signaledBy: [],
+    forkedBy: [],
     replies: []
   };
+  const nextCritiques = incrementMetric(existing.metrics.critiques, 1);
+  const nextMetrics = { ...existing.metrics, critiques: nextCritiques };
+  const nextSignals = updateSignalValue(existing.signals, "Critiques", nextCritiques);
+  const memoryAppend = appendCommentToTree(existing.comments, comment);
 
-  if (!hasDatabase()) return comment;
+  if (!memoryAppend.inserted) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "Parent comment was not found on this post." });
+  }
+
+  if (!hasDatabase()) {
+    return {
+      comment,
+      item: {
+        ...existing,
+        metrics: nextMetrics,
+        signals: nextSignals,
+        comments: memoryAppend.comments
+      }
+    };
+  }
 
   await ensureLiveData();
   const client = await getPool().connect();
@@ -530,25 +482,6 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
     const row = postResult.rows[0];
     if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
 
-    const lockedItem = rowToItem(row, []);
-    const nextCritiques = incrementMetric(lockedItem.metrics.critiques, 1);
-    const nextMetrics = { ...lockedItem.metrics, critiques: nextCritiques };
-    const nextSignals = updateSignalValue(lockedItem.signals, "Critiques", nextCritiques);
-
-    await client.query(
-      `INSERT INTO comments (id, post_id, parent_id, author_handle, author_name, stance, body)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [comment.id, postId, comment.parentId, comment.authorHandle, comment.author, comment.stance, comment.body]
-    );
-    await client.query(
-      `UPDATE posts
-       SET metrics = $2,
-           signals = $3,
-           updated_at = now()
-       WHERE id = $1`,
-      [postId, JSON.stringify(nextMetrics), JSON.stringify(nextSignals)]
-    );
-
     const commentsResult = await client.query<CommentRow>(
       `SELECT
         id,
@@ -571,9 +504,55 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
       [postId]
     );
     const commentsByPost = commentTreesFromRows(commentsResult.rows);
+    const existingComments = commentsByPost.get(postId) ?? [];
+    const lockedItem = rowToItem(row, existingComments);
+    if (isDeletedPost(lockedItem)) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "Deleted posts cannot be commented on." });
+    }
+    if (comment.parentId && !findCommentInTree(existingComments, comment.parentId)) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "Parent comment was not found on this post." });
+    }
+    const lockedNextCritiques = incrementMetric(lockedItem.metrics.critiques, 1);
+    const lockedNextMetrics = { ...lockedItem.metrics, critiques: lockedNextCritiques };
+    const lockedNextSignals = updateSignalValue(lockedItem.signals, "Critiques", lockedNextCritiques);
+    const appended = appendCommentToTree(existingComments, comment);
+    if (!appended.inserted) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "Parent comment was not found on this post." });
+    }
+
+    await client.query(
+      `INSERT INTO comments (
+        id, post_id, parent_id, author_handle, author_name, stance, body,
+        metrics, saved_by, signaled_by, forked_by, created_at
+      )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+      [
+        comment.id,
+        postId,
+        comment.parentId,
+        comment.authorHandle,
+        comment.author,
+        comment.stance,
+        comment.body,
+        JSON.stringify(comment.metrics),
+        JSON.stringify(comment.savedBy),
+        JSON.stringify(comment.signaledBy),
+        JSON.stringify(comment.forkedBy),
+        comment.createdAt
+      ]
+    );
+    await client.query(
+      `UPDATE posts
+       SET metrics = $2,
+           signals = $3,
+           updated_at = now()
+       WHERE id = $1`,
+      [postId, JSON.stringify(lockedNextMetrics), JSON.stringify(lockedNextSignals)]
+    );
+
     updatedItem = rowToItem(
-      { ...row, metrics: nextMetrics, signals: nextSignals },
-      commentsByPost.get(postId) ?? []
+      { ...row, metrics: lockedNextMetrics, signals: lockedNextSignals },
+      appended.comments
     );
 
     await client.query("COMMIT");
@@ -592,7 +571,7 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
     payload: { comment, item: updatedItem, commentId: comment.id, parentId: comment.parentId }
   });
 
-  return comment;
+  return { comment, item: updatedItem };
 };
 
 export const applyPostAction = async (postId: string, rawInput: unknown, actor: Actor) => {

@@ -13,14 +13,19 @@ import {
   type RoomId
 } from "@/lib/mockData";
 import {
+  appendCommentToTree,
+  canManageComment,
   cleanHandle,
+  commentMetricsFallback,
+  findCommentInTree,
   incrementMetric,
   isDeletedComment,
   isDeletedPost,
+  mapCommentTree,
+  mutateCommentForActor,
   mutateItemForActor,
   tombstoneComment,
   tombstonePost,
-  toggleHandle,
   updateSignalValue,
   type PostAction
 } from "@/lib/symposiumCore";
@@ -69,7 +74,6 @@ export type UpdateCommentInput = {
   body: string;
 };
 
-const commentMetricsFallback = { signal: "0", forks: "0", saves: "0", reads: "0" };
 const viewDedupeWindowMs = 60 * 60 * 1000;
 type ViewTargetType = "post" | "comment";
 
@@ -819,6 +823,10 @@ export const createPost = async (input: CreatePostInput, authorHandle: string) =
 
 export const addComment = async (itemId: string, input: CreateCommentInput, authorHandle: string) => {
   const data = await getSnapshot();
+  const existing = data.items.find((item) => item.id === itemId);
+  if (!existing || isDeletedPost(existing)) return null;
+  if (input.parentId && !findCommentInTree(existing.comments, input.parentId)) return null;
+
   const author = data.profiles[authorHandle] ?? defaultProfile;
   const comment: InquiryComment = {
     id: newId("comment"),
@@ -834,12 +842,19 @@ export const addComment = async (itemId: string, input: CreateCommentInput, auth
     forkedBy: [],
     replies: []
   };
+  const nextCritiques = incrementMetric(existing.metrics.critiques, 1);
+  const nextSignals = updateSignalValue(existing.signals, "Critiques", nextCritiques);
+  const appended = appendCommentToTree(existing.comments, comment);
+  if (!appended.inserted) return null;
+  const updatedItem: InquiryItem = {
+    ...existing,
+    metrics: { ...existing.metrics, critiques: nextCritiques },
+    signals: nextSignals,
+    comments: appended.comments
+  };
 
   if (usePostgres) {
     await ensureSchema();
-    const existing = data.items.find((item) => item.id === itemId);
-    const nextCritiques = incrementMetric(existing?.metrics.critiques ?? "0", 1);
-    const nextSignals = updateSignalValue(existing?.signals ?? [], "Critiques", nextCritiques);
     await getPool().query(
       `INSERT INTO comments (
         id, item_id, parent_id, author_handle, author_name, stance, body,
@@ -868,34 +883,31 @@ export const addComment = async (itemId: string, input: CreateCommentInput, auth
        WHERE id = $1`,
       [itemId, nextCritiques, JSON.stringify(nextSignals)]
     );
-    return comment;
+    return { comment, item: updatedItem };
   }
 
-  const addToTree = (comments: InquiryComment[]): InquiryComment[] => {
-    if (!comment.parentId) return [...comments, comment];
-    return comments.map((current) =>
-      current.id === comment.parentId
-        ? { ...current, replies: [...(current.replies ?? []), comment] }
-        : { ...current, replies: addToTree(current.replies ?? []) }
-    );
-  };
-
   const local = await readLocal();
-  local.items = local.items.map((item) =>
-    item.id === itemId
-      ? (() => {
-          const nextCritiques = incrementMetric(item.metrics.critiques, 1);
-          return {
-            ...item,
-            metrics: { ...item.metrics, critiques: nextCritiques },
-            signals: updateSignalValue(item.signals, "Critiques", nextCritiques),
-            comments: addToTree(item.comments)
-          };
-        })()
-      : item
-  );
+  let localUpdatedItem: InquiryItem | null = null;
+  local.items = local.items.map((item) => {
+    if (item.id !== itemId) return item;
+    if (isDeletedPost(item)) return item;
+    if (input.parentId && !findCommentInTree(item.comments, input.parentId)) return item;
+
+    const localAppended = appendCommentToTree(item.comments, comment);
+    if (!localAppended.inserted) return item;
+
+    const localNextCritiques = incrementMetric(item.metrics.critiques, 1);
+    localUpdatedItem = {
+      ...item,
+      metrics: { ...item.metrics, critiques: localNextCritiques },
+      signals: updateSignalValue(item.signals, "Critiques", localNextCritiques),
+      comments: localAppended.comments
+    };
+    return localUpdatedItem;
+  });
+  if (!localUpdatedItem) return null;
   await writeLocal(local);
-  return comment;
+  return { comment, item: localUpdatedItem };
 };
 
 export const applyPostAction = async (
@@ -1064,80 +1076,6 @@ export const deletePost = async (itemId: string, actorHandle = defaultProfile.ha
   await writeLocal(local);
   return deleted;
 };
-
-const mutateCommentForActor = (
-  comment: InquiryComment,
-  action: CommentAction,
-  actorHandle: string,
-  active?: boolean
-): InquiryComment => {
-  if (isDeletedComment(comment)) return comment;
-
-  const metrics = { ...commentMetricsFallback, ...(comment.metrics ?? {}) };
-
-  if (action === "save") {
-    const next = toggleHandle(comment.savedBy, actorHandle, active);
-    return {
-      ...comment,
-      savedBy: next.handles,
-      metrics: { ...metrics, saves: incrementMetric(metrics.saves, next.delta) }
-    };
-  }
-
-  if (action === "signal") {
-    const next = toggleHandle(comment.signaledBy, actorHandle, active);
-    return {
-      ...comment,
-      signaledBy: next.handles,
-      metrics: { ...metrics, signal: incrementMetric(metrics.signal, next.delta) }
-    };
-  }
-
-  if (action === "fork") {
-    const next = toggleHandle(comment.forkedBy, actorHandle, active);
-    return {
-      ...comment,
-      forkedBy: next.handles,
-      metrics: { ...metrics, forks: incrementMetric(metrics.forks, next.delta) }
-    };
-  }
-
-  return {
-    ...comment,
-    metrics: { ...metrics, reads: incrementMetric(metrics.reads, 1) }
-  };
-};
-
-const mapCommentTree = (
-  comments: InquiryComment[],
-  commentId: string,
-  mutate: (comment: InquiryComment) => InquiryComment
-): { comments: InquiryComment[]; updated: InquiryComment | null } => {
-  let updated: InquiryComment | null = null;
-  const nextComments = comments.map((comment) => {
-    if (comment.id === commentId) {
-      updated = mutate(comment);
-      return updated;
-    }
-    const child = mapCommentTree(comment.replies ?? [], commentId, mutate);
-    if (child.updated) updated = child.updated;
-    return child.updated ? { ...comment, replies: child.comments } : comment;
-  });
-
-  return { comments: nextComments, updated };
-};
-
-const findCommentInTree = (comments: InquiryComment[], commentId: string): InquiryComment | null => {
-  for (const comment of comments) {
-    if (comment.id === commentId) return comment;
-    const found = findCommentInTree(comment.replies ?? [], commentId);
-    if (found) return found;
-  }
-  return null;
-};
-
-const canManageComment = (comment: InquiryComment, actorHandle: string) =>
-  comment.authorHandle ? cleanHandle(comment.authorHandle) === cleanHandle(actorHandle) : false;
 
 const updateCommentShape = (
   comment: InquiryComment,

@@ -14,6 +14,9 @@ export const postRooms = [
 
 export type PostAction = "signal" | "save" | "fork" | "read";
 export type CommentAction = PostAction;
+export type CommentMetricSubset = Pick<InquiryItem["metrics"], "signal" | "forks" | "saves" | "reads">;
+
+export const commentMetricsFallback: CommentMetricSubset = { signal: "0", forks: "0", saves: "0", reads: "0" };
 
 const legacyHandleAliases: Record<string, string> = {
   "@usharma": "@udayan"
@@ -153,6 +156,120 @@ export const deletedMetricLabel = "—";
 
 export const isDeletedPost = (item: Pick<InquiryItem, "deletedAt">) => Boolean(item.deletedAt);
 export const isDeletedComment = (comment: Pick<InquiryComment, "deletedAt">) => Boolean(comment.deletedAt);
+
+export const commentActionActive = (
+  comment: Pick<InquiryComment, "deletedAt" | "savedBy" | "signaledBy" | "forkedBy">,
+  action: CommentAction,
+  handle: string
+) => {
+  if (isDeletedComment(comment)) return false;
+  if (action === "save") return hasHandle(comment.savedBy, handle);
+  if (action === "signal") return hasHandle(comment.signaledBy, handle);
+  if (action === "fork") return hasHandle(comment.forkedBy, handle);
+  return undefined;
+};
+
+export const mutateCommentForActor = <T extends InquiryComment>(
+  comment: T,
+  action: CommentAction,
+  actorHandle: string,
+  active?: boolean
+): T => {
+  if (isDeletedComment(comment)) return comment;
+
+  const metrics = { ...commentMetricsFallback, ...(comment.metrics ?? {}) };
+
+  if (action === "save") {
+    const next = toggleHandle(comment.savedBy, actorHandle, active);
+    return {
+      ...comment,
+      savedBy: next.handles,
+      metrics: { ...metrics, saves: incrementMetric(metrics.saves, next.delta) }
+    };
+  }
+
+  if (action === "signal") {
+    const next = toggleHandle(comment.signaledBy, actorHandle, active);
+    return {
+      ...comment,
+      signaledBy: next.handles,
+      metrics: { ...metrics, signal: incrementMetric(metrics.signal, next.delta) }
+    };
+  }
+
+  if (action === "fork") {
+    const next = toggleHandle(comment.forkedBy, actorHandle, active);
+    return {
+      ...comment,
+      forkedBy: next.handles,
+      metrics: { ...metrics, forks: incrementMetric(metrics.forks, next.delta) }
+    };
+  }
+
+  return {
+    ...comment,
+    metrics: { ...metrics, reads: incrementMetric(metrics.reads, 1) }
+  };
+};
+
+export const mapCommentTree = <T extends { id?: string; replies?: T[] }>(
+  comments: T[],
+  commentId: string,
+  mutate: (comment: T) => T
+): { comments: T[]; updated: T | null } => {
+  let updated: T | null = null;
+  const nextComments = comments.map((comment) => {
+    if (comment.id === commentId) {
+      updated = mutate(comment);
+      return updated;
+    }
+
+    const child = mapCommentTree(comment.replies ?? [], commentId, mutate);
+    if (child.updated) updated = child.updated;
+    return child.updated ? { ...comment, replies: child.comments } : comment;
+  });
+
+  return { comments: nextComments, updated };
+};
+
+export const findCommentInTree = <T extends { id?: string; replies?: T[] }>(
+  comments: T[],
+  commentId: string
+): T | null => {
+  for (const comment of comments) {
+    if (comment.id === commentId) return comment;
+    const found = findCommentInTree(comment.replies ?? [], commentId);
+    if (found) return found;
+  }
+  return null;
+};
+
+export const appendCommentToTree = <T extends { id?: string; parentId?: string | null; replies?: T[] }>(
+  comments: T[],
+  comment: T
+): { comments: T[]; inserted: boolean } => {
+  if (!comment.parentId) return { comments: [...comments, comment], inserted: true };
+
+  let inserted = false;
+  const nextComments = comments.map((current) => {
+    if (current.id === comment.parentId) {
+      inserted = true;
+      return { ...current, replies: [...(current.replies ?? []), comment] };
+    }
+
+    const child = appendCommentToTree(current.replies ?? [], comment);
+    if (!child.inserted) return current;
+    inserted = true;
+    return { ...current, replies: child.comments };
+  });
+
+  return { comments: inserted ? nextComments : comments, inserted };
+};
+
+export const canManageComment = (
+  comment: Pick<InquiryComment, "authorHandle">,
+  actorHandle: string
+) => (comment.authorHandle ? cleanHandle(comment.authorHandle) === cleanHandle(actorHandle) : false);
 
 export const deletedPostContextTitle = (item: Pick<InquiryItem, "deletedAt" | "title">) =>
   isDeletedPost(item) ? deletedPostTitle : item.title;

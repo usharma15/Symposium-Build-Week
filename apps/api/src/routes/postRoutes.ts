@@ -57,8 +57,8 @@ export const registerPostRoutes = (app: FastifyInstance) => {
   app.post<{ Params: RouteParams }>("/v1/posts/:id/comments", async (request, reply) => {
     try {
       const actor = await withWriteActor(request);
-      const comment = await addComment(request.params.id, request.body, actor);
-      return reply.send({ comment });
+      const result = await addComment(request.params.id, request.body, actor);
+      return reply.send(result);
     } catch (error) {
       return sendError(app, reply, error);
     }

@@ -43,10 +43,14 @@ import {
 } from "@/lib/mockData";
 import type { CommentAction, PostAction } from "@/lib/dataStore";
 import {
+  appendCommentToTree,
   cleanHandle,
+  commentActionActive,
+  commentMetricsFallback,
   countComments,
   deletedMetricLabel,
   deletedPostContextTitle,
+  findCommentInTree,
   formatMetric,
   hasHandle,
   incrementMetric,
@@ -55,13 +59,14 @@ import {
   itemTimestampScore,
   isSavedBy,
   localDateTimeLabel,
+  mapCommentTree,
   metricNumber,
+  mutateCommentForActor,
   mutateItemForActor,
   normalizeSearchPhrase,
   relativeTimeLabel,
   tombstoneComment,
   tombstonePost,
-  toggleHandle,
   updateSignalValue
 } from "@/lib/symposiumCore";
 
@@ -561,12 +566,7 @@ function RenderPreloadDeck({ sources }: { sources: string[] }) {
 }
 
 const findCommentById = (comments: InquiryComment[], id: string): InquiryComment | undefined => {
-  for (const comment of comments) {
-    if (comment.id === id) return comment;
-    const found = findCommentById(comment.replies ?? [], id);
-    if (found) return found;
-  }
-  return undefined;
+  return findCommentInTree(comments, id) ?? undefined;
 };
 
 const findCommentPathById = (comments: InquiryComment[], id: string): InquiryComment[] | null => {
@@ -672,7 +672,6 @@ const inferredResharesPublic = (person: ResearchProfile) => person.resharesPubli
 
 const fallbackCommunityCount = 8;
 const commentsSectionTargetId = "__symposium-comments-section__";
-const commentMetricsFallback = { signal: "0", forks: "0", saves: "0", reads: "0" };
 const clientSeedItemById = new Map(inquiryItems.map((item) => [item.id, item]));
 const clientSeedCommentById = new Map<string, InquiryComment>();
 for (const item of inquiryItems) {
@@ -729,77 +728,6 @@ const preservePublishedPosition = (incoming: InquiryItem, existing?: InquiryItem
     date: existing.date,
     createdAt: existing.createdAt
   };
-};
-
-const commentActionActive = (comment: InquiryComment, action: CommentAction, handle: string) => {
-  if (isDeletedComment(comment)) return false;
-  if (action === "save") return hasHandle(comment.savedBy, handle);
-  if (action === "signal") return hasHandle(comment.signaledBy, handle);
-  if (action === "fork") return hasHandle(comment.forkedBy, handle);
-  return undefined;
-};
-
-const mutateCommentForActor = (
-  comment: InquiryComment,
-  action: CommentAction,
-  actorHandle: string,
-  active?: boolean
-): InquiryComment => {
-  if (isDeletedComment(comment)) return comment;
-
-  const metrics = { ...commentMetricsFallback, ...(comment.metrics ?? {}) };
-
-  if (action === "save") {
-    const next = toggleHandle(comment.savedBy, actorHandle, active);
-    return {
-      ...comment,
-      savedBy: next.handles,
-      metrics: { ...metrics, saves: incrementMetric(metrics.saves, next.delta) }
-    };
-  }
-
-  if (action === "signal") {
-    const next = toggleHandle(comment.signaledBy, actorHandle, active);
-    return {
-      ...comment,
-      signaledBy: next.handles,
-      metrics: { ...metrics, signal: incrementMetric(metrics.signal, next.delta) }
-    };
-  }
-
-  if (action === "fork") {
-    const next = toggleHandle(comment.forkedBy, actorHandle, active);
-    return {
-      ...comment,
-      forkedBy: next.handles,
-      metrics: { ...metrics, forks: incrementMetric(metrics.forks, next.delta) }
-    };
-  }
-
-  return {
-    ...comment,
-    metrics: { ...metrics, reads: incrementMetric(metrics.reads, 1) }
-  };
-};
-
-const mapCommentTree = (
-  comments: InquiryComment[],
-  commentId: string,
-  mutate: (comment: InquiryComment) => InquiryComment
-): { comments: InquiryComment[]; updated: InquiryComment | null } => {
-  let updated: InquiryComment | null = null;
-  const nextComments = comments.map((comment) => {
-    if (comment.id === commentId) {
-      updated = mutate(comment);
-      return updated;
-    }
-
-    const child = mapCommentTree(comment.replies ?? [], commentId, mutate);
-    if (child.updated) updated = child.updated;
-    return child.updated ? { ...comment, replies: child.comments } : comment;
-  });
-
-  return { comments: nextComments, updated };
 };
 
 const maxVisibleCommentPathLength = 6;
@@ -2209,49 +2137,93 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   };
 
   const addComment = async (itemId: string, body: string, stance: string, parentId?: string | null) => {
-    setSyncStatus(parentId ? "Saving reply" : "Saving comment");
-    const response = await fetch(`/api/posts/${itemId}/comments`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ body, stance, parentId: parentId ?? null, authorHandle: currentProfile.handle })
-    });
-    if (!response.ok) {
-      const comment: InquiryComment = {
-        id: clientId("comment"),
-        parentId: parentId ?? null,
-        author: currentProfile.name,
-        authorHandle: currentProfile.handle,
-        stance: "Comment",
-        body,
-        createdAt: new Date().toISOString(),
-        replies: []
-      };
-      const addToTree = (comments: InquiryComment[]): InquiryComment[] => {
-        if (!comment.parentId) return [...comments, comment];
-        return comments.map((current) =>
-          current.id === comment.parentId
-            ? { ...current, replies: [...(current.replies ?? []), comment] }
-            : { ...current, replies: addToTree(current.replies ?? []) }
-        );
-      };
-      const nextItems = items.map((item) =>
-        item.id === itemId ? { ...item, comments: addToTree(item.comments) } : item
-      );
-      touchActivity(itemId);
-      setItems(nextItems);
-      persistLocalSnapshot(nextItems, profiles);
-      setSelectedItemId(itemId);
-      setSelectedCommentId(comment.id ?? null);
-      setSyncStatus(parentId ? "Reply saved locally" : "Comment saved locally");
+    const previousItems = itemsRef.current;
+    const previousSelectedItemId = selectedItemId;
+    const previousSelectedCommentId = selectedCommentId;
+    const existing = previousItems.find((item) => item.id === itemId);
+    if (!existing || isDeletedPost(existing)) {
+      setSyncStatus("This post cannot accept comments");
       return;
     }
 
-    const data = (await response.json().catch(() => ({}))) as { comment?: InquiryComment };
+    if (parentId && !findCommentById(existing.comments, parentId)) {
+      setSyncStatus("Reply target is no longer available");
+      return;
+    }
+
+    setSyncStatus(parentId ? "Saving reply" : "Saving comment");
+
+    const optimisticComment: InquiryComment = {
+      id: clientId("comment"),
+      parentId: parentId ?? null,
+      author: currentProfile.name,
+      authorHandle: currentProfile.handle,
+      stance: stance.trim() || "Comment",
+      body,
+      createdAt: new Date().toISOString(),
+      metrics: { ...commentMetricsFallback },
+      savedBy: [],
+      signaledBy: [],
+      forkedBy: [],
+      replies: []
+    };
+    const appended = appendCommentToTree(existing.comments, optimisticComment);
+    if (!appended.inserted) {
+      setSyncStatus("Reply target is no longer available");
+      return;
+    }
+
+    const nextCritiques = incrementMetric(existing.metrics.critiques, 1);
+    const optimisticItem: InquiryItem = {
+      ...existing,
+      metrics: { ...existing.metrics, critiques: nextCritiques },
+      signals: updateSignalValue(existing.signals, "Critiques", nextCritiques),
+      comments: appended.comments
+    };
+    const optimisticItems = previousItems.map((item) => (item.id === itemId ? optimisticItem : item));
+
+    itemsRef.current = optimisticItems;
+    setItems(optimisticItems);
+    persistLocalSnapshot(optimisticItems, profilesRef.current);
     touchActivity(itemId);
-    await refreshData(currentProfile.handle);
     setSelectedItemId(itemId);
-    setSelectedCommentId(data.comment?.id ?? null);
-    setSyncStatus(parentId ? "Reply saved" : "Comment saved");
+    setSelectedCommentId(optimisticComment.id ?? null);
+
+    try {
+      const response = await fetch(`/api/posts/${itemId}/comments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body, stance, parentId: parentId ?? null, authorHandle: currentProfile.handle })
+      });
+      if (!response.ok) {
+        const errorData = (await response.json().catch(() => ({}))) as { error?: string };
+        itemsRef.current = previousItems;
+        setItems(previousItems);
+        persistLocalSnapshot(previousItems, profilesRef.current);
+        setSelectedItemId(previousSelectedItemId);
+        setSelectedCommentId(previousSelectedCommentId);
+        setSyncStatus(errorData.error ?? (parentId ? "Reply could not be saved" : "Comment could not be saved"));
+        return;
+      }
+
+      const data = (await response.json().catch(() => ({}))) as { comment?: InquiryComment; item?: InquiryItem };
+      if (data.item) {
+        const currentItem = itemsRef.current.find((item) => item.id === itemId);
+        const committedItem = preservePublishedPosition(
+          protectItemFromStaleActionState(data.item, currentItem, currentProfile.handle),
+          currentItem
+        );
+        const committedItems = itemsRef.current.map((item) => (item.id === itemId ? committedItem : item));
+        itemsRef.current = committedItems;
+        setItems(committedItems);
+        persistLocalSnapshot(committedItems, profilesRef.current);
+      }
+
+      setSelectedCommentId(data.comment?.id ?? optimisticComment.id ?? null);
+      setSyncStatus(parentId ? "Reply saved" : "Comment saved");
+    } catch {
+      setSyncStatus(parentId ? "Reply saved locally" : "Comment saved locally");
+    }
   };
 
   const enterLocalPreview = () => {
@@ -4471,7 +4443,7 @@ function DetailView({
 
         <section className="comments-section" id={commentsSectionId}>
           <h2>Discussion</h2>
-          <CommentComposer itemId={item.id} onAddComment={onAddComment} />
+          {postDeleted ? null : <CommentComposer itemId={item.id} onAddComment={onAddComment} />}
           <CommentThread
             comments={item.comments}
             itemId={item.id}

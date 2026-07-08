@@ -34,6 +34,10 @@ export async function POST(request: Request, context: Context) {
   });
   if (live) return live;
 
-  const comment = await addComment(id, input, String(body.authorHandle ?? ""));
-  return Response.json({ comment });
+  const result = await addComment(id, input, String(body.authorHandle ?? ""));
+  if (!result) {
+    return jsonError("Post not found, deleted, or cannot accept this reply.", 404);
+  }
+
+  return Response.json(result);
 }
