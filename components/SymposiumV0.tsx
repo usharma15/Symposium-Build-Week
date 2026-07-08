@@ -61,7 +61,8 @@ import {
   relativeTimeLabel,
   tombstoneComment,
   tombstonePost,
-  toggleHandle
+  toggleHandle,
+  updateSignalValue
 } from "@/lib/symposiumCore";
 
 type Theme = "day" | "night";
@@ -73,6 +74,12 @@ type OfficeMode = "desk" | "saved" | "notes";
 type PatronageMode = "lobby" | "civic" | "private";
 type CommentSegmentStacks = Record<string, string[]>;
 type ToggleAction = Exclude<PostAction, "read">;
+type ActionMetricKey = "signal" | "forks" | "saves" | "reads";
+type ProtectedActionMetricState = {
+  metric: ActionMetricKey;
+  value: string;
+  mode: "floor" | "ceiling";
+};
 type ViewTargetType = "post" | "comment";
 type ViewTrigger = "visibility" | "click" | "expand";
 type ViewSurface = "feed" | "profile" | "detail" | "thread" | "search" | "community";
@@ -214,6 +221,13 @@ const kindLabels: Record<InquiryItem["kind"], string> = {
 };
 
 const toggleActions: ToggleAction[] = ["save", "signal", "fork"];
+const metricActions: PostAction[] = ["save", "signal", "fork", "read"];
+const metricKeyForAction = (action: PostAction): ActionMetricKey => {
+  if (action === "save") return "saves";
+  if (action === "fork") return "forks";
+  if (action === "read") return "reads";
+  return "signal";
+};
 
 const entranceRenders: Record<Theme, string> = {
   day: "/symposium-renders/entrance.png",
@@ -830,6 +844,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   const visibleCommentSegmentStacksRef = useRef<CommentSegmentStacks>({});
   const actionVersionsRef = useRef<Record<string, number>>({});
   const actionDesiredStateRef = useRef<Record<string, boolean | undefined>>({});
+  const actionMetricStateRef = useRef<Record<string, ProtectedActionMetricState>>({});
   const actionProtectionUntilRef = useRef<Record<string, number>>({});
   const viewDedupeRef = useRef<Record<string, number>>({});
   const activityRecencyRef = useRef(activityRecency);
@@ -1113,19 +1128,28 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     );
   };
 
-  const setProtectedDesiredActionState = (key: string, desired: boolean | undefined) => {
-    if (desired === undefined) {
-      delete actionDesiredStateRef.current[key];
+  const setProtectedDesiredActionState = (
+    key: string,
+    desired: boolean | undefined,
+    metricState?: ProtectedActionMetricState
+  ) => {
+    if (desired === undefined) delete actionDesiredStateRef.current[key];
+    else actionDesiredStateRef.current[key] = desired;
+
+    if (metricState) actionMetricStateRef.current[key] = metricState;
+    else delete actionMetricStateRef.current[key];
+
+    if (desired === undefined && !metricState) {
       delete actionProtectionUntilRef.current[key];
       return;
     }
 
-    actionDesiredStateRef.current[key] = desired;
     actionProtectionUntilRef.current[key] = Date.now() + actionStateProtectionMs;
   };
 
   const clearDesiredActionState = (key: string) => {
     delete actionDesiredStateRef.current[key];
+    delete actionMetricStateRef.current[key];
     delete actionProtectionUntilRef.current[key];
   };
 
@@ -1135,6 +1159,17 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
 
     const protectedUntil = actionProtectionUntilRef.current[key] ?? 0;
     if (protectedUntil >= Date.now()) return desired;
+
+    clearDesiredActionState(key);
+    return undefined;
+  };
+
+  const protectedActionMetricState = (key: string) => {
+    const metricState = actionMetricStateRef.current[key];
+    if (!metricState) return undefined;
+
+    const protectedUntil = actionProtectionUntilRef.current[key] ?? 0;
+    if (protectedUntil >= Date.now()) return metricState;
 
     clearDesiredActionState(key);
     return undefined;
@@ -1157,6 +1192,9 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       sortByPublishedRecency(normalizeClientSeedTimes(data.items)),
       nextProfile.handle
     );
+    itemsRef.current = loadedItems;
+    profilesRef.current = loadedProfiles;
+    currentProfileRef.current = nextProfile;
     setItems(loadedItems);
     setProfiles(loadedProfiles);
     setCurrentProfile(nextProfile);
@@ -1192,11 +1230,11 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   };
 
   const mergeLiveItem = (incoming: InquiryItem) => {
-    if (conflictsWithDesiredActionState(incoming, currentProfileRef.current.handle)) return false;
-
     const currentItems = itemsRef.current;
     const existingIndex = currentItems.findIndex((item) => item.id === incoming.id);
-    const nextItem = preservePublishedPosition(incoming, existingIndex >= 0 ? currentItems[existingIndex] : undefined);
+    const currentItem = existingIndex >= 0 ? currentItems[existingIndex] : undefined;
+    const protectedIncoming = protectItemFromStaleActionState(incoming, currentItem, currentProfileRef.current.handle);
+    const nextItem = preservePublishedPosition(protectedIncoming, currentItem);
     const nextItems =
       existingIndex >= 0
         ? currentItems.map((item) => (item.id === incoming.id ? nextItem : item))
@@ -1268,12 +1306,87 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     return undefined;
   };
 
+  const protectedMetricValue = (incomingValue: string, protection: ProtectedActionMetricState) => {
+    const incomingMetric = metricNumber(incomingValue);
+    const protectedMetric = metricNumber(protection.value);
+    if (protection.mode === "floor" && incomingMetric < protectedMetric) return protection.value;
+    if (protection.mode === "ceiling" && incomingMetric > protectedMetric) return protection.value;
+    return incomingValue;
+  };
+
+  const actionMetricStateFromValues = (
+    previousMetrics: Partial<Record<ActionMetricKey, string>>,
+    nextMetrics: Partial<Record<ActionMetricKey, string>>,
+    action: PostAction
+  ): ProtectedActionMetricState => {
+    const metric = metricKeyForAction(action);
+    const previousValue = previousMetrics[metric] ?? "0";
+    const nextValue = nextMetrics[metric] ?? previousValue;
+    return {
+      metric,
+      value: nextValue,
+      mode: metricNumber(nextValue) < metricNumber(previousValue) ? "ceiling" : "floor"
+    };
+  };
+
+  const applyProtectedPostMetricState = (incoming: InquiryItem, current: InquiryItem | undefined, handle: string) => {
+    if (isDeletedPost(incoming)) return incoming;
+
+    let metrics = incoming.metrics;
+    let signals = incoming.signals;
+    let changed = false;
+
+    for (const action of metricActions) {
+      const protection = protectedActionMetricState(`${incoming.id}:${action}:${handle}`);
+      if (!protection) continue;
+
+      const protectedValue = current?.metrics[protection.metric] ?? protection.value;
+      const nextValue = protectedMetricValue(metrics[protection.metric], { ...protection, value: protectedValue });
+      if (nextValue === metrics[protection.metric]) continue;
+
+      metrics = { ...metrics, [protection.metric]: nextValue };
+      if (protection.metric === "forks") signals = updateSignalValue(signals, "Forks", nextValue);
+      changed = true;
+    }
+
+    return changed ? { ...incoming, metrics, signals } : incoming;
+  };
+
+  const applyProtectedCommentMetricState = (
+    itemId: string,
+    incoming: InquiryComment,
+    current: InquiryComment | undefined,
+    handle: string
+  ) => {
+    if (!incoming.id || isDeletedComment(incoming)) return incoming;
+
+    let metrics = { ...commentMetricsFallback, ...(incoming.metrics ?? {}) };
+    let changed = false;
+
+    for (const action of metricActions) {
+      const protection = protectedActionMetricState(`${itemId}:${incoming.id}:${action}:${handle}`);
+      if (!protection) continue;
+
+      const currentMetrics = { ...commentMetricsFallback, ...(current?.metrics ?? {}) };
+      const protectedValue = currentMetrics[protection.metric] ?? protection.value;
+      const nextValue = protectedMetricValue(metrics[protection.metric], { ...protection, value: protectedValue });
+      if (nextValue === metrics[protection.metric]) continue;
+
+      metrics = { ...metrics, [protection.metric]: nextValue };
+      changed = true;
+    }
+
+    return changed ? { ...incoming, metrics } : incoming;
+  };
+
   const commentConflictsWithDesiredActionState = (
     itemId: string,
     comments: InquiryComment[],
     handle: string
   ): boolean =>
     comments.some((comment) => {
+      if (isDeletedComment(comment)) return false;
+
       if (comment.id) {
         for (const action of toggleActions) {
           const key = `${itemId}:${comment.id}:${action}:${handle}`;
@@ -1286,6 +1399,8 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     });
 
   const conflictsWithDesiredActionState = (item: InquiryItem, handle: string) => {
+    if (isDeletedPost(item)) return false;
+
     for (const action of toggleActions) {
       const key = `${item.id}:${action}:${handle}`;
       const desired = protectedDesiredActionState(key);
@@ -1295,11 +1410,75 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     return commentConflictsWithDesiredActionState(item.id, item.comments ?? [], handle);
   };
 
+  const protectCommentTreeFromStaleActionState = (
+    itemId: string,
+    incomingComments: InquiryComment[],
+    currentComments: InquiryComment[],
+    handle: string
+  ): InquiryComment[] => {
+    if (!incomingComments.length) return incomingComments;
+
+    const currentById = new Map(currentComments.flatMap((comment) => (comment.id ? [[comment.id, comment]] : [])));
+
+    let changed = false;
+    const nextComments = incomingComments.map((incomingComment) => {
+      const currentComment = incomingComment.id ? currentById.get(incomingComment.id) : undefined;
+      const incomingReplies = incomingComment.replies ?? [];
+      const currentReplies = currentComment?.replies ?? [];
+      let nextComment = applyProtectedCommentMetricState(itemId, incomingComment, currentComment, handle);
+      if (nextComment !== incomingComment) {
+        changed = true;
+        nextComment = {
+          ...nextComment,
+          replies: protectCommentTreeFromStaleActionState(
+            itemId,
+            incomingReplies,
+            currentReplies,
+            handle
+          )
+        };
+        return nextComment;
+      }
+
+      const nextReplies = protectCommentTreeFromStaleActionState(
+        itemId,
+        incomingReplies,
+        currentReplies,
+        handle
+      );
+      if (nextReplies === incomingReplies) return incomingComment;
+
+      changed = true;
+      return { ...incomingComment, replies: nextReplies };
+    });
+
+    return changed ? nextComments : incomingComments;
+  };
+
+  const protectItemFromStaleActionState = (
+    incoming: InquiryItem,
+    current: InquiryItem | undefined,
+    handle: string
+  ) => {
+    if (isDeletedPost(incoming)) return incoming;
+    if (conflictsWithDesiredActionState(incoming, handle)) return current ?? incoming;
+
+    const metricProtected = applyProtectedPostMetricState(incoming, current, handle);
+    const protectedComments = protectCommentTreeFromStaleActionState(
+      metricProtected.id,
+      metricProtected.comments ?? [],
+      current?.comments ?? [],
+      handle
+    );
+
+    return protectedComments === metricProtected.comments
+      ? metricProtected
+      : { ...metricProtected, comments: protectedComments };
+  };
+
   const protectItemsFromStaleActionState = (incomingItems: InquiryItem[], handle: string) => {
     const currentById = new Map(itemsRef.current.map((item) => [item.id, item]));
-    return incomingItems.map((incoming) =>
-      conflictsWithDesiredActionState(incoming, handle) ? currentById.get(incoming.id) ?? incoming : incoming
-    );
+    return incomingItems.map((incoming) => protectItemFromStaleActionState(incoming, currentById.get(incoming.id), handle));
   };
 
   const mergeLiveEvent = (event: SymposiumLiveEvent) => {
@@ -2245,11 +2424,13 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     const previousItems = itemsRef.current;
     let actionApplied = false;
     let desiredActive: boolean | undefined;
+    let protectedMetricState: ProtectedActionMetricState | undefined;
     const optimisticItems = previousItems.map((item) => {
       if (item.id !== itemId) return item;
       if (isDeletedPost(item)) return item;
       actionApplied = true;
       const nextItem = mutateItemForActor(item, action, actorHandle, profile.handle);
+      protectedMetricState = actionMetricStateFromValues(item.metrics, nextItem.metrics, action);
       if (action === "save") desiredActive = isSavedBy(nextItem, actorHandle, profile.handle);
       if (action === "signal") desiredActive = hasHandle(nextItem.signaledBy, actorHandle);
       if (action === "fork") desiredActive = hasHandle(nextItem.forkedBy, actorHandle);
@@ -2260,7 +2441,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       if (isViewAction) releaseClientViewClaim("post", itemId);
       return;
     }
-    setProtectedDesiredActionState(actionKey, desiredActive);
+    setProtectedDesiredActionState(actionKey, desiredActive, protectedMetricState);
 
     itemsRef.current = optimisticItems;
     setItems(optimisticItems);
@@ -2291,18 +2472,20 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
 
       const committedActive = itemActionActive(data.item, action, actorHandle);
       if (desiredActive !== undefined && committedActive !== desiredActive) {
-        setProtectedDesiredActionState(actionKey, desiredActive);
+        setProtectedDesiredActionState(actionKey, desiredActive, protectedMetricState);
         setSyncStatus("Action syncing");
         return;
       }
 
       const committedItems = itemsRef.current.map((item) =>
-        item.id === itemId ? preservePublishedPosition(data.item, item) : item
+        item.id === itemId
+          ? preservePublishedPosition(protectItemFromStaleActionState(data.item, item, actorHandle), item)
+          : item
       );
       itemsRef.current = committedItems;
       setItems(committedItems);
       persistLocalSnapshot(committedItems, profilesRef.current);
-      setProtectedDesiredActionState(actionKey, desiredActive);
+      setProtectedDesiredActionState(actionKey, desiredActive, protectedMetricState);
       setSyncStatus("Action synced");
     } catch {
       if (actionVersionsRef.current[actionKey] !== version) return;
@@ -2332,11 +2515,18 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     const previousItems = itemsRef.current;
     let actionApplied = false;
     let desiredActive: boolean | undefined;
+    let protectedMetricState: ProtectedActionMetricState | undefined;
     const optimisticItems = previousItems.map((item) => {
       if (item.id !== itemId) return item;
-      const mapped = mapCommentTree(item.comments, commentId, (comment) =>
-        mutateCommentForActor(comment, action, actorHandle)
-      );
+      const mapped = mapCommentTree(item.comments, commentId, (comment) => {
+        const nextComment = mutateCommentForActor(comment, action, actorHandle);
+        protectedMetricState = actionMetricStateFromValues(
+          { ...commentMetricsFallback, ...(comment.metrics ?? {}) },
+          { ...commentMetricsFallback, ...(nextComment.metrics ?? {}) },
+          action
+        );
+        return nextComment;
+      });
       if (!mapped.updated) return item;
       actionApplied = true;
       desiredActive = commentActionActive(mapped.updated, action, actorHandle);
@@ -2347,7 +2537,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       if (isViewAction) releaseClientViewClaim("comment", commentId);
       return;
     }
-    setProtectedDesiredActionState(actionKey, desiredActive);
+    setProtectedDesiredActionState(actionKey, desiredActive, protectedMetricState);
     itemsRef.current = optimisticItems;
     setItems(optimisticItems);
     persistLocalSnapshot(optimisticItems, profilesRef.current);
@@ -2370,18 +2560,20 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
         ? commentActionActive(committedComment, action, actorHandle)
         : undefined;
       if (desiredActive !== undefined && committedActive !== desiredActive) {
-        setProtectedDesiredActionState(actionKey, desiredActive);
+        setProtectedDesiredActionState(actionKey, desiredActive, protectedMetricState);
         setSyncStatus("Comment action syncing");
         return;
       }
 
       const committedItems = itemsRef.current.map((item) =>
-        item.id === itemId ? preservePublishedPosition(data.item, item) : item
+        item.id === itemId
+          ? preservePublishedPosition(protectItemFromStaleActionState(data.item, item, actorHandle), item)
+          : item
       );
       itemsRef.current = committedItems;
       setItems(committedItems);
       persistLocalSnapshot(committedItems, profilesRef.current);
-      setProtectedDesiredActionState(actionKey, desiredActive);
+      setProtectedDesiredActionState(actionKey, desiredActive, protectedMetricState);
       setSyncStatus("Comment action synced");
     } catch {
       if (actionVersionsRef.current[actionKey] !== version) return;
