@@ -293,6 +293,16 @@ const preloadRenders = Array.from(
   ])
 );
 
+const getThemePreloadRenders = (theme: Theme) =>
+  Array.from(
+    new Set([
+      entranceRenders[theme],
+      ...Object.values(roomRenders[theme]),
+      ...Object.values(patronageRenders[theme]),
+      ...Object.values(communityRenders[theme])
+    ])
+  );
+
 const getRoom = (roomId: RoomId) => rooms.find((room) => room.id === roomId) ?? rooms[0];
 
 const topicTerms: Record<string, string[]> = {
@@ -499,6 +509,55 @@ function useQualifiedView<T extends Element>(
       observer.disconnect();
     };
   }, [disabled, targetKey, targetRef]);
+}
+
+function useSymposiumRenderPreload(primaryRenders: string[], activeRender: string) {
+  const imageCacheRef = useRef<Record<string, HTMLImageElement>>({});
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const cache = imageCacheRef.current;
+    const preloadSource = (source: string, priority: "high" | "low") => {
+      if (cache[source]) return;
+      const image = new window.Image();
+      image.decoding = "async";
+      image.setAttribute("fetchpriority", priority);
+      image.src = source;
+      cache[source] = image;
+    };
+
+    const urgentRenders = Array.from(new Set([activeRender, ...primaryRenders]));
+    urgentRenders.forEach((source) => preloadSource(source, "high"));
+
+    const remainingRenders = preloadRenders.filter((source) => !urgentRenders.includes(source));
+    const preloadRemainingRenders = () => {
+      remainingRenders.forEach((source) => preloadSource(source, "low"));
+    };
+    const idleWindow = window as Window &
+      typeof globalThis & {
+        requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number;
+        cancelIdleCallback?: (handle: number) => void;
+      };
+
+    if (idleWindow.requestIdleCallback) {
+      const idleId = idleWindow.requestIdleCallback(preloadRemainingRenders, { timeout: 2500 });
+      return () => idleWindow.cancelIdleCallback?.(idleId);
+    }
+
+    const timeoutId = window.setTimeout(preloadRemainingRenders, 900);
+    return () => window.clearTimeout(timeoutId);
+  }, [activeRender, primaryRenders]);
+}
+
+function RenderPreloadDeck({ sources }: { sources: string[] }) {
+  return (
+    <div className="render-preload" aria-hidden="true">
+      {sources.map((render) => (
+        <Image key={render} src={render} alt="" width={1} height={1} loading="eager" unoptimized />
+      ))}
+    </div>
+  );
 }
 
 const findCommentById = (comments: InquiryComment[], id: string): InquiryComment | undefined => {
@@ -866,6 +925,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       : activeRoom === "communities" && selectedCommunityId
         ? themedCommunityRenders.selected
         : themedRoomRenders[activeRoom];
+  const themePreloadRenders = useMemo(() => getThemePreloadRenders(theme), [theme]);
   const selectedItem = items.find((item) => item.id === selectedItemId) ?? null;
   const activeItems = useMemo(() => items.filter((item) => !isDeletedPost(item)), [items]);
   const editingPostItem = editingPost ? items.find((item) => item.id === editingPost.id) ?? editingPost : null;
@@ -882,6 +942,8 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     profileList.find((person) => person.name === nameOrHandle) ??
     getProfileForName(nameOrHandle);
   const selectedProfile = selectedProfileName ? findProfile(selectedProfileName) : null;
+
+  useSymposiumRenderPreload(themePreloadRenders, activeRoomRender);
 
   useEffect(() => {
     itemsRef.current = items;
@@ -2834,6 +2896,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
         authLoaded={authLoaded}
         clerkEnabled={clerkEnabled}
         onLocalPreview={enterLocalPreview}
+        preloadRenders={themePreloadRenders}
       />
     );
   }
@@ -2848,11 +2911,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       style={{ "--room-bg": `url(${activeRoomRender})` } as CSSProperties}
     >
       <div className="ambient-layer" aria-hidden="true" />
-      <div className="render-preload" aria-hidden="true">
-        {preloadRenders.map((render) => (
-          <Image key={render} src={render} alt="" width={16} height={10} priority />
-        ))}
-      </div>
+      <RenderPreloadDeck sources={themePreloadRenders} />
 
       <header className="topbar">
         <button className="brand" type="button" onClick={() => enterRoom("hall")}>
@@ -3154,7 +3213,8 @@ function EntrySequence({
   authError,
   authLoaded,
   clerkEnabled,
-  onLocalPreview
+  onLocalPreview,
+  preloadRenders
 }: {
   theme: Theme;
   entranceRender: string;
@@ -3163,6 +3223,7 @@ function EntrySequence({
   authLoaded: boolean;
   clerkEnabled: boolean;
   onLocalPreview: () => void;
+  preloadRenders: string[];
 }) {
   return (
     <main className={`entry-sequence ${theme}`} aria-label="Approaching Symposium">
@@ -3174,6 +3235,7 @@ function EntrySequence({
         sizes="100vw"
         className="entry-image"
       />
+      <RenderPreloadDeck sources={preloadRenders} />
       <div className="entry-veil" />
       <div className="entry-stair-lines" aria-hidden="true">
         {Array.from({ length: 9 }).map((_, index) => (
