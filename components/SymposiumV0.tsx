@@ -16,8 +16,6 @@ import {
   Fullscreen,
   Home,
   ImageIcon,
-  Maximize2,
-  Minimize2,
   MessageCircle,
   Moon,
   NotebookPen,
@@ -215,11 +213,18 @@ type AttachmentPreviewTarget = {
 };
 
 type AttachmentRenderMode = "feed" | "detail" | "modal" | "expanded";
-type AttachmentExpandedMode = "fit" | "actual";
 
-type MediaIntrinsicSize = {
-  width: number;
-  height: number;
+type DocxPreviewRun = {
+  text: string;
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+};
+
+type DocxPreviewBlock = {
+  id: string;
+  runs: DocxPreviewRun[];
+  style: "heading" | "paragraph" | "list";
 };
 
 type LiveEventPayload = {
@@ -299,13 +304,6 @@ const attachmentFocalStyle = (attachment: InquiryAttachment): CSSProperties => {
   return { objectPosition: `${focalX * 100}% ${focalY * 100}%` };
 };
 
-const attachmentMediaSize = (attachment: InquiryAttachment): MediaIntrinsicSize | null => {
-  const width = metadataFiniteNumber(attachment.metadata, "width");
-  const height = metadataFiniteNumber(attachment.metadata, "height");
-  if (!width || !height || width <= 0 || height <= 0) return null;
-  return { width, height };
-};
-
 const attachmentPageCount = (attachment: InquiryAttachment, fallbackText = "") => {
   const metadataCount = metadataNumber(attachment.metadata, "pageCount");
   if (metadataCount) return metadataCount;
@@ -321,6 +319,120 @@ const decodeXmlText = (value: string) =>
     .replace(/&quot;/g, "\"")
     .replace(/&apos;/g, "'");
 
+const docxContentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+const isDocxAttachment = (attachment: InquiryAttachment) =>
+  attachment.contentType.toLowerCase() === docxContentType ||
+  attachment.fileName.toLowerCase().endsWith(".docx");
+
+const docxAttrValue = (element: Element | null | undefined, name: string) => {
+  if (!element) return "";
+  return (
+    element.getAttribute(`w:${name}`) ??
+    element.getAttribute(name) ??
+    element.getAttributeNS("http://schemas.openxmlformats.org/wordprocessingml/2006/main", name) ??
+    ""
+  );
+};
+
+const childElementsByLocalName = (element: Element, localName: string) =>
+  Array.from(element.children).filter((child) => child.localName === localName);
+
+const firstChildByLocalName = (element: Element, localName: string) =>
+  childElementsByLocalName(element, localName)[0];
+
+const descendantElementsByLocalName = (element: Element | Document, localName: string) =>
+  Array.from(element.getElementsByTagName("*")).filter((child) => child.localName === localName);
+
+const extractDocxParagraphText = (paragraphXml: string) =>
+  Array.from(paragraphXml.matchAll(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g))
+    .map((match) => decodeXmlText(match[1] ?? ""))
+    .join("")
+    .replace(/[ \t]+/g, " ")
+    .trim();
+
+const extractDocxPreviewTextFromXml = (documentXml: string) => {
+  const paragraphs = Array.from(documentXml.matchAll(/<w:p\b[\s\S]*?<\/w:p>/g))
+    .map((match) => extractDocxParagraphText(match[0] ?? ""))
+    .filter(Boolean);
+  return paragraphs.join("\n\n").trim().slice(0, maxAttachmentPreviewTextLength);
+};
+
+const plainTextToDocxBlocks = (text: string): DocxPreviewBlock[] => {
+  const normalized = text
+    .replace(/\s+(?=(?:INTRODUCTION|BODY|CONCLUSION|Transition|Main Point|Thesis Statement|Credibility Statement)\b)/g, "\n\n")
+    .trim();
+  const chunks = normalized ? normalized.split(/\n{2,}/).map((chunk) => chunk.trim()).filter(Boolean) : [];
+  return chunks.map((chunk, index) => ({
+    id: `plain-${index}`,
+    runs: [{ text: chunk.replace(/\*\*/g, ""), bold: false, italic: false, underline: false }],
+    style: /^(?:INTRODUCTION|BODY|CONCLUSION)\b/i.test(chunk) ? "heading" : "paragraph"
+  }));
+};
+
+const parseDocxPreviewBlocks = (documentXml: string): DocxPreviewBlock[] => {
+  const xml = new DOMParser().parseFromString(documentXml, "application/xml");
+  const body = descendantElementsByLocalName(xml, "body")[0] ?? xml.documentElement;
+  const paragraphs = childElementsByLocalName(body, "p");
+
+  return paragraphs.flatMap((paragraph, index) => {
+    const paragraphProperties = firstChildByLocalName(paragraph, "pPr");
+    const paragraphStyle = docxAttrValue(
+      descendantElementsByLocalName(paragraphProperties ?? paragraph, "pStyle")[0],
+      "val"
+    ).toLowerCase();
+    const hasListProperties = Boolean(descendantElementsByLocalName(paragraphProperties ?? paragraph, "numPr")[0]);
+    const runs = childElementsByLocalName(paragraph, "r").flatMap((run) => {
+      const runProperties = firstChildByLocalName(run, "rPr");
+      const text = childElementsByLocalName(run, "t")
+        .map((node) => node.textContent ?? "")
+        .join("");
+      const inlineBreaks = childElementsByLocalName(run, "br").map(() => "\n").join("");
+      const tabs = childElementsByLocalName(run, "tab").map(() => "\t").join("");
+      const value = `${tabs}${text}${inlineBreaks}`;
+      if (!value) return [];
+      return [
+        {
+          text: value,
+          bold: Boolean(descendantElementsByLocalName(runProperties ?? run, "b")[0]),
+          italic: Boolean(descendantElementsByLocalName(runProperties ?? run, "i")[0]),
+          underline: Boolean(descendantElementsByLocalName(runProperties ?? run, "u")[0])
+        }
+      ];
+    });
+    const visibleText = runs.map((run) => run.text).join("").trim();
+    if (!visibleText) return [];
+    return [
+      {
+        id: `docx-${index}`,
+        runs,
+        style: hasListProperties ? "list" : paragraphStyle.includes("heading") || paragraphStyle.includes("title") ? "heading" : "paragraph"
+      }
+    ];
+  });
+};
+
+const paginateDocxBlocks = (blocks: DocxPreviewBlock[], pageSize = 2600) => {
+  if (!blocks.length) return [[]] as DocxPreviewBlock[][];
+  const pages: DocxPreviewBlock[][] = [];
+  let current: DocxPreviewBlock[] = [];
+  let currentLength = 0;
+
+  blocks.forEach((block) => {
+    const blockLength = block.runs.reduce((total, run) => total + run.text.length, 0);
+    if (current.length && currentLength + blockLength > pageSize) {
+      pages.push(current);
+      current = [];
+      currentLength = 0;
+    }
+    current.push(block);
+    currentLength += blockLength;
+  });
+
+  if (current.length) pages.push(current);
+  return pages;
+};
+
 const extractDocxMetadata = async (file: File) => {
   const JSZip = (await import("jszip")).default;
   const zip = await JSZip.loadAsync(file);
@@ -328,14 +440,7 @@ const extractDocxMetadata = async (file: File) => {
   const documentXml = await zip.file("word/document.xml")?.async("text");
   const pageMatch = appXml?.match(/<Pages>(\d+)<\/Pages>/i);
   const pageCount = pageMatch ? Number(pageMatch[1]) : undefined;
-  const previewText = documentXml
-    ? Array.from(documentXml.matchAll(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g))
-        .map((match) => decodeXmlText(match[1] ?? ""))
-        .join(" ")
-        .replace(/\s+/g, " ")
-        .trim()
-        .slice(0, maxAttachmentPreviewTextLength)
-    : "";
+  const previewText = documentXml ? extractDocxPreviewTextFromXml(documentXml) : "";
 
   return {
     ...(pageCount && Number.isFinite(pageCount) ? { pageCount } : {}),
@@ -4699,6 +4804,10 @@ function AttachmentPreviewPane({
     return <PdfAttachmentPreview attachment={attachment} mode={mode} />;
   }
 
+  if (attachment.kind === "document" && isDocxAttachment(attachment)) {
+    return <DocxAttachmentPreview attachment={attachment} mode={mode} />;
+  }
+
   if (attachment.kind === "text" || attachment.kind === "document") {
     return <TextAttachmentPreview attachment={attachment} mode={mode} />;
   }
@@ -4831,64 +4940,166 @@ function TextAttachmentPreview({
   );
 }
 
-function ExpandedMediaPreview({
+function DocxAttachmentPreview({
   attachment,
-  viewMode,
-  zoom,
-  onReady
+  mode,
+  zoom = 1
 }: {
   attachment: InquiryAttachment;
-  viewMode: AttachmentExpandedMode;
-  zoom: number;
-  onReady?: () => void;
+  mode: AttachmentRenderMode;
+  zoom?: number;
 }) {
-  const [intrinsicSize, setIntrinsicSize] = useState<MediaIntrinsicSize | null>(() => attachmentMediaSize(attachment));
+  const fallbackBlocks = useMemo(
+    () => plainTextToDocxBlocks(metadataString(attachment.metadata, "previewText")),
+    [attachment.metadata]
+  );
+  const [blocks, setBlocks] = useState<DocxPreviewBlock[] | null>(null);
+  const [parseFailed, setParseFailed] = useState(false);
+  const shownBlocks = blocks?.length ? blocks : fallbackBlocks;
+  const pages = paginateDocxBlocks(shownBlocks);
+  const metadataPageCount = attachmentPageCount(attachment, metadataString(attachment.metadata, "previewText"));
+  const totalPages = Math.max(metadataPageCount, pages.length);
+  const [page, setPage] = useState(1);
+  const boundedPage = Math.min(page, totalPages);
+  const pageBlocks = pages[Math.min(boundedPage - 1, pages.length - 1)] ?? [];
+  const docxScrollStyle =
+    mode === "expanded" ? ({ fontSize: `${Math.max(0.5, Math.min(4, zoom)) * 0.95}rem` } as CSSProperties) : undefined;
 
   useEffect(() => {
-    setIntrinsicSize(attachmentMediaSize(attachment));
-  }, [attachment.id, attachment.metadata]);
+    setPage(1);
+  }, [attachment.id]);
 
-  const actualStyle =
-    viewMode === "actual" && intrinsicSize
-      ? ({ width: `${Math.max(1, Math.round(intrinsicSize.width * zoom))}px` } as CSSProperties)
-      : undefined;
+  useEffect(() => {
+    let cancelled = false;
+    setBlocks(null);
+    setParseFailed(false);
+
+    if (!attachment.url) return;
+    const attachmentUrl = attachment.url;
+
+    const loadDocx = async () => {
+      try {
+        const response = await fetch(attachmentUrl, { cache: "force-cache" });
+        if (!response.ok) throw new Error("Could not load document.");
+        const JSZip = (await import("jszip")).default;
+        const zip = await JSZip.loadAsync(await response.arrayBuffer());
+        const documentXml = await zip.file("word/document.xml")?.async("text");
+        if (!documentXml) throw new Error("Document body missing.");
+        const nextBlocks = parseDocxPreviewBlocks(documentXml);
+        if (!cancelled) setBlocks(nextBlocks);
+      } catch {
+        if (!cancelled) setParseFailed(true);
+      }
+    };
+
+    void loadDocx();
+    return () => {
+      cancelled = true;
+    };
+  }, [attachment.id, attachment.url]);
+
+  return (
+    <div className={`attachment-document attachment-document-${mode} attachment-docx`}>
+      <div className="attachment-pagebar">
+        <span>Page {boundedPage}/{totalPages}</span>
+        {totalPages > 1 ? (
+          <div>
+            <button
+              type="button"
+              title="Previous page"
+              disabled={boundedPage <= 1}
+              onClick={(event) => {
+                event.stopPropagation();
+                setPage((current) => Math.max(1, current - 1));
+              }}
+            >
+              <ChevronLeft size={15} />
+            </button>
+            <button
+              type="button"
+              title="Next page"
+              disabled={boundedPage >= totalPages}
+              onClick={(event) => {
+                event.stopPropagation();
+                setPage((current) => Math.min(totalPages, current + 1));
+              }}
+            >
+              <ChevronRight size={15} />
+            </button>
+          </div>
+        ) : null}
+      </div>
+      <div
+        className="attachment-docx-scroll"
+        style={docxScrollStyle}
+      >
+        <article className="attachment-docx-page">
+          {pageBlocks.length ? (
+            pageBlocks.map((block) => (
+              <p key={block.id} className={`attachment-docx-block attachment-docx-block-${block.style}`}>
+                {block.style === "list" ? <span className="attachment-docx-bullet" aria-hidden="true">•</span> : null}
+                <span>
+                  {block.runs.map((run, runIndex) => (
+                    <span
+                      key={`${block.id}-${runIndex}`}
+                      className={[
+                        run.bold ? "attachment-docx-bold" : "",
+                        run.italic ? "attachment-docx-italic" : "",
+                        run.underline ? "attachment-docx-underline" : ""
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
+                    >
+                      {run.text}
+                    </span>
+                  ))}
+                </span>
+              </p>
+            ))
+          ) : (
+            <div className="attachment-file-shell">
+              {attachmentIcon(attachment)}
+              <strong>{attachment.fileName}</strong>
+              <span>{parseFailed ? "Document preview unavailable." : "Preparing document preview."}</span>
+            </div>
+          )}
+        </article>
+      </div>
+    </div>
+  );
+}
+
+function ExpandedMediaPreview({
+  attachment,
+  zoom
+}: {
+  attachment: InquiryAttachment;
+  zoom: number;
+}) {
+  const boundedZoom = Math.max(0.5, Math.min(4, zoom));
+  const shellPercent = `${Math.round(Math.max(1, boundedZoom) * 10000) / 100}%`;
+  const mediaPercent = `${Math.round(Math.min(1, boundedZoom) * 10000) / 100}%`;
+  const mediaStyle = {
+    width: shellPercent,
+    height: shellPercent
+  } as CSSProperties;
+  const mediaElementStyle = {
+    width: mediaPercent,
+    height: mediaPercent
+  } as CSSProperties;
 
   if (attachment.kind === "image" && attachment.url) {
     return (
-      <div className={`attachment-expanded-media attachment-expanded-media-${viewMode}`}>
-        <img
-          src={attachment.url}
-          alt=""
-          style={{ ...attachmentFocalStyle(attachment), ...actualStyle }}
-          onLoad={(event) => {
-            const image = event.currentTarget;
-            if (image.naturalWidth > 0 && image.naturalHeight > 0) {
-              setIntrinsicSize({ width: image.naturalWidth, height: image.naturalHeight });
-              onReady?.();
-            }
-          }}
-        />
+      <div className="attachment-expanded-media" style={mediaStyle}>
+        <img src={attachment.url} alt="" style={mediaElementStyle} />
       </div>
     );
   }
 
   if (attachment.kind === "video" && attachment.url) {
     return (
-      <div className={`attachment-expanded-media attachment-expanded-media-${viewMode}`}>
-        <video
-          src={attachment.url}
-          controls
-          playsInline
-          preload="metadata"
-          style={{ ...attachmentFocalStyle(attachment), ...actualStyle }}
-          onLoadedMetadata={(event) => {
-            const video = event.currentTarget;
-            if (video.videoWidth > 0 && video.videoHeight > 0) {
-              setIntrinsicSize({ width: video.videoWidth, height: video.videoHeight });
-              onReady?.();
-            }
-          }}
-        />
+      <div className="attachment-expanded-media" style={mediaStyle}>
+        <video src={attachment.url} controls playsInline preload="metadata" style={mediaElementStyle} />
       </div>
     );
   }
@@ -4898,21 +5109,21 @@ function ExpandedMediaPreview({
 
 function AttachmentExpandedPane({
   attachment,
-  viewMode,
-  zoom,
-  onReady
+  zoom
 }: {
   attachment: InquiryAttachment;
-  viewMode: AttachmentExpandedMode;
   zoom: number;
-  onReady?: () => void;
 }) {
   if (attachment.kind === "image" || attachment.kind === "video") {
-    return <ExpandedMediaPreview attachment={attachment} viewMode={viewMode} zoom={zoom} onReady={onReady} />;
+    return <ExpandedMediaPreview attachment={attachment} zoom={zoom} />;
   }
 
   if (attachment.kind === "pdf" && attachment.url) {
     return <PdfAttachmentPreview attachment={attachment} mode="expanded" zoom={zoom} />;
+  }
+
+  if (attachment.kind === "document" && isDocxAttachment(attachment)) {
+    return <DocxAttachmentPreview attachment={attachment} mode="expanded" zoom={zoom} />;
   }
 
   if (attachment.kind === "text" || attachment.kind === "document") {
@@ -4930,10 +5141,6 @@ function AttachmentExpandedPane({
   );
 }
 
-function defaultExpandedMode(attachment: InquiryAttachment): AttachmentExpandedMode {
-  return attachment.kind === "image" || attachment.kind === "video" ? "actual" : "fit";
-}
-
 function AttachmentPreviewModal({
   item,
   attachmentId,
@@ -4948,12 +5155,8 @@ function AttachmentPreviewModal({
   const initialIndex = Math.max(0, attachments.findIndex((attachment) => attachment.id === attachmentId));
   const [activeIndex, setActiveIndex] = useState(initialIndex);
   const activeAttachment = attachments[Math.min(activeIndex, Math.max(attachments.length - 1, 0))];
-  const [viewMode, setViewMode] = useState<AttachmentExpandedMode>(() =>
-    activeAttachment ? defaultExpandedMode(activeAttachment) : "fit"
-  );
   const [zoom, setZoom] = useState(1);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [stageRevision, setStageRevision] = useState(0);
   const modalRef = useRef<HTMLElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
 
@@ -4963,7 +5166,6 @@ function AttachmentPreviewModal({
 
   useEffect(() => {
     if (!activeAttachment) return;
-    setViewMode(defaultExpandedMode(activeAttachment));
     setZoom(1);
   }, [activeAttachment?.id]);
 
@@ -4975,7 +5177,7 @@ function AttachmentPreviewModal({
       stage.scrollTop = Math.max(0, (stage.scrollHeight - stage.clientHeight) / 2);
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [activeAttachment?.id, stageRevision, viewMode, zoom]);
+  }, [activeAttachment?.id, zoom]);
 
   useEffect(() => {
     const onFullscreenChange = () => {
@@ -4998,13 +5200,11 @@ function AttachmentPreviewModal({
       }
       if ((event.key === "+" || event.key === "=") && activeAttachment) {
         event.preventDefault();
-        if (activeAttachment.kind === "image" || activeAttachment.kind === "video") setViewMode("actual");
         setZoom((current) => Math.min(4, Math.round((current + 0.25) * 100) / 100));
       }
       if (event.key === "-" && activeAttachment) {
         event.preventDefault();
-        if (activeAttachment.kind === "image" || activeAttachment.kind === "video") setViewMode("actual");
-        setZoom((current) => Math.max(0.25, Math.round((current - 0.25) * 100) / 100));
+        setZoom((current) => Math.max(0.5, Math.round((current - 0.25) * 100) / 100));
       }
     };
     window.addEventListener("keydown", onKey);
@@ -5021,12 +5221,9 @@ function AttachmentPreviewModal({
     onClose();
   };
 
-  const setFitMode = () => setViewMode("fit");
-  const setActualMode = () => setViewMode("actual");
   const resetZoom = () => setZoom(1);
   const adjustZoom = (delta: number) => {
-    if (activeAttachment.kind === "image" || activeAttachment.kind === "video") setViewMode("actual");
-    setZoom((current) => Math.min(4, Math.max(0.25, Math.round((current + delta) * 100) / 100)));
+    setZoom((current) => Math.min(4, Math.max(0.5, Math.round((current + delta) * 100) / 100)));
   };
   const toggleFullscreen = async () => {
     try {
@@ -5059,24 +5256,6 @@ function AttachmentPreviewModal({
         </header>
 
         <div className="attachment-modal-toolbar" aria-label="Attachment viewing controls">
-          <div className="attachment-view-toggle">
-            <button
-              type="button"
-              className={viewMode === "fit" ? "active" : ""}
-              title="Fit attachment to viewer"
-              onClick={setFitMode}
-            >
-              <Minimize2 size={15} />
-            </button>
-            <button
-              type="button"
-              className={viewMode === "actual" ? "active" : ""}
-              title="Show actual size"
-              onClick={setActualMode}
-            >
-              <Maximize2 size={15} />
-            </button>
-          </div>
           <div className="attachment-zoom-controls">
             <button type="button" title="Zoom out" onClick={() => adjustZoom(-0.25)}>
               <ZoomOut size={15} />
@@ -5096,16 +5275,11 @@ function AttachmentPreviewModal({
 
         <div
           ref={stageRef}
-          className={`attachment-modal-stage attachment-modal-stage-${activeAttachment.kind} attachment-modal-stage-${viewMode}`}
+          className={`attachment-modal-stage attachment-modal-stage-${activeAttachment.kind}`}
           draggable={Boolean(activeAttachment.url)}
           onDragStart={startAttachmentDrag(activeAttachment)}
         >
-          <AttachmentExpandedPane
-            attachment={activeAttachment}
-            viewMode={viewMode}
-            zoom={zoom}
-            onReady={() => setStageRevision((current) => current + 1)}
-          />
+          <AttachmentExpandedPane attachment={activeAttachment} zoom={zoom} />
         </div>
 
         <footer className="attachment-modal-footer">

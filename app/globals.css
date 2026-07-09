@@ -1810,7 +1810,7 @@ button {
   z-index: 48;
   display: grid;
   place-items: center;
-  padding: 24px;
+  padding: 8px 16px;
   background: rgba(5, 9, 9, 0.5);
 }
 
@@ -1818,8 +1818,10 @@ button {
   display: grid;
   gap: 10px;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
-  width: min(800px, calc(100vw - 48px));
-  max-height: calc(100vh - 32px);
+  width: min(834px, calc(100vw - 16px));
+  height: calc(100vh - 16px);
+  height: calc(100dvh - 16px);
+  max-height: none;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 12px;
@@ -1833,7 +1835,6 @@ button {
 .attachment-modal footer,
 .attachment-modal-toolbar,
 .attachment-modal-navigation,
-.attachment-view-toggle,
 .attachment-zoom-controls {
   display: flex;
   align-items: center;
@@ -1874,12 +1875,18 @@ button {
 }
 
 .attachment-modal-toolbar {
+  position: relative;
+  justify-content: center;
   min-width: 0;
 }
 
-.attachment-view-toggle,
 .attachment-zoom-controls {
   min-width: 0;
+}
+
+.attachment-modal-toolbar > button:last-child {
+  position: absolute;
+  right: 0;
 }
 
 .attachment-zoom-controls span,
@@ -1891,19 +1898,15 @@ button {
   text-align: center;
 }
 
-.attachment-modal button.active {
-  border-color: color-mix(in srgb, var(--aqua) 58%, transparent);
-  background: color-mix(in srgb, var(--aqua) 14%, var(--panel));
-  color: var(--aqua);
-}
-
 .attachment-modal-stage {
   display: grid;
   place-items: center;
-  width: 100%;
+  justify-self: center;
+  width: min(800px, calc(100vw - 50px));
   min-width: 0;
-  min-height: min(62vh, 620px);
-  max-height: min(78vh, 760px);
+  height: 100%;
+  min-height: 0;
+  max-height: none;
   overflow: auto;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -1914,8 +1917,6 @@ button {
 .attachment-modal-stage-text,
 .attachment-modal-stage-document {
   place-items: stretch;
-  min-height: min(78vh, 900px);
-  max-height: min(82vh, 940px);
   background: color-mix(in srgb, var(--paper) 74%, var(--panel-strong));
 }
 
@@ -1923,67 +1924,106 @@ button {
   display: grid;
   place-items: center;
   width: 100%;
+  height: 100%;
   min-width: 0;
   min-height: 0;
-}
-
-.attachment-expanded-media-fit {
-  height: 100%;
-}
-
-.attachment-modal-stage-image.attachment-modal-stage-fit,
-.attachment-modal-stage-video.attachment-modal-stage-fit {
-  position: relative;
-  overflow: hidden;
-}
-
-.attachment-modal-stage-image.attachment-modal-stage-fit .attachment-expanded-media-fit,
-.attachment-modal-stage-video.attachment-modal-stage-fit .attachment-expanded-media-fit {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
 }
 
 .attachment-expanded-media img,
 .attachment-expanded-media video {
   display: block;
-  object-position: center;
-}
-
-.attachment-expanded-media-fit img,
-.attachment-expanded-media-fit video {
   width: 100%;
   height: 100%;
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
-}
-
-.attachment-expanded-media-actual {
-  width: max-content;
-  min-width: min-content;
-  padding: 18px;
-}
-
-.attachment-expanded-media-actual img,
-.attachment-expanded-media-actual video {
-  width: auto;
-  height: auto;
-  max-width: none;
-  max-height: none;
-  object-fit: contain;
+  object-position: center;
 }
 
 .attachment-document-expanded {
   height: 100%;
-  min-height: min(78vh, 900px);
+  min-height: 0;
 }
 
 .attachment-document-expanded iframe,
 .attachment-document-expanded pre,
 .attachment-modal-stage-document .attachment-file-shell {
-  min-height: calc(min(78vh, 900px) - 37px);
+  min-height: 0;
+}
+
+.attachment-docx {
+  background: color-mix(in srgb, var(--paper) 82%, var(--panel-strong));
+}
+
+.attachment-docx-scroll {
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
+  font-size: 0.95rem;
+}
+
+.attachment-document-expanded .attachment-docx-scroll {
+  padding: 22px;
+}
+
+.attachment-docx-page {
+  width: min(100%, 720px);
+  min-height: 100%;
+  margin: 0 auto;
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  border-radius: 6px;
+  padding: 28px 32px;
+  background: rgba(255, 255, 250, 0.92);
+  color: var(--ink);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: inherit;
+  line-height: 1.58;
+  box-shadow: 0 14px 38px rgba(15, 29, 31, 0.08);
+}
+
+.attachment-document-feed .attachment-docx-scroll,
+.attachment-document-detail .attachment-docx-scroll {
+  font-size: 0.8rem;
+}
+
+.attachment-document-feed .attachment-docx-page,
+.attachment-document-detail .attachment-docx-page {
+  padding: 14px 16px;
+}
+
+.attachment-docx-block {
+  margin: 0 0 0.85em;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.attachment-docx-block-heading {
+  margin-top: 1.15em;
+  font-family: var(--font-sans, ui-sans-serif), system-ui, sans-serif;
+  font-weight: 820;
+}
+
+.attachment-docx-block-list {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 9px;
+}
+
+.attachment-docx-bullet {
+  margin-top: 0.05em;
+}
+
+.attachment-docx-bold {
+  font-weight: 800;
+}
+
+.attachment-docx-italic {
+  font-style: italic;
+}
+
+.attachment-docx-underline {
+  text-decoration: underline;
 }
 
 .attachment-modal-footer small {
@@ -2002,17 +2042,6 @@ button {
 .attachment-modal:fullscreen .attachment-modal-stage {
   max-height: none;
   min-height: 0;
-}
-
-.attachment-modal:fullscreen .attachment-modal-stage-image,
-.attachment-modal:fullscreen .attachment-modal-stage-video {
-  height: calc(100vh - 156px);
-}
-
-.attachment-modal:fullscreen .attachment-modal-stage-pdf,
-.attachment-modal:fullscreen .attachment-modal-stage-text,
-.attachment-modal:fullscreen .attachment-modal-stage-document {
-  height: calc(100vh - 156px);
 }
 
 .attachment-modal-frame .attachment-media,
