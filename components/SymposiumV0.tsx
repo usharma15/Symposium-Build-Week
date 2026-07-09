@@ -4810,47 +4810,11 @@ function PdfAttachmentPreview({
   mode: AttachmentRenderMode;
   zoom?: number;
 }) {
-  const pageCount = attachmentPageCount(attachment);
-  const [page, setPage] = useState(1);
-  const boundedPage = Math.min(page, pageCount);
-  const zoomFragment = mode === "expanded" ? `&zoom=${Math.round(zoom * 100)}` : "";
-  const source = attachment.url ? `${attachment.url}#page=${boundedPage}${zoomFragment}` : undefined;
-
-  useEffect(() => {
-    setPage(1);
-  }, [attachment.id]);
+  const zoomFragment = mode === "expanded" ? `#zoom=${Math.round(zoom * 100)}` : "";
+  const source = attachment.url ? `${attachment.url}${zoomFragment}` : undefined;
 
   return (
     <div className={`attachment-document attachment-document-${mode} attachment-pdf`}>
-      <div className="attachment-pagebar">
-        <span>Page {boundedPage}/{pageCount}</span>
-        {pageCount > 1 ? (
-          <div>
-            <button
-              type="button"
-              title="Previous page"
-              disabled={boundedPage <= 1}
-              onClick={(event) => {
-                event.stopPropagation();
-                setPage((current) => Math.max(1, current - 1));
-              }}
-            >
-              <ChevronLeft size={15} />
-            </button>
-            <button
-              type="button"
-              title="Next page"
-              disabled={boundedPage >= pageCount}
-              onClick={(event) => {
-                event.stopPropagation();
-                setPage((current) => Math.min(pageCount, current + 1));
-              }}
-            >
-              <ChevronRight size={15} />
-            </button>
-          </div>
-        ) : null}
-      </div>
       {source ? <iframe title={attachment.fileName} src={source} /> : null}
     </div>
   );
@@ -5347,42 +5311,53 @@ function AttachmentPreviewModal({
       setIsFullscreen(false);
     }
   };
+  const zoomControls = (
+    <div className="attachment-zoom-controls">
+      <button type="button" title="Zoom out" onClick={() => adjustZoom(-zoomOutStep)}>
+        <ZoomOut size={15} />
+      </button>
+      <span>{Math.round(zoom * 100)}%</span>
+      <button type="button" title="Zoom in" onClick={() => adjustZoom(zoomInStep)}>
+        <ZoomIn size={15} />
+      </button>
+      <button type="button" title="Reset zoom" onClick={resetZoom}>
+        <RotateCcw size={15} />
+      </button>
+    </div>
+  );
+  const fullscreenButton = (
+    <button type="button" title={isFullscreen ? "Exit full screen" : "Full screen"} onClick={toggleFullscreen}>
+      {isFullscreen ? <Shrink size={15} /> : <Fullscreen size={15} />}
+    </button>
+  );
 
   return (
     <div className="attachment-modal-backdrop" role="presentation" onClick={closeModal}>
       <section
         ref={modalRef}
-        className="attachment-modal"
+        className={`attachment-modal${isFullscreen ? " attachment-modal-fullscreen" : ""}`}
         aria-label="Attachment preview"
         onClick={(event) => event.stopPropagation()}
       >
         <header>
-          <div>
+          <div className="attachment-modal-title">
             <span>{deletedPostContextTitle(item)}</span>
-            <strong>{activeAttachment.fileName}</strong>
           </div>
-          <button type="button" title="Close" onClick={closeModal}>
-            <X size={17} />
-          </button>
+          <div className="attachment-modal-header-controls" role="group" aria-label="Attachment viewing controls">
+            {isFullscreen ? zoomControls : null}
+            {isFullscreen ? fullscreenButton : null}
+            <button type="button" title="Close" onClick={closeModal}>
+              <X size={17} />
+            </button>
+          </div>
         </header>
 
-        <div className="attachment-modal-toolbar" aria-label="Attachment viewing controls">
-          <div className="attachment-zoom-controls">
-            <button type="button" title="Zoom out" onClick={() => adjustZoom(-zoomOutStep)}>
-              <ZoomOut size={15} />
-            </button>
-            <span>{Math.round(zoom * 100)}%</span>
-            <button type="button" title="Zoom in" onClick={() => adjustZoom(zoomInStep)}>
-              <ZoomIn size={15} />
-            </button>
-            <button type="button" title="Reset zoom" onClick={resetZoom}>
-              <RotateCcw size={15} />
-            </button>
+        {!isFullscreen ? (
+          <div className="attachment-modal-toolbar" aria-label="Attachment viewing controls">
+            {zoomControls}
+            {fullscreenButton}
           </div>
-          <button type="button" title={isFullscreen ? "Exit full screen" : "Full screen"} onClick={toggleFullscreen}>
-            {isFullscreen ? <Shrink size={15} /> : <Fullscreen size={15} />}
-          </button>
-        </div>
+        ) : null}
 
         <div
           ref={stageRef}
