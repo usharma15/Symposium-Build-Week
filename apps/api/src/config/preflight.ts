@@ -10,6 +10,26 @@ import {
 
 const localOriginPattern = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/;
 
+export const clerkSecretMode = (secret?: string | null) => {
+  if (!secret) return "missing" as const;
+  if (secret.startsWith("sk_live_")) return "production" as const;
+  if (secret.startsWith("sk_test_")) return "development" as const;
+  return "unknown" as const;
+};
+
+export const deploymentEnvWarnings = () => {
+  if (!env.SYMPOSIUM_STRICT_ENV) return [];
+
+  const warnings: string[] = [];
+  const clerkMode = clerkSecretMode(env.CLERK_SECRET_KEY);
+  if (clerkMode === "development") {
+    warnings.push("Clerk development keys are active on the public deployment; migrate to a production Clerk instance.");
+  } else if (clerkMode === "unknown") {
+    warnings.push("The Clerk secret key mode could not be identified from its prefix.");
+  }
+  return warnings;
+};
+
 export const deploymentEnvIssues = () => {
   if (!env.SYMPOSIUM_STRICT_ENV) return [];
 

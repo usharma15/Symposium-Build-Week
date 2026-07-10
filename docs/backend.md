@@ -243,6 +243,7 @@ Still intentionally next:
 
 Current provider-plan boundaries:
 
+- The public site currently uses Clerk development keys. Readiness reports this as a warning until the Clerk application and Vercel/Render environment variables are migrated to production keys.
 - Neon Free provides a six-hour point-in-time restore window. One manual production snapshot is retained without expiry; scheduled snapshots require a paid plan.
 - Upstash Redis is an acceleration layer for shared rate limits and event publication, not a source of truth. Eviction is disabled, and Postgres-backed polling recovers live events if Redis is unavailable.
 - R2 currently delivers public attachment objects through Cloudflare's rate-limited `r2.dev` URL. Moving to a production custom domain requires choosing a domain on a Cloudflare-managed zone.

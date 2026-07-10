@@ -3,9 +3,13 @@ import { buildApp } from "@/apps/api/src/server";
 import { latestMigrationId, migrationIds } from "@/apps/api/src/db/migrate";
 import { events, posts } from "@/apps/api/src/db/schema";
 import { parseEventCursor } from "@/apps/api/src/services/events";
+import { clerkSecretMode } from "@/apps/api/src/config/preflight";
 
 const main = async () => {
   assert.equal(latestMigrationId, "0012_operational_integrity");
+  assert.equal(clerkSecretMode("sk_test_example"), "development");
+  assert.equal(clerkSecretMode("sk_live_example"), "production");
+  assert.equal(clerkSecretMode(undefined), "missing");
   assert.equal(migrationIds.at(-1), latestMigrationId);
   assert.ok(migrationIds.length >= 12);
   assert.ok("audienceHandles" in events);
@@ -60,6 +64,7 @@ const main = async () => {
         ok: true,
         checked: [
           "migration manifest visibility",
+          "Clerk provider mode visibility",
           "event audience schema placement",
           "strict event cursor parsing",
           "request correlation headers",

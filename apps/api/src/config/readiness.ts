@@ -15,7 +15,7 @@ import {
   requireAuthForWrites,
   webOrigins
 } from "./env";
-import { deploymentEnvIssues } from "./preflight";
+import { clerkSecretMode, deploymentEnvIssues, deploymentEnvWarnings } from "./preflight";
 
 type RuntimeCheck = {
   key: string;
@@ -33,6 +33,7 @@ export type RuntimeReadiness = {
   checkedAt: string;
   checks: RuntimeCheck[];
   issues: string[];
+  warnings: string[];
   maintenance: ReturnType<typeof getMaintenanceStatus>;
   migrations: MigrationStatus;
   release: string | null;
@@ -60,6 +61,7 @@ export const getRuntimeReadiness = async (): Promise<RuntimeReadiness> => {
   const ownerHandle = cleanHandle(env.SYMPOSIUM_OWNER_HANDLE);
   const ownerBindingReady = ownerHandle !== "@udayan" || Boolean(env.SYMPOSIUM_OWNER_CLERK_USER_ID);
   const issues = [...deploymentEnvIssues()];
+  const warnings = deploymentEnvWarnings();
   const checks: RuntimeCheck[] = [];
   let migrations: MigrationStatus = {
     appliedCount: 0,
@@ -100,7 +102,7 @@ export const getRuntimeReadiness = async (): Promise<RuntimeReadiness> => {
       "Clerk backend secret",
       Boolean(env.CLERK_SECRET_KEY),
       strict || requireAuthForWrites,
-      env.CLERK_SECRET_KEY ? "configured" : "missing"
+      env.CLERK_SECRET_KEY ? `${clerkSecretMode(env.CLERK_SECRET_KEY)} key configured` : "missing"
     ),
     {
       key: "write_auth",
@@ -181,6 +183,7 @@ export const getRuntimeReadiness = async (): Promise<RuntimeReadiness> => {
     checkedAt: new Date().toISOString(),
     checks,
     issues: uniqueIssues,
+    warnings,
     maintenance: getMaintenanceStatus(),
     migrations,
     release: env.APP_VERSION ?? env.RENDER_GIT_COMMIT ?? env.VERCEL_GIT_COMMIT_SHA ?? null
