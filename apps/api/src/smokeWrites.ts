@@ -50,6 +50,16 @@ const requireId = (label: string, value: unknown): string => {
 };
 
 type ActionListKey = "savedBy" | "forkedBy";
+type CanonicalActivity = {
+  subjectType: "post" | "comment";
+  subjectId: string;
+  postId: string;
+  actorHandle: string;
+  action: "save" | "signal" | "fork";
+  active: boolean;
+  count: number;
+  revision: number;
+};
 
 const requireActionList = (label: string, item: Record<string, unknown> | undefined, key: ActionListKey) => {
   const value = item?.[key];
@@ -57,6 +67,24 @@ const requireActionList = (label: string, item: Record<string, unknown> | undefi
     throw new Error(`${label} did not return ${key}: ${JSON.stringify(item)}`);
   }
   return [...value].sort();
+};
+
+const requireCanonicalActivity = (label: string, value: unknown): CanonicalActivity => {
+  const activity = value as Partial<CanonicalActivity> | undefined;
+  if (
+    !activity ||
+    (activity.subjectType !== "post" && activity.subjectType !== "comment") ||
+    typeof activity.subjectId !== "string" ||
+    typeof activity.postId !== "string" ||
+    typeof activity.actorHandle !== "string" ||
+    (activity.action !== "save" && activity.action !== "signal" && activity.action !== "fork") ||
+    typeof activity.active !== "boolean" ||
+    typeof activity.count !== "number" ||
+    typeof activity.revision !== "number"
+  ) {
+    throw new Error(`${label} did not return canonical activity: ${JSON.stringify(value)}`);
+  }
+  return activity as CanonicalActivity;
 };
 
 const main = async () => {
@@ -80,12 +108,21 @@ const main = async () => {
   const createdPostId = requireId("Created post", createdPost.body.item?.id);
 
   const verifyPostActionPersistence = async (action: "save" | "fork", key: ActionListKey) => {
-    const activated = await requestJson<{ item?: Record<string, unknown> }>(
+    const activated = await requestJson<{ item?: Record<string, unknown>; activity?: unknown }>(
       "POST",
       `/v1/posts/${createdPostId}/actions`,
       { action, active: true }
     );
     assertOk(`Activate ${action}`, activated);
+    const activeActivity = requireCanonicalActivity(`Activate ${action}`, activated.body.activity);
+    if (
+      !activeActivity.active ||
+      activeActivity.count !== 1 ||
+      activeActivity.action !== action ||
+      activeActivity.postId !== createdPostId
+    ) {
+      throw new Error(`Activate ${action} returned inconsistent activity: ${JSON.stringify(activeActivity)}`);
+    }
     const activeHandles = requireActionList(`Activate ${action}`, activated.body.item, key);
     if (activeHandles.length !== 1) {
       throw new Error(`Activate ${action} returned an unexpected ${key}: ${JSON.stringify(activeHandles)}`);
@@ -99,12 +136,28 @@ const main = async () => {
       throw new Error(`${action} did not persist: ${JSON.stringify({ activeHandles, persistedActiveHandles })}`);
     }
 
-    const deactivated = await requestJson<{ item?: Record<string, unknown> }>(
+    const activeProjection = await requestJson<{ entries?: CanonicalActivity[] }>(
+      "GET",
+      `/v1/profiles/${encodeURIComponent(activeActivity.actorHandle)}/activity?limit=500`
+    );
+    assertOk(`Project ${action}`, activeProjection);
+    const projectedActive = activeProjection.body.entries?.find(
+      (entry) => entry.subjectType === "post" && entry.subjectId === createdPostId && entry.action === action
+    );
+    if (!projectedActive?.active || projectedActive.revision !== activeActivity.revision) {
+      throw new Error(`${action} projection was not canonical: ${JSON.stringify(projectedActive)}`);
+    }
+
+    const deactivated = await requestJson<{ item?: Record<string, unknown>; activity?: unknown }>(
       "POST",
       `/v1/posts/${createdPostId}/actions`,
       { action, active: false }
     );
     assertOk(`Deactivate ${action}`, deactivated);
+    const inactiveActivity = requireCanonicalActivity(`Deactivate ${action}`, deactivated.body.activity);
+    if (inactiveActivity.active || inactiveActivity.count !== 0 || inactiveActivity.revision <= activeActivity.revision) {
+      throw new Error(`${action} deactivation did not advance revision: ${JSON.stringify(inactiveActivity)}`);
+    }
     const inactiveHandles = requireActionList(`Deactivate ${action}`, deactivated.body.item, key);
     if (inactiveHandles.length) {
       throw new Error(`Deactivate ${action} left stale ${key}: ${JSON.stringify(inactiveHandles)}`);
@@ -116,6 +169,17 @@ const main = async () => {
     const persistedInactiveHandles = requireActionList(`Persist ${action} removal`, persistedInactiveItem, key);
     if (persistedInactiveHandles.length) {
       throw new Error(`${action} removal did not persist: ${JSON.stringify(persistedInactiveHandles)}`);
+    }
+    const inactiveProjection = await requestJson<{ entries?: CanonicalActivity[] }>(
+      "GET",
+      `/v1/profiles/${encodeURIComponent(activeActivity.actorHandle)}/activity?limit=500`
+    );
+    assertOk(`Project ${action} removal`, inactiveProjection);
+    const projectedInactive = inactiveProjection.body.entries?.find(
+      (entry) => entry.subjectType === "post" && entry.subjectId === createdPostId && entry.action === action
+    );
+    if (projectedInactive?.active !== false || projectedInactive.revision !== inactiveActivity.revision) {
+      throw new Error(`${action} removal projection was stale: ${JSON.stringify(projectedInactive)}`);
     }
   };
 

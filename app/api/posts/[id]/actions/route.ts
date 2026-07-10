@@ -24,6 +24,7 @@ export async function POST(request: Request, context: Context) {
   if (!actions.includes(action as PostAction)) {
     return jsonError("Unknown post action.", 400);
   }
+  const typedAction = action as PostAction;
 
   const live = await proxyLiveBackend(`/v1/posts/${id}/actions`, {
     method: "POST",
@@ -32,18 +33,19 @@ export async function POST(request: Request, context: Context) {
   });
   if (live) return live;
 
-  const item = await applyPostAction(
+  const actorHandle = String(body.actorHandle ?? "@udayan");
+  const result = await applyPostAction(
     id,
-    action as PostAction,
-    String(body.actorHandle ?? "@udayan"),
+    typedAction,
+    actorHandle,
     body.active,
     body.trigger,
     body.surface
   );
 
-  if (!item) {
+  if (!result) {
     return jsonError("Post not found.", 404);
   }
 
-  return Response.json({ item });
+  return Response.json(result);
 }

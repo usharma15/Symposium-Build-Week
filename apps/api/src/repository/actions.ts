@@ -1,0 +1,264 @@
+import type { PoolClient } from "pg";
+import type {
+  CanonicalActionActivityContract,
+  ProfileActivityQueryContract,
+  ProfileActivityResponseContract,
+  ToggleActionContract
+} from "../../../../packages/contracts/src";
+
+type ActionLedgerRow = {
+  actorHandle: string;
+  action: ToggleActionContract;
+  active: boolean;
+  count: number;
+  revision: number;
+  updatedAt: Date | string;
+};
+
+type LedgerTransition = {
+  activity: CanonicalActionActivityContract;
+  changed: boolean;
+  previousActive: boolean;
+};
+
+const toActivity = (
+  row: ActionLedgerRow,
+  subjectType: CanonicalActionActivityContract["subjectType"],
+  subjectId: string,
+  postId: string
+): CanonicalActionActivityContract => ({
+  subjectType,
+  subjectId,
+  postId,
+  actorHandle: row.actorHandle,
+  action: row.action,
+  active: row.active,
+  count: row.count,
+  revision: row.revision,
+  occurredAt: new Date(row.updatedAt).toISOString()
+});
+
+export const resolveActionTransition = (existingActive: boolean | undefined, requestedActive?: boolean) => {
+  const previousActive = existingActive ?? false;
+  const nextActive = requestedActive ?? !previousActive;
+  return { previousActive, nextActive, changed: previousActive !== nextActive };
+};
+
+const transitionLedger = async ({
+  client,
+  table,
+  subjectColumn,
+  subjectType,
+  subjectId,
+  postId,
+  actorHandle,
+  action,
+  active
+}: {
+  client: PoolClient;
+  table: "post_actions" | "comment_actions";
+  subjectColumn: "post_id" | "comment_id";
+  subjectType: CanonicalActionActivityContract["subjectType"];
+  subjectId: string;
+  postId: string;
+  actorHandle: string;
+  action: ToggleActionContract;
+  active?: boolean;
+}): Promise<LedgerTransition> => {
+  const existingResult = await client.query<ActionLedgerRow>(
+    `SELECT actor_handle AS "actorHandle", action, active, count, revision, updated_at AS "updatedAt"
+     FROM ${table}
+     WHERE ${subjectColumn} = $1 AND actor_handle = $2 AND action = $3
+     FOR UPDATE`,
+    [subjectId, actorHandle, action]
+  );
+  const existing = existingResult.rows[0];
+  const { previousActive, nextActive, changed } = resolveActionTransition(existing?.active, active);
+
+  let row: ActionLedgerRow;
+  if (!existing) {
+    const columns = table === "comment_actions"
+      ? "comment_id, post_id, actor_handle, action, active, count"
+      : "post_id, actor_handle, action, active, count";
+    const values = table === "comment_actions" ? "($1, $4, $2, $3, $5, $6)" : "($1, $2, $3, $4, $5)";
+    const parameters = table === "comment_actions"
+      ? [subjectId, actorHandle, action, postId, nextActive, nextActive ? 1 : 0]
+      : [subjectId, actorHandle, action, nextActive, nextActive ? 1 : 0];
+    const inserted = await client.query<ActionLedgerRow>(
+      `INSERT INTO ${table} (${columns})
+       VALUES ${values}
+       RETURNING actor_handle AS "actorHandle", action, active, count, revision, updated_at AS "updatedAt"`,
+      parameters
+    );
+    row = inserted.rows[0];
+  } else if (previousActive !== nextActive) {
+    const updated = await client.query<ActionLedgerRow>(
+      `UPDATE ${table}
+       SET active = $4,
+           count = CASE WHEN $4 THEN 1 ELSE 0 END,
+           revision = revision + 1,
+           updated_at = now()
+       WHERE ${subjectColumn} = $1 AND actor_handle = $2 AND action = $3
+       RETURNING actor_handle AS "actorHandle", action, active, count, revision, updated_at AS "updatedAt"`,
+      [subjectId, actorHandle, action, nextActive]
+    );
+    row = updated.rows[0];
+  } else {
+    row = existing;
+  }
+
+  return {
+    activity: toActivity(row, subjectType, subjectId, postId),
+    changed,
+    previousActive
+  };
+};
+
+export const transitionPostAction = (
+  client: PoolClient,
+  postId: string,
+  actorHandle: string,
+  action: ToggleActionContract,
+  active?: boolean
+) =>
+  transitionLedger({
+    client,
+    table: "post_actions",
+    subjectColumn: "post_id",
+    subjectType: "post",
+    subjectId: postId,
+    postId,
+    actorHandle,
+    action,
+    active
+  });
+
+export const transitionCommentAction = (
+  client: PoolClient,
+  postId: string,
+  commentId: string,
+  actorHandle: string,
+  action: ToggleActionContract,
+  active?: boolean
+) =>
+  transitionLedger({
+    client,
+    table: "comment_actions",
+    subjectColumn: "comment_id",
+    subjectType: "comment",
+    subjectId: commentId,
+    postId,
+    actorHandle,
+    action,
+    active
+  });
+
+type ActivityCursor = {
+  occurredAt: string;
+  subjectType: CanonicalActionActivityContract["subjectType"];
+  subjectId: string;
+  action: ToggleActionContract;
+};
+
+const encodeActivityCursor = (activity: CanonicalActionActivityContract) =>
+  Buffer.from(
+    JSON.stringify({
+      occurredAt: activity.occurredAt,
+      subjectType: activity.subjectType,
+      subjectId: activity.subjectId,
+      action: activity.action
+    } satisfies ActivityCursor)
+  ).toString("base64url");
+
+export const decodeActivityCursor = (cursor?: string) => {
+  if (!cursor) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Partial<ActivityCursor>;
+    if (
+      typeof parsed.occurredAt !== "string" ||
+      Number.isNaN(Date.parse(parsed.occurredAt)) ||
+      (parsed.subjectType !== "post" && parsed.subjectType !== "comment") ||
+      typeof parsed.subjectId !== "string" ||
+      (parsed.action !== "save" && parsed.action !== "signal" && parsed.action !== "fork")
+    ) {
+      return null;
+    }
+    return parsed as ActivityCursor;
+  } catch {
+    return null;
+  }
+};
+
+type ProfileActivityRow = ActionLedgerRow & {
+  subjectType: CanonicalActionActivityContract["subjectType"];
+  subjectId: string;
+  postId: string;
+};
+
+export const listCanonicalProfileActivity = async (
+  client: PoolClient,
+  actorHandle: string,
+  allowedActions: ToggleActionContract[],
+  query: ProfileActivityQueryContract,
+  includeInactive: boolean
+): Promise<ProfileActivityResponseContract> => {
+  if (!allowedActions.length) return { entries: [], nextCursor: null };
+  const cursor = decodeActivityCursor(query.cursor);
+  const result = await client.query<ProfileActivityRow>(
+    `WITH profile_activity AS (
+       SELECT
+         'post'::text AS "subjectType",
+         post_id AS "subjectId",
+         post_id AS "postId",
+         actor_handle AS "actorHandle",
+         action,
+         active,
+         count,
+         revision,
+         updated_at AS "updatedAt"
+       FROM post_actions
+       WHERE actor_handle = $1 AND action = ANY($2::text[]) AND ($8::boolean OR active = true)
+       UNION ALL
+       SELECT
+         'comment'::text AS "subjectType",
+         comment_id AS "subjectId",
+         post_id AS "postId",
+         actor_handle AS "actorHandle",
+         action,
+         active,
+         count,
+         revision,
+         updated_at AS "updatedAt"
+       FROM comment_actions
+       WHERE actor_handle = $1 AND action = ANY($2::text[]) AND ($8::boolean OR active = true)
+     )
+     SELECT *
+     FROM profile_activity
+     WHERE (
+       $3::timestamptz IS NULL OR
+       ("updatedAt", "subjectType", "subjectId", action) < ($3::timestamptz, $4::text, $5::text, $6::text)
+     )
+     ORDER BY "updatedAt" DESC, "subjectType" DESC, "subjectId" DESC, action DESC
+     LIMIT $7`,
+    [
+      actorHandle,
+      allowedActions,
+      cursor?.occurredAt ?? null,
+      cursor?.subjectType ?? "post",
+      cursor?.subjectId ?? "",
+      cursor?.action ?? "save",
+      query.limit + 1,
+      includeInactive
+    ]
+  );
+
+  const activities = result.rows.map((row) =>
+    toActivity(row, row.subjectType, row.subjectId, row.postId)
+  );
+  const hasNextPage = activities.length > query.limit;
+  const entries = hasNextPage ? activities.slice(0, query.limit) : activities;
+  return {
+    entries,
+    nextCursor: hasNextPage && entries.length ? encodeActivityCursor(entries[entries.length - 1]) : null
+  };
+};

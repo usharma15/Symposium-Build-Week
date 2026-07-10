@@ -1,6 +1,7 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Pool } from "pg";
+import type { CanonicalActionActivityContract, ToggleActionContract } from "@/packages/contracts/src";
 import {
   getProfileForName,
   inquiryItems,
@@ -17,24 +18,37 @@ import {
   appendCommentToTree,
   canManageComment,
   cleanHandle,
+  commentActionActive,
   commentMetricsFallback,
   findCommentInTree,
+  hasHandle,
   incrementMetric,
   isDeletedComment,
   isDeletedPost,
+  isSavedBy,
   mapCommentTree,
   mutateCommentForActor,
   mutateItemForActor,
+  setCommentActionMembership,
+  setItemActionMembership,
   tombstoneComment,
   tombstonePost,
   updateSignalValue,
   type PostAction
 } from "@/lib/symposiumCore";
+import {
+  buildLegacyActionLedger,
+  canonicalActivityKey,
+  createLocalCanonicalActivity,
+  mergeCanonicalActivities,
+  projectCanonicalActionLedger
+} from "@/lib/profileActivity";
 
 type AppData = {
   profiles: Record<string, ResearchProfile>;
   items: InquiryItem[];
   viewDedupe: Record<string, string>;
+  actionLedger: Record<string, CanonicalActionActivityContract>;
 };
 
 export type CreateProfileInput = {
@@ -67,6 +81,11 @@ export type CreateCommentInput = {
 export type { PostAction };
 export type CommentAction = PostAction;
 
+export type ActionMutationResult = {
+  item: InquiryItem;
+  activity?: CanonicalActionActivityContract;
+};
+
 export type UpdatePostInput = {
   title: string;
   body: string;
@@ -88,6 +107,16 @@ const usePostgres = Boolean(databaseUrl);
 let pool: Pool | null = null;
 let schemaReady: Promise<void> | null = null;
 let seedReady: Promise<void> | null = null;
+let localActionQueue: Promise<void> = Promise.resolve();
+
+const withLocalActionLock = <T>(operation: () => Promise<T>) => {
+  const result = localActionQueue.then(operation, operation);
+  localActionQueue = result.then(
+    () => undefined,
+    () => undefined
+  );
+  return result;
+};
 
 const handleFromName = (name: string) => getProfileForName(name).handle;
 
@@ -173,6 +202,48 @@ const recordPostgresContentView = async (
   return (result.rowCount ?? 0) > 0;
 };
 
+const persistPostgresActivity = async (activity: CanonicalActionActivityContract) => {
+  const result = await getPool().query<ActionLedgerRow>(
+    `INSERT INTO action_ledger (
+       subject_type, subject_id, post_id, actor_handle, action, active, count, revision, occurred_at
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8)
+     ON CONFLICT (subject_type, subject_id, actor_handle, action) DO UPDATE SET
+       post_id = EXCLUDED.post_id,
+       active = EXCLUDED.active,
+       count = EXCLUDED.count,
+       revision = action_ledger.revision +
+         CASE WHEN action_ledger.active IS DISTINCT FROM EXCLUDED.active THEN 1 ELSE 0 END,
+       occurred_at = CASE
+         WHEN action_ledger.active IS DISTINCT FROM EXCLUDED.active THEN EXCLUDED.occurred_at
+         ELSE action_ledger.occurred_at
+       END
+     RETURNING subject_type, subject_id, post_id, actor_handle, action, active, count, revision, occurred_at`,
+    [
+      activity.subjectType,
+      activity.subjectId,
+      activity.postId,
+      activity.actorHandle,
+      activity.action,
+      activity.active,
+      activity.count,
+      activity.occurredAt
+    ]
+  );
+  const row = result.rows[0];
+  return {
+    subjectType: row.subject_type,
+    subjectId: row.subject_id,
+    postId: row.post_id,
+    actorHandle: row.actor_handle,
+    action: row.action,
+    active: row.active,
+    count: row.count,
+    revision: Number(row.revision),
+    occurredAt: new Date(row.occurred_at).toISOString()
+  } satisfies CanonicalActionActivityContract;
+};
+
 const normalizeProfile = (input: CreateProfileInput): ResearchProfile => ({
   name: input.name.trim(),
   handle: cleanHandle(input.handle),
@@ -217,23 +288,97 @@ const normalizeItem = (item: InquiryItem): InquiryItem => {
   };
 };
 
-const normalizeData = (data: AppData): AppData => ({
-  profiles: data.profiles,
-  items: data.items.map(normalizeItem),
-  viewDedupe: pruneViewDedupe(data.viewDedupe)
-});
+const activityRecord = (entries: CanonicalActionActivityContract[]) =>
+  Object.fromEntries(entries.map((activity) => [canonicalActivityKey(activity), activity]));
+
+const transitionLocalActivity = ({
+  ledger,
+  subjectType,
+  subjectId,
+  postId,
+  actorHandle,
+  action,
+  active,
+  fallbackActive
+}: {
+  ledger: AppData["actionLedger"];
+  subjectType: CanonicalActionActivityContract["subjectType"];
+  subjectId: string;
+  postId: string;
+  actorHandle: string;
+  action: ToggleActionContract;
+  active?: boolean;
+  fallbackActive: boolean;
+}) => {
+  const key = canonicalActivityKey({ subjectType, subjectId, actorHandle, action });
+  const previous = ledger[key];
+  const previousActive = previous?.active ?? fallbackActive;
+  const nextActive = active ?? !previousActive;
+  const changed = previousActive !== nextActive;
+  const activity: CanonicalActionActivityContract = {
+    ...createLocalCanonicalActivity({
+      subjectType,
+      subjectId,
+      postId,
+      actorHandle,
+      action,
+      active: nextActive,
+      occurredAt: changed || !previous ? new Date().toISOString() : previous.occurredAt
+    }),
+    revision: previous ? previous.revision + (changed ? 1 : 0) : 1
+  };
+  ledger[key] = activity;
+  return { activity, previousActive };
+};
+
+const deactivateLedgerEntries = (
+  ledger: AppData["actionLedger"],
+  matches: (activity: CanonicalActionActivityContract) => boolean
+) => {
+  const occurredAt = new Date().toISOString();
+  for (const [key, activity] of Object.entries(ledger)) {
+    if (!activity.active || !matches(activity)) continue;
+    ledger[key] = {
+      ...activity,
+      active: false,
+      count: 0,
+      revision: activity.revision + 1,
+      occurredAt
+    };
+  }
+};
+
+const normalizeData = (data: AppData): AppData => {
+  const normalizedItems = data.items.map(normalizeItem);
+  const entries = mergeCanonicalActivities(
+    buildLegacyActionLedger(normalizedItems),
+    Object.values(data.actionLedger ?? {})
+  );
+  return {
+    profiles: data.profiles,
+    items: projectCanonicalActionLedger(normalizedItems, entries),
+    viewDedupe: pruneViewDedupe(data.viewDedupe),
+    actionLedger: activityRecord(entries)
+  };
+};
 
 const mergeSeedData = (data: AppData): AppData => {
   const seed = seedData();
   const existingItemIds = new Set(data.items.map((item) => item.id));
+  const normalizedItems = [
+    ...data.items,
+    ...seed.items.filter((item) => !existingItemIds.has(item.id))
+  ].map(normalizeItem);
+  const ledger = mergeCanonicalActivities(
+    buildLegacyActionLedger(normalizedItems),
+    Object.values(data.actionLedger ?? {})
+  );
 
   return {
     profiles: { ...seed.profiles, ...data.profiles },
-    items: [
-      ...data.items,
-      ...seed.items.filter((item) => !existingItemIds.has(item.id))
-    ].map(normalizeItem),
-    viewDedupe: pruneViewDedupe(data.viewDedupe)
+    items: projectCanonicalActionLedger(normalizedItems, ledger),
+    viewDedupe: pruneViewDedupe(data.viewDedupe),
+    actionLedger: activityRecord(ledger)
   };
 };
 
@@ -242,14 +387,16 @@ const seedData = (): AppData => {
     Object.values(profilesByName).map((person) => [person.handle, person])
   );
 
+  const items = inquiryItems.map((item, itemIndex) => ({
+    ...normalizeItem(item),
+    authorHandle: handleFromName(item.author),
+    comments: normalizeComments(item.comments, item.id, itemIndex)
+  }));
   return {
     profiles,
     viewDedupe: {},
-    items: inquiryItems.map((item, itemIndex) => ({
-      ...normalizeItem(item),
-      authorHandle: handleFromName(item.author),
-      comments: normalizeComments(item.comments, item.id, itemIndex)
-    }))
+    items,
+    actionLedger: activityRecord(buildLegacyActionLedger(items))
   };
 };
 
@@ -365,6 +512,23 @@ const ensureSchema = async () => {
           updated_at TIMESTAMPTZ DEFAULT now(),
           UNIQUE (target_type, target_id, actor_handle, bucket_start)
         );
+
+        CREATE TABLE IF NOT EXISTS action_ledger (
+          subject_type TEXT NOT NULL,
+          subject_id TEXT NOT NULL,
+          post_id TEXT NOT NULL,
+          actor_handle TEXT NOT NULL,
+          action TEXT NOT NULL,
+          active BOOLEAN NOT NULL DEFAULT true,
+          count INTEGER NOT NULL DEFAULT 1,
+          revision INTEGER NOT NULL DEFAULT 1,
+          occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          PRIMARY KEY (subject_type, subject_id, actor_handle, action),
+          CHECK (subject_type IN ('post', 'comment')),
+          CHECK (action IN ('save', 'signal', 'fork')),
+          CHECK (count >= 0),
+          CHECK (revision > 0)
+        );
       `);
 
       await db.query(`
@@ -387,12 +551,48 @@ const ensureSchema = async () => {
         ALTER TABLE comments ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();
         CREATE INDEX IF NOT EXISTS content_views_target_idx ON content_views (target_type, target_id);
         CREATE INDEX IF NOT EXISTS content_views_actor_idx ON content_views (actor_handle);
+        CREATE INDEX IF NOT EXISTS action_ledger_actor_activity_idx
+          ON action_ledger (actor_handle, occurred_at DESC, subject_type, subject_id, action);
       `);
 
       const { rows } = await db.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM items");
       if (Number(rows[0]?.count ?? 0) === 0) {
         await syncSeedPostgres();
       }
+
+      await db.query(`
+        INSERT INTO action_ledger (
+          subject_type, subject_id, post_id, actor_handle, action, active, count, revision, occurred_at
+        )
+        SELECT DISTINCT
+          'post', source.id, source.id, membership.actor_handle, membership.action, true, 1, 1, source.created_at
+        FROM items source
+        CROSS JOIN LATERAL (
+          SELECT jsonb_array_elements_text(COALESCE(source.saved_by, '[]'::jsonb)) AS actor_handle, 'save'::text AS action
+          UNION ALL
+          SELECT jsonb_array_elements_text(COALESCE(source.signaled_by, '[]'::jsonb)), 'signal'::text
+          UNION ALL
+          SELECT jsonb_array_elements_text(COALESCE(source.forked_by, '[]'::jsonb)), 'fork'::text
+        ) membership
+        WHERE source.deleted_at IS NULL
+        ON CONFLICT (subject_type, subject_id, actor_handle, action) DO NOTHING;
+
+        INSERT INTO action_ledger (
+          subject_type, subject_id, post_id, actor_handle, action, active, count, revision, occurred_at
+        )
+        SELECT DISTINCT
+          'comment', source.id, source.item_id, membership.actor_handle, membership.action, true, 1, 1, source.created_at
+        FROM comments source
+        CROSS JOIN LATERAL (
+          SELECT jsonb_array_elements_text(COALESCE(source.saved_by, '[]'::jsonb)) AS actor_handle, 'save'::text AS action
+          UNION ALL
+          SELECT jsonb_array_elements_text(COALESCE(source.signaled_by, '[]'::jsonb)), 'signal'::text
+          UNION ALL
+          SELECT jsonb_array_elements_text(COALESCE(source.forked_by, '[]'::jsonb)), 'fork'::text
+        ) membership
+        WHERE source.deleted_at IS NULL
+        ON CONFLICT (subject_type, subject_id, actor_handle, action) DO NOTHING;
+      `);
     })();
   }
   await schemaReady;
@@ -501,9 +701,7 @@ const insertCommentTree = async (itemId: string, comments: InquiryComment[]) => 
 const readLocal = async (): Promise<AppData> => {
   try {
     const raw = await readFile(localDataPath, "utf8");
-    const merged = mergeSeedData(normalizeData(JSON.parse(raw) as AppData));
-    await writeLocal(merged);
-    return merged;
+    return mergeSeedData(normalizeData(JSON.parse(raw) as AppData));
   } catch {
     const seed = seedData();
     await writeLocal(seed);
@@ -513,7 +711,9 @@ const readLocal = async (): Promise<AppData> => {
 
 const writeLocal = async (data: AppData) => {
   await mkdir(path.dirname(localDataPath), { recursive: true });
-  await writeFile(localDataPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+  const temporaryPath = `${localDataPath}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+  await writeFile(temporaryPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+  await rename(temporaryPath, localDataPath);
 };
 
 type CommentRow = {
@@ -531,6 +731,18 @@ type CommentRow = {
   edited_at: string | null;
   deleted_at: string | null;
   created_at: string | null;
+};
+
+type ActionLedgerRow = {
+  subject_type: CanonicalActionActivityContract["subjectType"];
+  subject_id: string;
+  post_id: string;
+  actor_handle: string;
+  action: ToggleActionContract;
+  active: boolean;
+  count: number;
+  revision: number;
+  occurred_at: string;
 };
 
 const commentTreesFromRows = (rows: CommentRow[]) => {
@@ -570,7 +782,7 @@ const loadPostgres = async (): Promise<AppData> => {
   await ensureSchema();
   await syncSeedPostgres();
   const db = getPool();
-  const [profileResult, itemResult, commentResult] = await Promise.all([
+  const [profileResult, itemResult, commentResult, actionResult] = await Promise.all([
     db.query<{
       handle: string;
       email: string | null;
@@ -627,60 +839,83 @@ const loadPostgres = async (): Promise<AppData> => {
       signaled_by: string[];
       forked_by: string[];
     }>("SELECT * FROM items ORDER BY created_at DESC"),
-    db.query<CommentRow>("SELECT * FROM comments ORDER BY created_at ASC")
+    db.query<CommentRow>("SELECT * FROM comments ORDER BY created_at ASC"),
+    db.query<ActionLedgerRow>(
+      `SELECT subject_type, subject_id, post_id, actor_handle, action, active, count, revision, occurred_at
+       FROM action_ledger
+       ORDER BY occurred_at DESC, subject_type DESC, subject_id DESC, action DESC`
+    )
   ]);
   const commentsByItem = commentTreesFromRows(commentResult.rows);
 
+  const profiles = Object.fromEntries(
+    profileResult.rows.map((person) => [
+      person.handle,
+      {
+        name: person.name,
+        handle: person.handle,
+        email: person.email ?? undefined,
+        avatarUrl: person.avatar_url ?? undefined,
+        likesPublic: person.likes_public ?? true,
+        resharesPublic: person.reshares_public ?? true,
+        role: person.role,
+        location: person.location,
+        bio: person.bio,
+        fields: person.fields
+      }
+    ])
+  );
+  const items = itemResult.rows.map((item) => ({
+    id: item.id,
+    kind: item.kind,
+    room: item.room,
+    title: item.title,
+    author: item.author_name,
+    authorHandle: item.author_handle || undefined,
+    affiliation: item.affiliation,
+    date: item.date_label,
+    createdAt: item.created_at ? new Date(item.created_at).toISOString() : undefined,
+    editedAt: item.edited_at ? new Date(item.edited_at).toISOString() : undefined,
+    deletedAt: item.deleted_at ? new Date(item.deleted_at).toISOString() : undefined,
+    status: item.status,
+    metrics: item.metrics,
+    gatheringReason: item.gathering_reason,
+    excerpt: item.excerpt,
+    body: item.body,
+    tags: item.tags,
+    signals: item.signals,
+    claims: item.claims,
+    objections: item.objections,
+    evidence: item.evidence,
+    tests: item.tests,
+    forks: item.forks,
+    attachments: item.attachments ?? [],
+    comments: commentsByItem.get(item.id) ?? [],
+    saved: item.saved,
+    savedBy: item.saved_by?.length ? item.saved_by : item.saved ? [defaultProfile.handle] : [],
+    signaledBy: item.signaled_by ?? [],
+    forkedBy: item.forked_by ?? []
+  }));
+  const ledger = mergeCanonicalActivities(
+    buildLegacyActionLedger(items),
+    actionResult.rows.map((row) => ({
+      subjectType: row.subject_type,
+      subjectId: row.subject_id,
+      postId: row.post_id,
+      actorHandle: row.actor_handle,
+      action: row.action,
+      active: row.active,
+      count: row.count,
+      revision: Number(row.revision),
+      occurredAt: new Date(row.occurred_at).toISOString()
+    }))
+  );
+
   return {
     viewDedupe: {},
-    profiles: Object.fromEntries(
-      profileResult.rows.map((person) => [
-        person.handle,
-        {
-          name: person.name,
-          handle: person.handle,
-          email: person.email ?? undefined,
-          avatarUrl: person.avatar_url ?? undefined,
-          likesPublic: person.likes_public ?? true,
-          resharesPublic: person.reshares_public ?? true,
-          role: person.role,
-          location: person.location,
-          bio: person.bio,
-          fields: person.fields
-        }
-      ])
-    ),
-    items: itemResult.rows.map((item) => ({
-      id: item.id,
-      kind: item.kind,
-      room: item.room,
-      title: item.title,
-      author: item.author_name,
-      authorHandle: item.author_handle || undefined,
-      affiliation: item.affiliation,
-      date: item.date_label,
-      createdAt: item.created_at ? new Date(item.created_at).toISOString() : undefined,
-      editedAt: item.edited_at ? new Date(item.edited_at).toISOString() : undefined,
-      deletedAt: item.deleted_at ? new Date(item.deleted_at).toISOString() : undefined,
-      status: item.status,
-      metrics: item.metrics,
-      gatheringReason: item.gathering_reason,
-      excerpt: item.excerpt,
-      body: item.body,
-      tags: item.tags,
-      signals: item.signals,
-      claims: item.claims,
-      objections: item.objections,
-      evidence: item.evidence,
-      tests: item.tests,
-      forks: item.forks,
-      attachments: item.attachments ?? [],
-      comments: commentsByItem.get(item.id) ?? [],
-      saved: item.saved,
-      savedBy: item.saved_by?.length ? item.saved_by : item.saved ? [defaultProfile.handle] : [],
-      signaledBy: item.signaled_by ?? [],
-      forkedBy: item.forked_by ?? []
-    }))
+    profiles,
+    items: projectCanonicalActionLedger(items, ledger),
+    actionLedger: activityRecord(ledger)
   };
 };
 
@@ -821,11 +1056,40 @@ export const createPost = async (input: CreatePostInput, authorHandle: string) =
         JSON.stringify(item.forkedBy)
       ]
     );
+    if (item.savedBy?.includes(author.handle)) {
+      await persistPostgresActivity({
+        ...createLocalCanonicalActivity({
+          subjectType: "post",
+          subjectId: item.id,
+          postId: item.id,
+          actorHandle: author.handle,
+          action: "save",
+          active: true,
+          occurredAt: item.createdAt
+        }),
+        revision: 1
+      });
+    }
     return item;
   }
 
   const local = await readLocal();
   local.items = [item, ...local.items];
+  if (item.savedBy?.includes(author.handle)) {
+    const activity: CanonicalActionActivityContract = {
+      ...createLocalCanonicalActivity({
+        subjectType: "post",
+        subjectId: item.id,
+        postId: item.id,
+        actorHandle: author.handle,
+        action: "save",
+        active: true,
+        occurredAt: item.createdAt
+      }),
+      revision: 1
+    };
+    local.actionLedger[canonicalActivityKey(activity)] = activity;
+  }
   await writeLocal(local);
   return item;
 };
@@ -926,16 +1190,50 @@ export const applyPostAction = async (
   active?: boolean,
   trigger?: string,
   surface?: string
-) => {
+): Promise<ActionMutationResult | null> => {
   if (usePostgres) {
     const data = await getSnapshot();
     const existing = data.items.find((item) => item.id === itemId);
     if (!existing) return null;
-    if (isDeletedPost(existing)) return existing;
+    if (isDeletedPost(existing)) return { item: existing };
     if (action === "read" && !(await recordPostgresContentView("post", itemId, actorHandle, trigger, surface))) {
-      return existing;
+      return { item: existing };
     }
-    const updated = mutateItemForActor(existing, action, actorHandle, defaultProfile.handle, active);
+    let activity: CanonicalActionActivityContract | undefined;
+    let base = existing;
+    if (action !== "read") {
+      const fallbackActive =
+        action === "save"
+          ? isSavedBy(existing, actorHandle, defaultProfile.handle)
+          : action === "signal"
+            ? hasHandle(existing.signaledBy, actorHandle)
+            : hasHandle(existing.forkedBy, actorHandle);
+      const transition = transitionLocalActivity({
+        ledger: data.actionLedger,
+        subjectType: "post",
+        subjectId: itemId,
+        postId: itemId,
+        actorHandle,
+        action,
+        active,
+        fallbackActive
+      });
+      activity = await persistPostgresActivity(transition.activity);
+      base = setItemActionMembership(
+        existing,
+        action,
+        actorHandle,
+        transition.previousActive,
+        defaultProfile.handle
+      );
+    }
+    const updated = mutateItemForActor(
+      base,
+      action,
+      actorHandle,
+      defaultProfile.handle,
+      activity?.active ?? active
+    );
     await getPool().query(
       `UPDATE items
        SET metrics = $2,
@@ -955,26 +1253,64 @@ export const applyPostAction = async (
         JSON.stringify(updated.signals)
       ]
     );
-    return updated;
+    return { item: updated, activity };
   }
 
-  const local = await readLocal();
-  let updated: InquiryItem | null = null;
-  local.items = local.items.map((item) => {
-    if (item.id !== itemId) return item;
-    if (isDeletedPost(item)) {
-      updated = item;
-      return item;
-    }
-    if (action === "read" && !claimLocalContentView(local, "post", itemId, actorHandle)) {
-      updated = item;
-      return item;
-    }
-    updated = mutateItemForActor(item, action, actorHandle, defaultProfile.handle, active);
-    return updated;
+  return withLocalActionLock(async () => {
+    const local = await readLocal();
+    let result: ActionMutationResult | null = null;
+    local.items = local.items.map((item) => {
+      if (item.id !== itemId) return item;
+      if (isDeletedPost(item)) {
+        result = { item };
+        return item;
+      }
+      if (action === "read" && !claimLocalContentView(local, "post", itemId, actorHandle)) {
+        result = { item };
+        return item;
+      }
+      if (action === "read") {
+        const updated = mutateItemForActor(item, action, actorHandle, defaultProfile.handle, active);
+        result = { item: updated };
+        return updated;
+      }
+
+      const fallbackActive =
+        action === "save"
+          ? isSavedBy(item, actorHandle, defaultProfile.handle)
+          : action === "signal"
+            ? hasHandle(item.signaledBy, actorHandle)
+            : hasHandle(item.forkedBy, actorHandle);
+      const transition = transitionLocalActivity({
+        ledger: local.actionLedger,
+        subjectType: "post",
+        subjectId: itemId,
+        postId: itemId,
+        actorHandle,
+        action,
+        active,
+        fallbackActive
+      });
+      const base = setItemActionMembership(
+        item,
+        action,
+        actorHandle,
+        transition.previousActive,
+        defaultProfile.handle
+      );
+      const updated = mutateItemForActor(
+        base,
+        action,
+        actorHandle,
+        defaultProfile.handle,
+        transition.activity.active
+      );
+      result = { item: updated, activity: transition.activity };
+      return updated;
+    });
+    await writeLocal(local);
+    return result;
   });
-  await writeLocal(local);
-  return updated;
 };
 
 const canManagePost = (item: InquiryItem, actorHandle: string) =>
@@ -1074,6 +1410,15 @@ export const deletePost = async (itemId: string, actorHandle = defaultProfile.ha
         deleted.deletedAt
       ]
     );
+    await getPool().query(
+      `UPDATE action_ledger
+       SET active = false,
+           count = 0,
+           revision = revision + 1,
+           occurred_at = now()
+       WHERE post_id = $1 AND active = true`,
+      [itemId]
+    );
     return deleted;
   }
 
@@ -1082,6 +1427,7 @@ export const deletePost = async (itemId: string, actorHandle = defaultProfile.ha
   if (!existing || isDeletedPost(existing) || !canManagePost(existing, actorHandle)) return null;
   const deleted = tombstonePost(existing);
   local.items = local.items.map((item) => (item.id === itemId ? deleted : item));
+  deactivateLedgerEntries(local.actionLedger, (activity) => activity.postId === itemId);
   await writeLocal(local);
   return deleted;
 };
@@ -1125,7 +1471,6 @@ export const updateComment = async (
        WHERE item_id = $1 AND id = $2`,
       [itemId, commentId, mapped.updated.body, mapped.updated.editedAt]
     );
-
     return { ...existing, comments: mapped.comments };
   }
 
@@ -1190,6 +1535,15 @@ export const deleteComment = async (
         mapped.updated.deletedAt
       ]
     );
+    await getPool().query(
+      `UPDATE action_ledger
+       SET active = false,
+           count = 0,
+           revision = revision + 1,
+           occurred_at = now()
+       WHERE subject_type = 'comment' AND subject_id = $1 AND active = true`,
+      [commentId]
+    );
 
     return { ...existing, comments: mapped.comments };
   }
@@ -1206,6 +1560,10 @@ export const deleteComment = async (
     return deleted;
   });
   if (!deleted) return null;
+  deactivateLedgerEntries(
+    local.actionLedger,
+    (activity) => activity.subjectType === "comment" && activity.subjectId === commentId
+  );
   await writeLocal(local);
   return deleted;
 };
@@ -1218,7 +1576,7 @@ export const applyCommentAction = async (
   active?: boolean,
   trigger?: string,
   surface?: string
-) => {
+): Promise<ActionMutationResult | null> => {
   if (usePostgres) {
     const data = await getSnapshot();
     const existing = data.items.find((item) => item.id === itemId);
@@ -1226,14 +1584,34 @@ export const applyCommentAction = async (
 
     const original = findCommentInTree(existing.comments, commentId);
     if (!original) return null;
-    if (isDeletedComment(original)) return existing;
+    if (isDeletedComment(original)) return { item: existing };
     if (action === "read" && !(await recordPostgresContentView("comment", commentId, actorHandle, trigger, surface))) {
-      return existing;
+      return { item: existing };
     }
 
-    const mapped = mapCommentTree(existing.comments, commentId, (comment) =>
-      mutateCommentForActor(comment, action, actorHandle, active)
-    );
+    let activity: CanonicalActionActivityContract | undefined;
+    let previousActive = false;
+    if (action !== "read") {
+      const transition = transitionLocalActivity({
+        ledger: data.actionLedger,
+        subjectType: "comment",
+        subjectId: commentId,
+        postId: itemId,
+        actorHandle,
+        action,
+        active,
+        fallbackActive: Boolean(commentActionActive(original, action, actorHandle))
+      });
+      previousActive = transition.previousActive;
+      activity = await persistPostgresActivity(transition.activity);
+    }
+
+    const mapped = mapCommentTree(existing.comments, commentId, (comment) => {
+      const base = action === "read"
+        ? comment
+        : setCommentActionMembership(comment, action, actorHandle, previousActive);
+      return mutateCommentForActor(base, action, actorHandle, activity?.active ?? active);
+    });
     if (!mapped.updated) return null;
 
     await getPool().query(
@@ -1254,31 +1632,53 @@ export const applyCommentAction = async (
       ]
     );
 
-    return { ...existing, comments: mapped.comments };
+    return { item: { ...existing, comments: mapped.comments }, activity };
   }
 
-  const local = await readLocal();
-  let updated: InquiryItem | null = null;
-  local.items = local.items.map((item) => {
-    if (item.id !== itemId) return item;
-    const original = findCommentInTree(item.comments, commentId);
-    if (!original) return item;
-    if (isDeletedComment(original)) {
-      updated = item;
-      return item;
-    }
-    if (action === "read" && !claimLocalContentView(local, "comment", commentId, actorHandle)) {
-      updated = item;
-      return item;
-    }
-    const mapped = mapCommentTree(item.comments, commentId, (comment) =>
-      mutateCommentForActor(comment, action, actorHandle, active)
-    );
-    if (!mapped.updated) return item;
-    updated = { ...item, comments: mapped.comments };
-    return updated;
+  return withLocalActionLock(async () => {
+    const local = await readLocal();
+    let result: ActionMutationResult | null = null;
+    local.items = local.items.map((item) => {
+      if (item.id !== itemId) return item;
+      const original = findCommentInTree(item.comments, commentId);
+      if (!original) return item;
+      if (isDeletedComment(original)) {
+        result = { item };
+        return item;
+      }
+      if (action === "read" && !claimLocalContentView(local, "comment", commentId, actorHandle)) {
+        result = { item };
+        return item;
+      }
+      let activity: CanonicalActionActivityContract | undefined;
+      let previousActive = false;
+      if (action !== "read") {
+        const transition = transitionLocalActivity({
+          ledger: local.actionLedger,
+          subjectType: "comment",
+          subjectId: commentId,
+          postId: itemId,
+          actorHandle,
+          action,
+          active,
+          fallbackActive: Boolean(commentActionActive(original, action, actorHandle))
+        });
+        previousActive = transition.previousActive;
+        activity = transition.activity;
+      }
+      const mapped = mapCommentTree(item.comments, commentId, (comment) => {
+        const base = action === "read"
+          ? comment
+          : setCommentActionMembership(comment, action, actorHandle, previousActive);
+        return mutateCommentForActor(base, action, actorHandle, activity?.active ?? active);
+      });
+      if (!mapped.updated) return item;
+      const updated = { ...item, comments: mapped.comments };
+      result = { item: updated, activity };
+      return updated;
+    });
+    if (!result) return null;
+    await writeLocal(local);
+    return result;
   });
-  if (!updated) return null;
-  await writeLocal(local);
-  return updated;
 };

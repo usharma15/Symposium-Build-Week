@@ -23,6 +23,8 @@ export const postRoomSchema = z.enum([
 
 export const contentKindSchema = z.enum(["paper", "thought", "draft", "note", "code"]);
 export const postActionSchema = z.enum(["signal", "save", "fork", "read"]);
+export const toggleActionSchema = z.enum(["signal", "save", "fork"]);
+export const actionSubjectTypeSchema = z.enum(["post", "comment"]);
 export const communityVisibilitySchema = z.enum(["public", "private"]);
 export const callStatusSchema = z.enum(["quiet", "voice live", "video live"]);
 export const liveCallStatusSchema = z.enum(["scheduled", "live", "ended", "cancelled"]);
@@ -228,6 +230,28 @@ export const postActionInputSchema = z.object({
 });
 export const commentActionInputSchema = postActionInputSchema;
 
+export const canonicalActionActivitySchema = z.object({
+  subjectType: actionSubjectTypeSchema,
+  subjectId: z.string().min(1),
+  postId: z.string().min(1),
+  actorHandle: z.string().min(1),
+  action: toggleActionSchema,
+  active: z.boolean(),
+  count: z.number().int().nonnegative(),
+  revision: z.number().int().positive(),
+  occurredAt: z.string().datetime()
+});
+
+export const profileActivityQuerySchema = z.object({
+  cursor: z.string().optional(),
+  limit: z.coerce.number().int().positive().max(500).default(200)
+});
+
+export const profileActivityResponseSchema = z.object({
+  entries: z.array(canonicalActionActivitySchema),
+  nextCursor: z.string().nullable()
+});
+
 export const joinCommunityInputSchema = z.object({
   communityId: z.string().min(1)
 });
@@ -377,6 +401,8 @@ export const bootstrapResponseSchema = z.object({
 export type RoomIdContract = z.infer<typeof roomIdSchema>;
 export type ContentKindContract = z.infer<typeof contentKindSchema>;
 export type PostActionContract = z.infer<typeof postActionSchema>;
+export type ToggleActionContract = z.infer<typeof toggleActionSchema>;
+export type ActionSubjectTypeContract = z.infer<typeof actionSubjectTypeSchema>;
 export type ResearchProfileContract = z.infer<typeof researchProfileSchema>;
 export type CreateProfileInputContract = z.infer<typeof createProfileInputSchema>;
 export type InquiryItemContract = z.infer<typeof inquiryItemSchema>;
@@ -386,6 +412,9 @@ export type CreatePostInputContract = z.infer<typeof createPostInputSchema>;
 export type CreateCommentInputContract = z.infer<typeof createCommentInputSchema>;
 export type UpdateCommentInputContract = z.infer<typeof updateCommentInputSchema>;
 export type PostActionInputContract = z.infer<typeof postActionInputSchema>;
+export type CanonicalActionActivityContract = z.infer<typeof canonicalActionActivitySchema>;
+export type ProfileActivityQueryContract = z.infer<typeof profileActivityQuerySchema>;
+export type ProfileActivityResponseContract = z.infer<typeof profileActivityResponseSchema>;
 export type AttachmentStatusContract = z.infer<typeof attachmentStatusSchema>;
 export type AttachmentKindContract = z.infer<typeof attachmentKindSchema>;
 export type BootstrapResponseContract = z.infer<typeof bootstrapResponseSchema>;

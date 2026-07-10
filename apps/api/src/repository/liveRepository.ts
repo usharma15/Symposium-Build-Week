@@ -13,6 +13,7 @@ import {
   joinCommunityInputSchema,
   markNotificationInputSchema,
   postActionInputSchema,
+  profileActivityQuerySchema,
   publishNoteInputSchema,
   saveNoteBlockInputSchema,
   searchInputSchema,
@@ -20,13 +21,16 @@ import {
   unfollowProfileInputSchema,
   updateCommentInputSchema,
   updatePostInputSchema,
+  type CanonicalActionActivityContract,
   type CommunityCallContract,
   type InquiryCommentContract,
   type InquiryItemContract,
   type PostActionInputContract,
+  type ProfileActivityResponseContract,
   type PublishNoteInputContract,
   type ResearchCommunityContract,
-  type ResearchProfileContract
+  type ResearchProfileContract,
+  type ToggleActionContract
 } from "../../../../packages/contracts/src";
 import {
   appendCommentToTree,
@@ -40,6 +44,8 @@ import {
   mapCommentTree,
   mutateCommentForActor,
   mutateItemForActor,
+  setCommentActionMembership,
+  setItemActionMembership,
   tombstoneComment,
   tombstonePost,
   updateSignalValue
@@ -48,6 +54,13 @@ import { env } from "../config/env";
 import { getPool, hasDatabase } from "../db/client";
 import type { Actor } from "../services/auth";
 import { emitEvent } from "../services/events";
+import { buildLegacyProfileActivity } from "@/lib/profileActivity";
+import {
+  decodeActivityCursor,
+  listCanonicalProfileActivity,
+  transitionCommentAction,
+  transitionPostAction
+} from "./actions";
 import {
   actorHandle,
   callRowToContract,
@@ -74,6 +87,11 @@ export { getCommunity, getInitialState, listCommunities } from "./foundation";
 export { confirmAttachment, createAttachmentUpload } from "./attachments";
 export { askAssistant } from "./assistant";
 export { createOpportunity, listOpportunities } from "./opportunities";
+
+type ActionMutationResult = {
+  item: InquiryItemContract;
+  activity?: CanonicalActionActivityContract;
+};
 
 const suffixedHandle = (baseHandle: string, index: number) =>
   index === 0 ? baseHandle : cleanHandle(`${baseHandle}_${index + 1}`);
@@ -346,6 +364,15 @@ export const createPost = async (rawInput: unknown, actor: Actor) => {
         searchablePostText({ ...item, authorName: item.author })
       ]
     );
+
+    if (item.authorHandle && item.savedBy?.includes(item.authorHandle)) {
+      await client.query(
+        `INSERT INTO post_actions (post_id, actor_handle, action, active, count, revision, created_at, updated_at)
+         VALUES ($1, $2, 'save', true, 1, 1, $3, $3)
+         ON CONFLICT (post_id, actor_handle, action) DO NOTHING`,
+        [item.id, item.authorHandle, item.createdAt]
+      );
+    }
 
     if (requestedAttachmentIds.length) {
       const result = await client.query<AttachmentRow>(
@@ -631,7 +658,11 @@ export const addComment = async (postId: string, rawInput: unknown, actor: Actor
   return { comment, item: updatedItem };
 };
 
-export const applyPostAction = async (postId: string, rawInput: unknown, actor: Actor) => {
+export const applyPostAction = async (
+  postId: string,
+  rawInput: unknown,
+  actor: Actor
+): Promise<ActionMutationResult> => {
   const input: PostActionInputContract = postActionInputSchema.parse(rawInput);
   const handle = actorHandle(actor, input.actorHandle);
 
@@ -639,17 +670,20 @@ export const applyPostAction = async (postId: string, rawInput: unknown, actor: 
     const snapshot = await getInitialState();
     const existing = snapshot.items.find((item) => item.id === postId);
     if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
-    if (isDeletedPost(existing)) return existing;
+    if (isDeletedPost(existing)) return { item: existing };
     if (input.action === "read" && !recordMemoryContentView("post", postId, handle)) {
-      return existing;
+      return { item: existing };
     }
-    return mutateItemForActor(existing, input.action, handle, defaultProfile.handle, input.active);
+    return {
+      item: mutateItemForActor(existing, input.action, handle, defaultProfile.handle, input.active)
+    };
   }
 
   await ensureLiveData();
 
   const client = await getPool().connect();
   let updated: InquiryItemContract;
+  let activity: CanonicalActionActivityContract | undefined;
 
   try {
     await client.query("BEGIN");
@@ -717,7 +751,7 @@ export const applyPostAction = async (postId: string, rawInput: unknown, actor: 
     if (isDeletedPost(existing)) {
       updated = existing;
       await client.query("COMMIT");
-      return updated;
+      return { item: updated };
     }
 
     if (
@@ -726,36 +760,45 @@ export const applyPostAction = async (postId: string, rawInput: unknown, actor: 
     ) {
       updated = existing;
       await client.query("COMMIT");
-      return updated;
+      return { item: updated };
     }
 
-    updated = mutateItemForActor(existing, input.action, handle, defaultProfile.handle, input.active);
-
     if (input.action === "read") {
+      updated = mutateItemForActor(existing, input.action, handle, defaultProfile.handle, input.active);
       await client.query(
-        `INSERT INTO post_actions (post_id, actor_handle, action, count)
-         VALUES ($1, $2, $3, 1)
+        `INSERT INTO post_actions (post_id, actor_handle, action, active, count, revision)
+         VALUES ($1, $2, $3, true, 1, 1)
          ON CONFLICT (post_id, actor_handle, action)
-         DO UPDATE SET count = post_actions.count + 1, updated_at = now()`,
+         DO UPDATE SET
+           active = true,
+           count = post_actions.count + 1,
+           revision = post_actions.revision + 1,
+           updated_at = now()`,
         [postId, handle, input.action]
       );
     } else {
-      const listKey =
-        input.action === "save" ? "savedBy" : input.action === "signal" ? "signaledBy" : "forkedBy";
-      const list = updated[listKey] ?? [];
-      if (list.includes(handle)) {
-        await client.query(
-          `INSERT INTO post_actions (post_id, actor_handle, action)
-           VALUES ($1, $2, $3)
-           ON CONFLICT (post_id, actor_handle, action) DO NOTHING`,
-          [postId, handle, input.action]
-        );
-      } else {
-        await client.query(
-          "DELETE FROM post_actions WHERE post_id = $1 AND actor_handle = $2 AND action = $3",
-          [postId, handle, input.action]
-        );
-      }
+      const transition = await transitionPostAction(
+        client,
+        postId,
+        handle,
+        input.action as ToggleActionContract,
+        input.active
+      );
+      activity = transition.activity;
+      const reconciled = setItemActionMembership(
+        existing,
+        input.action,
+        handle,
+        transition.previousActive,
+        defaultProfile.handle
+      );
+      updated = mutateItemForActor(
+        reconciled,
+        input.action,
+        handle,
+        defaultProfile.handle,
+        transition.activity.active
+      );
     }
 
     await client.query(
@@ -792,10 +835,10 @@ export const applyPostAction = async (postId: string, rawInput: unknown, actor: 
     actorHandle: handle,
     subjectType: "post",
     subjectId: postId,
-    payload: { action: input.action, active: input.active, item: updated }
+    payload: { action: input.action, active: activity?.active, activity, item: updated }
   });
 
-  return updated;
+  return { item: updated, activity };
 };
 
 export const updatePost = async (postId: string, rawInput: unknown, actor: Actor) => {
@@ -956,7 +999,13 @@ export const deletePost = async (postId: string, actor: Actor) => {
       if (row.authorHandle && cleanHandle(row.authorHandle) !== handle) {
         throw new TRPCError({ code: "FORBIDDEN", message: "Only the author can delete this post." });
       }
-      const deletedPost = tombstonePost(existing);
+      const deletedPost = {
+        ...tombstonePost(existing),
+        saved: false,
+        savedBy: [],
+        signaledBy: [],
+        forkedBy: []
+      };
       deleted = deletedPost;
       await client.query(
         `UPDATE posts
@@ -975,6 +1024,10 @@ export const deletePost = async (postId: string, actor: Actor) => {
              evidence = $13,
              tests = $14,
              forks = $15,
+             saved = false,
+             saved_by = '[]'::jsonb,
+             signaled_by = '[]'::jsonb,
+             forked_by = '[]'::jsonb,
              search_text = $16,
              edited_at = NULL,
              deleted_at = $17,
@@ -1004,6 +1057,18 @@ export const deletePost = async (postId: string, actor: Actor) => {
           }),
           deletedPost.deletedAt
         ]
+      );
+      await client.query(
+        `UPDATE post_actions
+         SET active = false, count = 0, revision = revision + 1, updated_at = now()
+         WHERE post_id = $1 AND action IN ('save', 'signal', 'fork') AND active = true`,
+        [postId]
+      );
+      await client.query(
+        `UPDATE comment_actions
+         SET active = false, count = 0, revision = revision + 1, updated_at = now()
+         WHERE post_id = $1 AND active = true`,
+        [postId]
       );
       didDelete = true;
       await client.query("COMMIT");
@@ -1225,6 +1290,12 @@ export const deleteComment = async (postId: string, commentId: string, rawInput:
           mapped.updated.deletedAt
         ]
       );
+      await client.query(
+        `UPDATE comment_actions
+         SET active = false, count = 0, revision = revision + 1, updated_at = now()
+         WHERE comment_id = $1 AND active = true`,
+        [commentId]
+      );
 
       updatedItem = rowToItem(row, mapped.comments);
       didDelete = true;
@@ -1250,7 +1321,12 @@ export const deleteComment = async (postId: string, commentId: string, rawInput:
   return updatedItem;
 };
 
-export const applyCommentAction = async (postId: string, commentId: string, rawInput: unknown, actor: Actor) => {
+export const applyCommentAction = async (
+  postId: string,
+  commentId: string,
+  rawInput: unknown,
+  actor: Actor
+): Promise<ActionMutationResult> => {
   const input: PostActionInputContract = commentActionInputSchema.parse(rawInput);
   const handle = actorHandle(actor, input.actorHandle);
 
@@ -1260,21 +1336,22 @@ export const applyCommentAction = async (postId: string, commentId: string, rawI
     if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
     const original = findCommentInTree(existing.comments, commentId);
     if (!original) throw new TRPCError({ code: "NOT_FOUND", message: "Comment not found." });
-    if (isDeletedComment(original)) return existing;
+    if (isDeletedComment(original)) return { item: existing };
     if (input.action === "read" && !recordMemoryContentView("comment", commentId, handle)) {
-      return existing;
+      return { item: existing };
     }
     const mapped = mapCommentTree(existing.comments, commentId, (comment) =>
       mutateCommentForActor(comment, input.action, handle, input.active)
     );
     if (!mapped.updated) throw new TRPCError({ code: "NOT_FOUND", message: "Comment not found." });
-    return { ...existing, comments: mapped.comments };
+    return { item: { ...existing, comments: mapped.comments } };
   }
 
   await ensureLiveData();
   const client = await getPool().connect();
   let updatedItem: InquiryItemContract;
   let updatedComment: InquiryCommentContract | undefined;
+  let activity: CanonicalActionActivityContract | undefined;
 
   try {
     await client.query("BEGIN");
@@ -1311,7 +1388,7 @@ export const applyCommentAction = async (postId: string, commentId: string, rawI
     if (isDeletedComment(original)) {
       updatedItem = rowToItem(row, existingComments);
       await client.query("COMMIT");
-      return updatedItem;
+      return { item: updatedItem };
     }
 
     if (
@@ -1320,11 +1397,32 @@ export const applyCommentAction = async (postId: string, commentId: string, rawI
     ) {
       updatedItem = rowToItem(row, existingComments);
       await client.query("COMMIT");
-      return updatedItem;
+      return { item: updatedItem };
     }
 
-    const mapped = mapCommentTree(existingComments, commentId, (comment) =>
-      mutateCommentForActor(comment, input.action, handle, input.active)
+    let canonicalOriginal = original;
+    let canonicalActive = input.active;
+    if (input.action !== "read") {
+      const transition = await transitionCommentAction(
+        client,
+        postId,
+        commentId,
+        handle,
+        input.action as ToggleActionContract,
+        input.active
+      );
+      activity = transition.activity;
+      canonicalActive = transition.activity.active;
+      canonicalOriginal = setCommentActionMembership(
+        original,
+        input.action,
+        handle,
+        transition.previousActive
+      );
+    }
+
+    const mapped = mapCommentTree(existingComments, commentId, () =>
+      mutateCommentForActor(canonicalOriginal, input.action, handle, canonicalActive)
     );
     if (!mapped.updated) throw new TRPCError({ code: "NOT_FOUND", message: "Comment not found." });
     updatedComment = mapped.updated;
@@ -1361,10 +1459,64 @@ export const applyCommentAction = async (postId: string, commentId: string, rawI
     actorHandle: handle,
     subjectType: "comment",
     subjectId: commentId,
-    payload: { action: input.action, item: updatedItem, commentId }
+    payload: { action: input.action, active: activity?.active, activity, item: updatedItem, commentId }
   });
 
-  return updatedItem;
+  return { item: updatedItem, activity };
+};
+
+export const listProfileActivity = async (
+  rawHandle: string,
+  rawQuery: unknown,
+  actor: Actor
+): Promise<ProfileActivityResponseContract> => {
+  const handle = cleanHandle(rawHandle);
+  const query = profileActivityQuerySchema.parse(rawQuery ?? {});
+  if (query.cursor && !decodeActivityCursor(query.cursor)) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid profile activity cursor." });
+  }
+
+  const requesterHandle = actor.handle ? cleanHandle(actor.handle) : null;
+
+  if (!hasDatabase()) {
+    const snapshot = await getInitialState();
+    const person = snapshot.profiles[handle];
+    if (!person) throw new TRPCError({ code: "NOT_FOUND", message: "Profile not found." });
+    const ownProfile = requesterHandle === handle;
+    const allowedActions: ToggleActionContract[] = [
+      ...(ownProfile ? (["save"] as const) : []),
+      ...(ownProfile || person.likesPublic !== false ? (["signal"] as const) : []),
+      ...(ownProfile || person.resharesPublic !== false ? (["fork"] as const) : [])
+    ];
+    return {
+      entries: buildLegacyProfileActivity(snapshot.items, handle, allowedActions).slice(0, query.limit),
+      nextCursor: null
+    };
+  }
+
+  await ensureLiveData();
+  const profileResult = await getPool().query<{ likesPublic: boolean; resharesPublic: boolean }>(
+    `SELECT likes_public AS "likesPublic", reshares_public AS "resharesPublic"
+     FROM profiles
+     WHERE handle = $1
+     LIMIT 1`,
+    [handle]
+  );
+  const person = profileResult.rows[0];
+  if (!person) throw new TRPCError({ code: "NOT_FOUND", message: "Profile not found." });
+
+  const ownProfile = requesterHandle === handle;
+  const allowedActions: ToggleActionContract[] = [
+    ...(ownProfile ? (["save"] as const) : []),
+    ...(ownProfile || person.likesPublic ? (["signal"] as const) : []),
+    ...(ownProfile || person.resharesPublic ? (["fork"] as const) : [])
+  ];
+  const client = await getPool().connect();
+  try {
+    return await listCanonicalProfileActivity(client, handle, allowedActions, query, ownProfile);
+  } finally {
+    client.release();
+  }
 };
 
 export const followProfile = async (rawInput: unknown, actor: Actor) => {

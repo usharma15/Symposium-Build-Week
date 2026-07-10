@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -297,13 +298,50 @@ export const postActions = pgTable(
       .notNull()
       .references(() => profiles.handle, { onDelete: "cascade" }),
     action: text("action").notNull(),
+    active: boolean("active").default(true).notNull(),
     count: integer("count").default(1).notNull(),
+    revision: integer("revision").default(1).notNull(),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn()
   },
   (table) => [
     uniqueIndex("post_actions_unique_idx").on(table.postId, table.actorHandle, table.action),
-    index("post_actions_actor_idx").on(table.actorHandle)
+    index("post_actions_actor_idx").on(table.actorHandle),
+    index("post_actions_activity_idx").on(table.actorHandle, table.updatedAt, table.action, table.active),
+    check("post_actions_action_check", sql`${table.action} IN ('save', 'signal', 'fork', 'read')`),
+    check("post_actions_count_check", sql`${table.count} >= 0`),
+    check("post_actions_revision_check", sql`${table.revision} >= 1`)
+  ]
+);
+
+export const commentActions = pgTable(
+  "comment_actions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    commentId: text("comment_id")
+      .notNull()
+      .references(() => comments.id, { onDelete: "cascade" }),
+    postId: text("post_id")
+      .notNull()
+      .references(() => posts.id, { onDelete: "cascade" }),
+    actorHandle: text("actor_handle")
+      .notNull()
+      .references(() => profiles.handle, { onDelete: "cascade" }),
+    action: text("action").notNull(),
+    active: boolean("active").default(true).notNull(),
+    count: integer("count").default(1).notNull(),
+    revision: integer("revision").default(1).notNull(),
+    createdAt: createdAtColumn(),
+    updatedAt: updatedAtColumn()
+  },
+  (table) => [
+    uniqueIndex("comment_actions_unique_idx").on(table.commentId, table.actorHandle, table.action),
+    index("comment_actions_actor_idx").on(table.actorHandle),
+    index("comment_actions_post_idx").on(table.postId),
+    index("comment_actions_activity_idx").on(table.actorHandle, table.updatedAt, table.action, table.active),
+    check("comment_actions_action_check", sql`${table.action} IN ('save', 'signal', 'fork')`),
+    check("comment_actions_count_check", sql`${table.count} >= 0`),
+    check("comment_actions_revision_check", sql`${table.revision} >= 1`)
   ]
 );
 

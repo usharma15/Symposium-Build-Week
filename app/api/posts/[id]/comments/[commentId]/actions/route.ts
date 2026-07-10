@@ -23,6 +23,7 @@ export async function POST(request: Request, context: Context) {
   if (!actions.includes(action as CommentAction)) {
     return jsonError("Unknown comment action.", 400);
   }
+  const typedAction = action as CommentAction;
 
   const actorHandle = body.actorHandle ? String(body.actorHandle) : undefined;
   const live = await proxyLiveBackend(`/v1/posts/${id}/comments/${commentId}/actions`, {
@@ -32,18 +33,18 @@ export async function POST(request: Request, context: Context) {
   });
   if (live) return live;
 
-  const item = await applyCommentAction(
+  const result = await applyCommentAction(
     id,
     commentId,
-    action as CommentAction,
+    typedAction,
     actorHandle ?? "@udayan",
     body.active,
     body.trigger,
     body.surface
   );
-  if (!item) {
+  if (!result) {
     return jsonError("Comment not found.", 404);
   }
 
-  return Response.json({ item });
+  return Response.json(result);
 }

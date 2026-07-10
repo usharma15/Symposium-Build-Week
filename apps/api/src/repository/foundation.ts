@@ -64,6 +64,19 @@ export type AttachmentRow = {
   createdAt?: Date | string | null;
 };
 
+type ActionProjectionRow = {
+  subjectId: string;
+  actorHandle: string;
+  action: "save" | "signal" | "fork";
+  active: boolean;
+};
+
+type ActionHandleProjection = {
+  save: string[];
+  signal: string[];
+  fork: string[];
+};
+
 let seedReady: Promise<void> | null = null;
 
 export const json = <T>(value: unknown, fallback: T): T => {
@@ -528,6 +541,37 @@ export const attachmentsByOwner = (rows: AttachmentRow[]) => {
   return byOwner;
 };
 
+const actionHandlesBySubject = (rows: ActionProjectionRow[]) => {
+  const bySubject = new Map<string, ActionHandleProjection>();
+  for (const row of rows) {
+    const projection = bySubject.get(row.subjectId) ?? { save: [], signal: [], fork: [] };
+    if (row.active) projection[row.action].push(cleanHandle(row.actorHandle));
+    bySubject.set(row.subjectId, projection);
+  }
+  return bySubject;
+};
+
+const applyPostActionProjection = (row: SnapshotRow, projection?: ActionHandleProjection): SnapshotRow => {
+  if (!projection) return row;
+  return {
+    ...row,
+    saved: projection.save.length > 0,
+    savedBy: projection.save,
+    signaledBy: projection.signal,
+    forkedBy: projection.fork
+  };
+};
+
+const applyCommentActionProjection = (row: CommentRow, projection?: ActionHandleProjection): CommentRow => {
+  if (!projection) return row;
+  return {
+    ...row,
+    savedBy: projection.save,
+    signaledBy: projection.signal,
+    forkedBy: projection.fork
+  };
+};
+
 export const rowToItem = (
   row: SnapshotRow,
   comments: InquiryCommentContract[],
@@ -571,7 +615,15 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
   if (!hasDatabase()) return seedSnapshot();
   await ensureLiveData();
 
-  const [profileResult, postResult, commentResult, attachmentResult, communityResult] = await Promise.all([
+  const [
+    profileResult,
+    postResult,
+    commentResult,
+    attachmentResult,
+    communityResult,
+    postActionResult,
+    commentActionResult
+  ] = await Promise.all([
     getPool().query<ResearchProfileContract & {
       likesPublic: boolean;
       resharesPublic: boolean;
@@ -672,10 +724,35 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
         call_status AS "callStatus"
        FROM communities
        ORDER BY name ASC`
+    ),
+    getPool().query<ActionProjectionRow>(
+      `SELECT
+        post_id AS "subjectId",
+        actor_handle AS "actorHandle",
+        action,
+        active
+       FROM post_actions
+       WHERE action IN ('save', 'signal', 'fork')
+       ORDER BY post_id, action, actor_handle`
+    ),
+    getPool().query<ActionProjectionRow>(
+      `SELECT
+        comment_id AS "subjectId",
+        actor_handle AS "actorHandle",
+        action,
+        active
+       FROM comment_actions
+       WHERE action IN ('save', 'signal', 'fork')
+       ORDER BY comment_id, action, actor_handle`
     )
   ]);
 
-  const commentsByPost = commentTreesFromRows(commentResult.rows);
+  const postActionHandles = actionHandlesBySubject(postActionResult.rows);
+  const commentActionHandles = actionHandlesBySubject(commentActionResult.rows);
+  const projectedComments = commentResult.rows.map((row) =>
+    applyCommentActionProjection(row, commentActionHandles.get(row.id))
+  );
+  const commentsByPost = commentTreesFromRows(projectedComments);
   const attachmentsByPost = attachmentsByOwner(attachmentResult.rows);
   const profiles = Object.fromEntries(
     profileResult.rows.map((person) => [
@@ -691,7 +768,10 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
 
   return {
     profiles,
-    items: postResult.rows.map((row) => rowToItem(row, commentsByPost.get(row.id) ?? [], attachmentsByPost.get(row.id) ?? [])),
+    items: postResult.rows.map((row) => {
+      const projectedRow = applyPostActionProjection(row, postActionHandles.get(row.id));
+      return rowToItem(projectedRow, commentsByPost.get(row.id) ?? [], attachmentsByPost.get(row.id) ?? []);
+    }),
     communities: communityResult.rows.map((community) => ({
       ...community,
       memberHandles: json(community.memberHandles, []),

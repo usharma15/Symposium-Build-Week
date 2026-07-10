@@ -100,6 +100,39 @@ export const isSavedBy = (item: InquiryItem, handle: string, defaultSavedHandle?
   return Boolean(item.saved) && cleanHandle(handle) === cleanHandle(defaultSavedHandle ?? "");
 };
 
+export const setItemActionMembership = (
+  item: InquiryItem,
+  action: Exclude<PostAction, "read">,
+  actorHandle: string,
+  active: boolean,
+  defaultSavedHandle?: string
+): InquiryItem => {
+  if (action === "save") {
+    const currentSavedBy = item.savedBy ?? (item.saved && defaultSavedHandle ? [defaultSavedHandle] : []);
+    const savedBy = toggleHandle(currentSavedBy, actorHandle, active).handles;
+    return { ...item, savedBy, saved: savedBy.length > 0 };
+  }
+  if (action === "signal") {
+    return { ...item, signaledBy: toggleHandle(item.signaledBy, actorHandle, active).handles };
+  }
+  return { ...item, forkedBy: toggleHandle(item.forkedBy, actorHandle, active).handles };
+};
+
+export const setCommentActionMembership = (
+  comment: InquiryComment,
+  action: Exclude<CommentAction, "read">,
+  actorHandle: string,
+  active: boolean
+): InquiryComment => {
+  if (action === "save") {
+    return { ...comment, savedBy: toggleHandle(comment.savedBy, actorHandle, active).handles };
+  }
+  if (action === "signal") {
+    return { ...comment, signaledBy: toggleHandle(comment.signaledBy, actorHandle, active).handles };
+  }
+  return { ...comment, forkedBy: toggleHandle(comment.forkedBy, actorHandle, active).handles };
+};
+
 export const mutateItemForActor = (
   item: InquiryItem,
   action: PostAction,

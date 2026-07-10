@@ -54,6 +54,11 @@ import {
   type RoomId
 } from "@/lib/mockData";
 import type { CommentAction, PostAction } from "@/lib/dataStore";
+import type {
+  CanonicalActionActivityContract,
+  ProfileActivityResponseContract,
+  ToggleActionContract
+} from "@/packages/contracts/src";
 import {
   attachmentKindForContentType,
   formatAttachmentBytes,
@@ -92,7 +97,13 @@ import {
   updateSignalValue
 } from "@/lib/symposiumCore";
 import {
+  canonicalActionState,
+  canonicalActivityKey,
+  createLocalCanonicalActivity,
+  isCanonicalActionActivity,
   itemMatchesProfilePostAction,
+  mergeCanonicalActivities,
+  reconcileCanonicalActivityRefresh,
   reconcileProfileActivitySlots,
   uniqueProfileActivityEntries
 } from "@/lib/profileActivity";
@@ -246,8 +257,15 @@ type LiveEventPayload = {
   item?: unknown;
   follow?: ProfileFollowRecord;
   action?: PostAction;
+  activity?: unknown;
   itemId?: string;
   commentId?: string;
+};
+
+type ProfileActivitySnapshot = {
+  entries: CanonicalActionActivityContract[];
+  loaded: boolean;
+  nextCursor: string | null;
 };
 
 type SymposiumLiveEvent = {
@@ -890,13 +908,17 @@ const collectProfileComments = (
   items: InquiryItem[],
   person: ResearchProfile,
   kind: ProfileCommentActivityKind = "comments",
-  recencyForComment?: (item: InquiryItem, comment: InquiryComment, kind: ProfileCommentActivityKind) => number
+  recencyForComment?: (item: InquiryItem, comment: InquiryComment, kind: ProfileCommentActivityKind) => number,
+  matchesActivity?: (item: InquiryItem, comment: InquiryComment, kind: ProfileCommentActivityKind) => boolean
 ): ProfileCommentActivity[] => {
   const activities: ProfileCommentActivity[] = [];
 
   const visit = (item: InquiryItem, comments: InquiryComment[]) => {
     for (const comment of comments) {
-      if (commentMatchesProfileActivity(comment, person, kind) && comment.id) {
+      const matches = matchesActivity
+        ? matchesActivity(item, comment, kind)
+        : commentMatchesProfileActivity(comment, person, kind);
+      if (matches && comment.id) {
         activities.push({
           id: `${kind}:${item.id}:${comment.id}`,
           item,
@@ -1096,6 +1118,9 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   const [viewFuture, setViewFuture] = useState<ViewSnapshot[]>([]);
   const [profileActiveTabs, setProfileActiveTabs] = useState<Record<string, ProfileTab>>({});
   const [profileActivityRevision, setProfileActivityRevision] = useState(0);
+  const [profileActivityByHandle, setProfileActivityByHandle] = useState<
+    Record<string, ProfileActivitySnapshot>
+  >({});
   const [editingPost, setEditingPost] = useState<InquiryItem | null>(null);
   const [editingComment, setEditingComment] = useState<EditingCommentTarget | null>(null);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreviewTarget | null>(null);
@@ -1116,6 +1141,10 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   const actionProtectionUntilRef = useRef<Record<string, number>>({});
   const viewDedupeRef = useRef<Record<string, number>>({});
   const activityRecencyRef = useRef(activityRecency);
+  const profileActivityByHandleRef = useRef(profileActivityByHandle);
+  const canonicalActionRevisionRef = useRef<Record<string, number>>({});
+  const pendingCanonicalActionKeysRef = useRef(new Set<string>());
+  const profileActivityRequestRef = useRef<Record<string, number>>({});
   const pendingActivityRecencyRef = useRef<Record<string, number>>({});
   const liveEventCursorRef = useRef("");
   const liveRefreshTimerRef = useRef<number | null>(null);
@@ -1164,6 +1193,10 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   useEffect(() => {
     profilesRef.current = profiles;
   }, [profiles]);
+
+  useEffect(() => {
+    profileActivityByHandleRef.current = profileActivityByHandle;
+  }, [profileActivityByHandle]);
 
   useEffect(() => {
     currentProfileRef.current = currentProfile;
@@ -1781,7 +1814,10 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
 
     if (isLiveInquiryItem(payload.item)) {
       const action = payload.action;
+      const canonicalActivity = isCanonicalActionActivity(payload.activity) ? payload.activity : null;
+      if (canonicalActivity && !acceptCanonicalActivity(canonicalActivity)) return;
       if (
+        !canonicalActivity &&
         action &&
         event.actorHandle &&
         cleanHandle(event.actorHandle) === cleanHandle(currentProfileRef.current.handle)
@@ -2119,6 +2155,205 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       Boolean(selectedProfileNameRef.current)
     );
   };
+
+  const setProfileActivitySnapshot = (handle: string, snapshot: ProfileActivitySnapshot) => {
+    const clean = cleanHandle(handle);
+    const next = { ...profileActivityByHandleRef.current, [clean]: snapshot };
+    profileActivityByHandleRef.current = next;
+    setProfileActivityByHandle(next);
+  };
+
+  const canonicalActivityRecencyUpdate = (activity: CanonicalActionActivityContract) => {
+    if (!activity.active) return null;
+    const timestamp = Date.parse(activity.occurredAt);
+    if (!Number.isFinite(timestamp)) return null;
+    if (activity.subjectType === "comment") {
+      return {
+        [profileCommentActivityKey(
+          activity.actorHandle,
+          activity.action,
+          activity.postId,
+          activity.subjectId
+        )]: timestamp
+      };
+    }
+    return { [profileActivityKey(activity.actorHandle, activity.action, activity.postId)]: timestamp };
+  };
+
+  const recordCanonicalActivityRecency = (activity: CanonicalActionActivityContract) => {
+    const update = canonicalActivityRecencyUpdate(activity);
+    if (update) recordActivityRecency(update, Boolean(selectedProfileNameRef.current));
+  };
+
+  const acceptCanonicalActivity = (activity: CanonicalActionActivityContract) => {
+    const key = canonicalActivityKey(activity);
+    const currentRevision = canonicalActionRevisionRef.current[key] ?? 0;
+    if (activity.revision < currentRevision) return false;
+
+    pendingCanonicalActionKeysRef.current.delete(key);
+    canonicalActionRevisionRef.current[key] = activity.revision;
+    const handle = cleanHandle(activity.actorHandle);
+    const current = profileActivityByHandleRef.current[handle] ?? {
+      entries: [],
+      loaded: false,
+      nextCursor: null
+    };
+    setProfileActivitySnapshot(handle, {
+      ...current,
+      entries: mergeCanonicalActivities(current.entries, [activity])
+    });
+    recordCanonicalActivityRecency(activity);
+    return true;
+  };
+
+  const replaceCanonicalProfileActivity = (
+    handle: string,
+    response: ProfileActivityResponseContract,
+    requestStartRevisions: Record<string, number>
+  ) => {
+    const clean = cleanHandle(handle);
+    const currentEntries = profileActivityByHandleRef.current[clean]?.entries ?? [];
+    const entries = reconcileCanonicalActivityRefresh({
+      current: currentEntries,
+      incoming: response.entries,
+      pendingKeys: pendingCanonicalActionKeysRef.current,
+      currentRevisions: canonicalActionRevisionRef.current,
+      requestStartRevisions
+    });
+    const finalKeys = new Set(entries.map(canonicalActivityKey));
+    for (const activity of currentEntries) {
+      const key = canonicalActivityKey(activity);
+      if (!finalKeys.has(key)) delete canonicalActionRevisionRef.current[key];
+    }
+    const recencyUpdates: Record<string, number> = {};
+    for (const activity of response.entries) {
+      const key = canonicalActivityKey(activity);
+      canonicalActionRevisionRef.current[key] = Math.max(
+        canonicalActionRevisionRef.current[key] ?? 0,
+        activity.revision
+      );
+      Object.assign(recencyUpdates, canonicalActivityRecencyUpdate(activity));
+    }
+    recordActivityRecency(recencyUpdates, Boolean(selectedProfileNameRef.current));
+    setProfileActivitySnapshot(clean, {
+      entries,
+      loaded: true,
+      nextCursor: response.nextCursor
+    });
+  };
+
+  const refreshProfileActivity = async (handle: string, actorHandle = currentProfileRef.current.handle) => {
+    const clean = cleanHandle(handle);
+    if (!clean || clean === "@") return;
+    const requestId = (profileActivityRequestRef.current[clean] ?? 0) + 1;
+    profileActivityRequestRef.current[clean] = requestId;
+    const requestStartRevisions = { ...canonicalActionRevisionRef.current };
+    const entries: CanonicalActionActivityContract[] = [];
+    const seenCursors = new Set<string>();
+    let cursor: string | null = null;
+    do {
+      const params = new URLSearchParams({ limit: "500", actorHandle });
+      if (cursor) params.set("cursor", cursor);
+      const response = await fetch(
+        `/api/profiles/${encodeURIComponent(clean)}/activity?${params.toString()}`,
+        { cache: "no-store" }
+      );
+      if (!response.ok) return;
+      const data = (await response.json()) as Partial<ProfileActivityResponseContract>;
+      entries.push(...(data.entries ?? []).filter(isCanonicalActionActivity));
+      const nextCursor = typeof data.nextCursor === "string" ? data.nextCursor : null;
+      if (!nextCursor || seenCursors.has(nextCursor)) {
+        cursor = null;
+      } else {
+        seenCursors.add(nextCursor);
+        cursor = nextCursor;
+      }
+    } while (cursor);
+
+    if (profileActivityRequestRef.current[clean] !== requestId) return;
+    replaceCanonicalProfileActivity(clean, {
+      entries,
+      nextCursor: null
+    }, requestStartRevisions);
+  };
+
+  const stageOptimisticCanonicalActivity = (
+    subjectType: "post" | "comment",
+    subjectId: string,
+    postId: string,
+    actorHandle: string,
+    action: ToggleActionContract,
+    active: boolean
+  ) => {
+    const handle = cleanHandle(actorHandle);
+    const current = profileActivityByHandleRef.current[handle] ?? {
+      entries: [],
+      loaded: false,
+      nextCursor: null
+    };
+    const previous = canonicalActionState(current.entries, subjectType, subjectId, handle, action);
+    const key = canonicalActivityKey({ subjectType, subjectId, actorHandle: handle, action });
+    pendingCanonicalActionKeysRef.current.add(key);
+    const optimistic = {
+      ...createLocalCanonicalActivity({ subjectType, subjectId, postId, actorHandle: handle, action, active }),
+      revision: previous?.revision ?? 1
+    };
+    setProfileActivitySnapshot(handle, {
+      ...current,
+      entries: mergeCanonicalActivities(current.entries, [optimistic])
+    });
+    return previous;
+  };
+
+  const restoreOptimisticCanonicalActivity = (
+    subjectType: "post" | "comment",
+    subjectId: string,
+    actorHandle: string,
+    action: ToggleActionContract,
+    previous: CanonicalActionActivityContract | undefined
+  ) => {
+    const handle = cleanHandle(actorHandle);
+    const current = profileActivityByHandleRef.current[handle];
+    if (!current) return;
+    const key = canonicalActivityKey({ subjectType, subjectId, actorHandle: handle, action });
+    pendingCanonicalActionKeysRef.current.delete(key);
+    const entries = current.entries.filter((activity) => canonicalActivityKey(activity) !== key);
+    if (previous) entries.push(previous);
+    setProfileActivitySnapshot(handle, { ...current, entries: mergeCanonicalActivities([], entries) });
+  };
+
+  const canonicalActionWasCommitted = (
+    subjectType: "post" | "comment",
+    subjectId: string,
+    actorHandle: string,
+    action: ToggleActionContract,
+    desiredActive: boolean | undefined,
+    previous: CanonicalActionActivityContract | undefined
+  ) => {
+    if (desiredActive === undefined) return false;
+    const handle = cleanHandle(actorHandle);
+    const current = canonicalActionState(
+      profileActivityByHandleRef.current[handle]?.entries ?? [],
+      subjectType,
+      subjectId,
+      handle,
+      action
+    );
+    const revision = canonicalActionRevisionRef.current[
+      canonicalActivityKey({ subjectType, subjectId, actorHandle: handle, action })
+    ] ?? 0;
+    return current?.active === desiredActive && revision > (previous?.revision ?? 0);
+  };
+
+  useEffect(() => {
+    if (!signedIn || !currentProfile.handle) return;
+    void refreshProfileActivity(currentProfile.handle, currentProfile.handle);
+  }, [currentProfile.handle, signedIn]);
+
+  useEffect(() => {
+    if (!selectedProfile?.handle) return;
+    void refreshProfileActivity(selectedProfile.handle, currentProfile.handle);
+  }, [currentProfile.handle, selectedProfile?.handle]);
 
   const updateCommentSegmentStack = (key: string, stack: string[]) => {
     setCommentSegmentStacks((current) => {
@@ -2823,6 +3058,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     let actionApplied = false;
     let desiredActive: boolean | undefined;
     let protectedMetricState: ProtectedActionMetricState | undefined;
+    let previousCanonicalActivity: CanonicalActionActivityContract | undefined;
     const optimisticItems = previousItems.map((item) => {
       if (item.id !== itemId) return item;
       if (isDeletedPost(item)) return item;
@@ -2840,6 +3076,16 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       return;
     }
     setProtectedDesiredActionState(actionKey, desiredActive, protectedMetricState);
+    if (!isViewAction && desiredActive !== undefined) {
+      previousCanonicalActivity = stageOptimisticCanonicalActivity(
+        "post",
+        itemId,
+        itemId,
+        actorHandle,
+        action as ToggleActionContract,
+        desiredActive
+      );
+    }
 
     itemsRef.current = optimisticItems;
     setItems(optimisticItems);
@@ -2854,7 +3100,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
 
       if (!response.ok) throw new Error("Post action failed.");
 
-      const data = (await response.json()) as { item: InquiryItem };
+      const data = (await response.json()) as { item: InquiryItem; activity?: unknown };
       if (actionVersionsRef.current[actionKey] !== version) {
         const latestActive = protectedDesiredActionState(actionKey);
         if (latestActive !== undefined) {
@@ -2874,6 +3120,12 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
         return;
       }
 
+      const canonicalActivity = isCanonicalActionActivity(data.activity) ? data.activity : null;
+      if (canonicalActivity && !acceptCanonicalActivity(canonicalActivity)) {
+        setSyncStatus("Action synced");
+        return;
+      }
+
       const committedItems = itemsRef.current.map((item) =>
         item.id === itemId
           ? preservePublishedPosition(protectItemFromStaleActionState(data.item, item, actorHandle), item)
@@ -2883,12 +3135,48 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       setItems(committedItems);
       persistLocalSnapshot(committedItems, profilesRef.current);
       setProtectedDesiredActionState(actionKey, desiredActive, protectedMetricState);
-      touchProfileAction(itemId, action, actorHandle);
+      if (!canonicalActivity) {
+        if (!isViewAction) {
+          pendingCanonicalActionKeysRef.current.delete(
+            canonicalActivityKey({
+              subjectType: "post",
+              subjectId: itemId,
+              actorHandle,
+              action: action as ToggleActionContract
+            })
+          );
+        }
+        touchProfileAction(itemId, action, actorHandle);
+      }
       setSyncStatus("Action synced");
     } catch {
       if (actionVersionsRef.current[actionKey] !== version) return;
+      if (
+        !isViewAction &&
+        canonicalActionWasCommitted(
+          "post",
+          itemId,
+          actorHandle,
+          action as ToggleActionContract,
+          desiredActive,
+          previousCanonicalActivity
+        )
+      ) {
+        clearDesiredActionState(actionKey);
+        setSyncStatus("Action synced");
+        return;
+      }
       clearDesiredActionState(actionKey);
       if (isViewAction) releaseClientViewClaim("post", itemId);
+      if (!isViewAction) {
+        restoreOptimisticCanonicalActivity(
+          "post",
+          itemId,
+          actorHandle,
+          action as ToggleActionContract,
+          previousCanonicalActivity
+        );
+      }
       itemsRef.current = previousItems;
       setItems(previousItems);
       persistLocalSnapshot(previousItems, profilesRef.current);
@@ -2914,6 +3202,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     let actionApplied = false;
     let desiredActive: boolean | undefined;
     let protectedMetricState: ProtectedActionMetricState | undefined;
+    let previousCanonicalActivity: CanonicalActionActivityContract | undefined;
     const optimisticItems = previousItems.map((item) => {
       if (item.id !== itemId) return item;
       const mapped = mapCommentTree(item.comments, commentId, (comment) => {
@@ -2936,6 +3225,16 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       return;
     }
     setProtectedDesiredActionState(actionKey, desiredActive, protectedMetricState);
+    if (!isViewAction && desiredActive !== undefined) {
+      previousCanonicalActivity = stageOptimisticCanonicalActivity(
+        "comment",
+        commentId,
+        itemId,
+        actorHandle,
+        action as ToggleActionContract,
+        desiredActive
+      );
+    }
     itemsRef.current = optimisticItems;
     setItems(optimisticItems);
     persistLocalSnapshot(optimisticItems, profilesRef.current);
@@ -2949,7 +3248,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
 
       if (!response.ok) throw new Error("Comment action failed.");
 
-      const data = (await response.json()) as { item: InquiryItem };
+      const data = (await response.json()) as { item: InquiryItem; activity?: unknown };
       if (actionVersionsRef.current[actionKey] !== version) return;
 
       const committedComment = findCommentById(data.item.comments, commentId);
@@ -2962,6 +3261,12 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
         return;
       }
 
+      const canonicalActivity = isCanonicalActionActivity(data.activity) ? data.activity : null;
+      if (canonicalActivity && !acceptCanonicalActivity(canonicalActivity)) {
+        setSyncStatus("Comment action synced");
+        return;
+      }
+
       const committedItems = itemsRef.current.map((item) =>
         item.id === itemId
           ? preservePublishedPosition(protectItemFromStaleActionState(data.item, item, actorHandle), item)
@@ -2971,12 +3276,48 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       setItems(committedItems);
       persistLocalSnapshot(committedItems, profilesRef.current);
       setProtectedDesiredActionState(actionKey, desiredActive, protectedMetricState);
-      touchProfileCommentAction(itemId, commentId, action, actorHandle);
+      if (!canonicalActivity) {
+        if (!isViewAction) {
+          pendingCanonicalActionKeysRef.current.delete(
+            canonicalActivityKey({
+              subjectType: "comment",
+              subjectId: commentId,
+              actorHandle,
+              action: action as ToggleActionContract
+            })
+          );
+        }
+        touchProfileCommentAction(itemId, commentId, action, actorHandle);
+      }
       setSyncStatus("Comment action synced");
     } catch {
       if (actionVersionsRef.current[actionKey] !== version) return;
+      if (
+        !isViewAction &&
+        canonicalActionWasCommitted(
+          "comment",
+          commentId,
+          actorHandle,
+          action as ToggleActionContract,
+          desiredActive,
+          previousCanonicalActivity
+        )
+      ) {
+        clearDesiredActionState(actionKey);
+        setSyncStatus("Comment action synced");
+        return;
+      }
       clearDesiredActionState(actionKey);
       if (isViewAction) releaseClientViewClaim("comment", commentId);
+      if (!isViewAction) {
+        restoreOptimisticCanonicalActivity(
+          "comment",
+          commentId,
+          actorHandle,
+          action as ToggleActionContract,
+          previousCanonicalActivity
+        );
+      }
       itemsRef.current = previousItems;
       setItems(previousItems);
       persistLocalSnapshot(previousItems, profilesRef.current);
@@ -3340,6 +3681,8 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
             getProfileCommentRecency={getProfileCommentRecency}
             activeTab={profileActiveTabs[selectedProfile.handle] ?? "all"}
             activityRevision={profileActivityRevision}
+            canonicalActivities={profileActivityByHandle[selectedProfile.handle]?.entries ?? []}
+            canonicalActivityLoaded={profileActivityByHandle[selectedProfile.handle]?.loaded ?? false}
             onActiveTabChange={(tab) => changeProfileTab(selectedProfile.handle, tab)}
             onEditPost={setEditingPost}
             onDeletePost={deletePost}
@@ -6253,6 +6596,8 @@ function ProfileView({
   getProfileCommentRecency,
   activeTab,
   activityRevision,
+  canonicalActivities,
+  canonicalActivityLoaded,
   onActiveTabChange,
   onEditPost,
   onDeletePost,
@@ -6282,6 +6627,8 @@ function ProfileView({
   ) => number;
   activeTab: ProfileTab;
   activityRevision: number;
+  canonicalActivities: CanonicalActionActivityContract[];
+  canonicalActivityLoaded: boolean;
   onActiveTabChange: (tab: ProfileTab) => void;
   onEditPost: (item: InquiryItem) => void;
   onDeletePost: (itemId: string) => void;
@@ -6323,24 +6670,52 @@ function ProfileView({
   const canShowLikes = actorHandle === person.handle || inferredLikesPublic(person);
   const canShowReshares = actorHandle === person.handle || inferredResharesPublic(person);
   const canShowSaved = actorHandle === person.handle;
+  const canonicalPostActionActive = (item: InquiryItem, action: ToggleActionContract) => {
+    if (!canonicalActivityLoaded) {
+      return itemMatchesProfilePostAction(item, person, action, profile.handle);
+    }
+    return Boolean(canonicalActionState(canonicalActivities, "post", item.id, person.handle, action)?.active);
+  };
+  const canonicalCommentActionMatches = (
+    item: InquiryItem,
+    comment: InquiryComment,
+    kind: ProfileCommentActivityKind
+  ) => {
+    if (kind === "comments") return commentAuthoredByProfile(comment, person);
+    if (!comment.id) return false;
+    if (!canonicalActivityLoaded) return commentMatchesProfileActivity(comment, person, kind);
+    return Boolean(canonicalActionState(canonicalActivities, "comment", comment.id, person.handle, kind)?.active);
+  };
   const authored = byPublishedRecency(items.filter(isAuthor));
   const papers = authored.filter((item) => item.kind === "paper");
   const thoughts = authored.filter((item) => item.kind === "thought" || item.kind === "note");
   const commentRecency = (item: InquiryItem, comment: InquiryComment, kind: ProfileCommentActivityKind) =>
     getProfileCommentRecency(item, comment, person.handle, kind);
-  const commentActivities = collectProfileComments(items, person, "comments", commentRecency);
-  const commentReshares = canShowReshares ? collectProfileComments(items, person, "fork", commentRecency) : [];
-  const commentLikes = canShowLikes ? collectProfileComments(items, person, "signal", commentRecency) : [];
-  const commentSaved = canShowSaved ? collectProfileComments(items, person, "save", commentRecency) : [];
+  const commentActivities = collectProfileComments(
+    items,
+    person,
+    "comments",
+    commentRecency,
+    canonicalCommentActionMatches
+  );
+  const commentReshares = canShowReshares
+    ? collectProfileComments(items, person, "fork", commentRecency, canonicalCommentActionMatches)
+    : [];
+  const commentLikes = canShowLikes
+    ? collectProfileComments(items, person, "signal", commentRecency, canonicalCommentActionMatches)
+    : [];
+  const commentSaved = canShowSaved
+    ? collectProfileComments(items, person, "save", commentRecency, canonicalCommentActionMatches)
+    : [];
   const reshares = canShowReshares
-    ? byProfileRecency(items.filter((item) => itemMatchesProfilePostAction(item, person, "fork")), "fork")
+    ? byProfileRecency(items.filter((item) => canonicalPostActionActive(item, "fork")), "fork")
     : [];
   const likes = canShowLikes
-    ? byProfileRecency(items.filter((item) => itemMatchesProfilePostAction(item, person, "signal")), "signal")
+    ? byProfileRecency(items.filter((item) => canonicalPostActionActive(item, "signal")), "signal")
     : [];
   const saved = canShowSaved
     ? byProfileRecency(
-        items.filter((item) => itemMatchesProfilePostAction(item, person, "save", profile.handle)),
+        items.filter((item) => canonicalPostActionActive(item, "save")),
         "save"
       )
     : [];

@@ -87,8 +87,8 @@ export const registerPostRoutes = (app: FastifyInstance) => {
   app.post<{ Params: RouteParams }>("/v1/posts/:id/actions", async (request, reply) => {
     try {
       const actor = await withWriteActor(request);
-      const item = await applyPostAction(request.params.id, request.body, actor);
-      return reply.send({ item });
+      const result = await applyPostAction(request.params.id, request.body, actor);
+      return reply.send(result);
     } catch (error) {
       return sendError(app, reply, error);
     }
@@ -97,8 +97,8 @@ export const registerPostRoutes = (app: FastifyInstance) => {
   app.post<{ Params: RouteParams & { commentId: string } }>("/v1/posts/:id/comments/:commentId/actions", async (request, reply) => {
     try {
       const actor = await withWriteActor(request);
-      const item = await applyCommentAction(request.params.id, request.params.commentId, request.body, actor);
-      return reply.send({ item });
+      const result = await applyCommentAction(request.params.id, request.params.commentId, request.body, actor);
+      return reply.send(result);
     } catch (error) {
       return sendError(app, reply, error);
     }

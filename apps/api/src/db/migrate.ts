@@ -736,6 +736,84 @@ const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS content_views_target_idx ON content_views (target_type, target_id);
       CREATE INDEX IF NOT EXISTS content_views_actor_idx ON content_views (actor_handle);
     `
+  },
+  {
+    id: "0009_canonical_action_ledger",
+    sql: `
+      ALTER TABLE post_actions
+        ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT true,
+        ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1;
+
+      CREATE TABLE IF NOT EXISTS comment_actions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        comment_id TEXT NOT NULL REFERENCES comments(id) ON DELETE CASCADE,
+        post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+        actor_handle TEXT NOT NULL REFERENCES profiles(handle) ON DELETE CASCADE,
+        action TEXT NOT NULL,
+        active BOOLEAN NOT NULL DEFAULT true,
+        count INTEGER NOT NULL DEFAULT 1,
+        revision INTEGER NOT NULL DEFAULT 1,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (comment_id, actor_handle, action)
+      );
+
+      CREATE INDEX IF NOT EXISTS post_actions_activity_idx
+        ON post_actions (actor_handle, updated_at DESC, action, active);
+      CREATE INDEX IF NOT EXISTS comment_actions_actor_idx ON comment_actions (actor_handle);
+      CREATE INDEX IF NOT EXISTS comment_actions_post_idx ON comment_actions (post_id);
+      CREATE INDEX IF NOT EXISTS comment_actions_activity_idx
+        ON comment_actions (actor_handle, updated_at DESC, action, active);
+
+      DO $$ BEGIN
+        ALTER TABLE post_actions
+          ADD CONSTRAINT post_actions_action_check CHECK (action IN ('save', 'signal', 'fork', 'read')),
+          ADD CONSTRAINT post_actions_count_check CHECK (count >= 0),
+          ADD CONSTRAINT post_actions_revision_check CHECK (revision >= 1);
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END $$;
+
+      DO $$ BEGIN
+        ALTER TABLE comment_actions
+          ADD CONSTRAINT comment_actions_action_check CHECK (action IN ('save', 'signal', 'fork')),
+          ADD CONSTRAINT comment_actions_count_check CHECK (count >= 0),
+          ADD CONSTRAINT comment_actions_revision_check CHECK (revision >= 1);
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END $$;
+
+      INSERT INTO post_actions (post_id, actor_handle, action, active, count, revision, created_at, updated_at)
+      SELECT DISTINCT post.id, actor.handle, source.action, true, 1, 1, post.created_at, post.updated_at
+      FROM posts AS post
+      CROSS JOIN LATERAL (
+        SELECT 'save'::text AS action, value AS handle FROM jsonb_array_elements_text(post.saved_by)
+        UNION ALL
+        SELECT 'signal'::text AS action, value AS handle FROM jsonb_array_elements_text(post.signaled_by)
+        UNION ALL
+        SELECT 'fork'::text AS action, value AS handle FROM jsonb_array_elements_text(post.forked_by)
+      ) AS source
+      JOIN profiles AS actor ON actor.handle = source.handle
+      ON CONFLICT (post_id, actor_handle, action) DO UPDATE SET
+        active = true,
+        updated_at = GREATEST(post_actions.updated_at, EXCLUDED.updated_at);
+
+      INSERT INTO comment_actions (
+        comment_id, post_id, actor_handle, action, active, count, revision, created_at, updated_at
+      )
+      SELECT DISTINCT comment.id, comment.post_id, actor.handle, source.action, true, 1, 1,
+        comment.created_at, comment.updated_at
+      FROM comments AS comment
+      CROSS JOIN LATERAL (
+        SELECT 'save'::text AS action, value AS handle FROM jsonb_array_elements_text(comment.saved_by)
+        UNION ALL
+        SELECT 'signal'::text AS action, value AS handle FROM jsonb_array_elements_text(comment.signaled_by)
+        UNION ALL
+        SELECT 'fork'::text AS action, value AS handle FROM jsonb_array_elements_text(comment.forked_by)
+      ) AS source
+      JOIN profiles AS actor ON actor.handle = source.handle
+      ON CONFLICT (comment_id, actor_handle, action) DO UPDATE SET
+        active = true,
+        updated_at = GREATEST(comment_actions.updated_at, EXCLUDED.updated_at);
+    `
   }
 ];
 

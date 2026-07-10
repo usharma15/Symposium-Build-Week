@@ -5,12 +5,19 @@ import {
   followProfile,
   getInitialState,
   listFollowing,
+  listProfileActivity,
   listProfileFollows,
   syncUser,
   unfollowProfile,
   upsertProfile
 } from "../repository/liveRepository";
+import { getActorFromRequest } from "../services/auth";
 import type { HandleParams } from "./types";
+
+type ProfileActivityQuery = {
+  cursor?: string;
+  limit?: string;
+};
 
 export const registerProfileRoutes = (app: FastifyInstance) => {
   app.post("/v1/auth/sync", async (request, reply) => {
@@ -60,6 +67,19 @@ export const registerProfileRoutes = (app: FastifyInstance) => {
       return sendError(app, reply, error);
     }
   });
+
+  app.get<{ Params: HandleParams; Querystring: ProfileActivityQuery }>(
+    "/v1/profiles/:handle/activity",
+    async (request, reply) => {
+      try {
+        const actor = await getActorFromRequest(request);
+        const activity = await listProfileActivity(request.params.handle, request.query, actor);
+        return reply.send(activity);
+      } catch (error) {
+        return sendError(app, reply, error);
+      }
+    }
+  );
 
   app.post<{ Params: HandleParams }>("/v1/profiles/:handle/follow", async (request, reply) => {
     try {
