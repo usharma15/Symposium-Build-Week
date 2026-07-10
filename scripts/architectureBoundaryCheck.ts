@@ -53,7 +53,7 @@ const main = async () => {
     }
   }
 
-  assert.deepEqual(symposiumImporters.sort(), ["app/page.tsx"]);
+  assert.deepEqual(symposiumImporters.sort(), ["app/SymposiumPage.tsx"]);
 
   console.log(
     JSON.stringify(

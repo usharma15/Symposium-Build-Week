@@ -67,6 +67,8 @@ The application will progressively replace its private history stack with URLs t
 
 The existing in-world navigation remains the visual shell. URL routing becomes its state authority rather than a competing navigation system.
 
+The first routing checkpoint is live for the community directory, selected communities, profiles, posts, and selected comments. These routes share one server wrapper and one client shell, survive direct reload, and store full view snapshots in browser history so Back and Forward retain the established scroll and comment-stack behavior. Remaining room-level URLs will migrate through the same route contract rather than adding page-specific state systems.
+
 ## Shared content model
 
 Rich content will be introduced through an additive, versioned document contract. Current `title` and `body` fields remain readable during migration. The first supported primitives should correspond to imminent consumers:
