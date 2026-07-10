@@ -116,6 +116,7 @@ import {
   itemMutationIsPending,
   reconcileItemsAgainstMutations
 } from "@/features/live-sync/itemMutationGuard";
+import { selectActiveProfile } from "@/features/identity/selectActiveProfile";
 
 type Theme = "day" | "night";
 type ProfileTab = "all" | "papers" | "thoughts" | "comments" | "reshares" | "likes" | "saved";
@@ -1172,6 +1173,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   const liveEventCursorRef = useRef("");
   const liveRefreshTimerRef = useRef<number | null>(null);
   const itemMutationGuardRef = useRef(createItemMutationGuard());
+  const authenticatedProfileHandleRef = useRef<string | null>(null);
   const [syncedClerkUserId, setSyncedClerkUserId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState(
     "First note: make the thing feel alive without pretending the whole world is built yet."
@@ -1518,7 +1520,13 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     const loadedProfiles = Object.keys(data.profiles).length
       ? data.profiles
       : { [data.defaultProfile.handle]: data.defaultProfile };
-    const nextProfile = loadedProfiles[preferredHandle] ?? loadedProfiles[data.defaultProfile.handle] ?? data.defaultProfile;
+    const nextProfile = selectActiveProfile({
+      profiles: loadedProfiles,
+      defaultProfile: data.defaultProfile,
+      authenticatedHandle: authenticatedProfileHandleRef.current,
+      authenticatedProfile: currentProfileRef.current,
+      preferredHandle
+    });
 
     const normalizedItems = sortByPublishedRecency(normalizeClientSeedTimes(data.items));
     const mutationSafeItems = sortByPublishedRecency(
@@ -2055,6 +2063,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     if (!isSignedIn) {
       setSignedIn(false);
       setSyncedClerkUserId(null);
+      authenticatedProfileHandleRef.current = null;
       window.localStorage.removeItem("symposium-auth-handle");
       window.localStorage.removeItem("symposium-auth-records");
       if (entryMode === "complete") {
@@ -2083,6 +2092,8 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       const data = (await response.json()) as { profile: ResearchProfile };
       if (cancelled) return;
 
+      authenticatedProfileHandleRef.current = data.profile.handle;
+      currentProfileRef.current = data.profile;
       const nextProfiles = { ...profiles, [data.profile.handle]: data.profile };
       setProfiles(nextProfiles);
       setCurrentProfile(data.profile);
