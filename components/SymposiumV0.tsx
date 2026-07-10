@@ -108,6 +108,14 @@ import {
   selectProfileActivitySlots,
   uniqueProfileActivityEntries
 } from "@/lib/profileActivity";
+import {
+  beginItemMutation,
+  captureItemMutationSnapshot,
+  completeItemMutation,
+  createItemMutationGuard,
+  itemMutationIsPending,
+  reconcileItemsAgainstMutations
+} from "@/features/live-sync/itemMutationGuard";
 
 type Theme = "day" | "night";
 type ProfileTab = "all" | "papers" | "thoughts" | "comments" | "reshares" | "likes" | "saved";
@@ -1163,6 +1171,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   const pendingActivityRecencyRef = useRef<Record<string, number>>({});
   const liveEventCursorRef = useRef("");
   const liveRefreshTimerRef = useRef<number | null>(null);
+  const itemMutationGuardRef = useRef(createItemMutationGuard());
   const [syncedClerkUserId, setSyncedClerkUserId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState(
     "First note: make the thing feel alive without pretending the whole world is built yet."
@@ -1498,6 +1507,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
   };
 
   const refreshData = async (preferredHandle = currentProfile.handle) => {
+    const mutationSnapshot = captureItemMutationSnapshot(itemMutationGuardRef.current);
     const response = await fetch("/api/bootstrap", { cache: "no-store" });
     if (!response.ok) throw new Error("Could not load Symposium data.");
     const data = (await response.json()) as {
@@ -1510,10 +1520,16 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       : { [data.defaultProfile.handle]: data.defaultProfile };
     const nextProfile = loadedProfiles[preferredHandle] ?? loadedProfiles[data.defaultProfile.handle] ?? data.defaultProfile;
 
-    const loadedItems = protectItemsFromStaleActionState(
-      sortByPublishedRecency(normalizeClientSeedTimes(data.items)),
-      nextProfile.handle
+    const normalizedItems = sortByPublishedRecency(normalizeClientSeedTimes(data.items));
+    const mutationSafeItems = sortByPublishedRecency(
+      reconcileItemsAgainstMutations(
+        normalizedItems,
+        itemsRef.current,
+        itemMutationGuardRef.current,
+        mutationSnapshot
+      )
     );
+    const loadedItems = protectItemsFromStaleActionState(mutationSafeItems, nextProfile.handle);
     itemsRef.current = loadedItems;
     profilesRef.current = loadedProfiles;
     currentProfileRef.current = nextProfile;
@@ -1555,6 +1571,10 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     const currentItems = itemsRef.current;
     const existingIndex = currentItems.findIndex((item) => item.id === incoming.id);
     const currentItem = existingIndex >= 0 ? currentItems[existingIndex] : undefined;
+    if (currentItem && itemMutationIsPending(itemMutationGuardRef.current, incoming.id)) {
+      scheduleLiveRefresh();
+      return false;
+    }
     const protectedIncoming = protectItemFromStaleActionState(incoming, currentItem, currentProfileRef.current.handle);
     const nextItem = preservePublishedPosition(protectedIncoming, currentItem);
     const nextItems =
@@ -2846,6 +2866,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       return;
     }
 
+    beginItemMutation(itemMutationGuardRef.current, itemId);
     const nextCritiques = incrementMetric(existing.metrics.critiques, 1);
     const optimisticItem: InquiryItem = {
       ...existing,
@@ -2915,6 +2936,8 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       rollbackOptimisticComment(
         parentId ? "Reply could not reach the live service" : "Comment could not reach the live service"
       );
+    } finally {
+      completeItemMutation(itemMutationGuardRef.current, itemId);
     }
   };
 
@@ -3424,6 +3447,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     const previousItems = itemsRef.current;
     const existing = previousItems.find((item) => item.id === itemId);
     if (!existing || isDeletedPost(existing)) return;
+    beginItemMutation(itemMutationGuardRef.current, itemId);
     const editedAt = new Date().toISOString();
     const optimisticItems = previousItems.map((item) =>
       item.id === itemId
@@ -3459,6 +3483,8 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       setItems(previousItems);
       persistLocalSnapshot(previousItems, profilesRef.current);
       setSyncStatus("Post edit could not sync");
+    } finally {
+      completeItemMutation(itemMutationGuardRef.current, itemId);
     }
   };
 
@@ -3467,6 +3493,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     if (!item || isDeletedPost(item) || cleanHandle(item.authorHandle ?? item.author) !== currentProfile.handle) return;
     if (!window.confirm(`Delete "${item.title}"?`)) return;
 
+    beginItemMutation(itemMutationGuardRef.current, itemId);
     const previousItems = itemsRef.current;
     const deleted = tombstonePost(item);
     const nextItems = previousItems.map((current) => (current.id === itemId ? deleted : current));
@@ -3499,6 +3526,8 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       setItems(previousItems);
       persistLocalSnapshot(previousItems, profilesRef.current);
       setSyncStatus("Post delete could not sync");
+    } finally {
+      completeItemMutation(itemMutationGuardRef.current, itemId);
     }
   };
 
@@ -3518,6 +3547,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       return;
     }
 
+    beginItemMutation(itemMutationGuardRef.current, itemId);
     const editedAt = new Date().toISOString();
     const optimisticItems = previousItems.map((item) => {
       if (item.id !== itemId) return item;
@@ -3557,6 +3587,8 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       setItems(previousItems);
       persistLocalSnapshot(previousItems, profilesRef.current);
       setSyncStatus("Comment edit could not sync");
+    } finally {
+      completeItemMutation(itemMutationGuardRef.current, itemId);
     }
   };
 
@@ -3573,6 +3605,7 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
     }
     if (!window.confirm("Delete this comment?")) return;
 
+    beginItemMutation(itemMutationGuardRef.current, itemId);
     const previousItems = itemsRef.current;
     const nextItems = previousItems.map((current) => {
       if (current.id !== itemId) return current;
@@ -3610,6 +3643,8 @@ function SymposiumExperience({ auth }: { auth: SymposiumAuthState }) {
       setItems(previousItems);
       persistLocalSnapshot(previousItems, profilesRef.current);
       setSyncStatus("Comment delete could not sync");
+    } finally {
+      completeItemMutation(itemMutationGuardRef.current, itemId);
     }
   };
 
@@ -6424,6 +6459,9 @@ function CommentNode({
       ref={nodeRef}
       id={comment.id ? `comment-${comment.id}` : undefined}
       className="comment"
+      data-testid={comment.id ? `comment-${comment.id}` : undefined}
+      data-item-id={itemId}
+      data-comment-id={comment.id}
     >
       {leadingAction ? <div className="comment-leading-action">{leadingAction}</div> : null}
       <div className={`comment-card ${highlighted ? "highlighted" : ""}`}>
