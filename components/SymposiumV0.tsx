@@ -105,6 +105,7 @@ import {
   mergeCanonicalActivities,
   reconcileCanonicalActivityRefresh,
   reconcileProfileActivitySlots,
+  selectProfileActivitySlots,
   uniqueProfileActivityEntries
 } from "@/lib/profileActivity";
 
@@ -6899,7 +6900,15 @@ function ProfileView({
     };
   };
 
-  const visibleEntries = visibleSlots.map(resolveSlot).filter((entry): entry is ProfileActivityEntry => Boolean(entry));
+  const renderedVisibleSlots = selectProfileActivitySlots(
+    visibleSlotContextRef.current,
+    visibleSlotContext,
+    visibleSlots,
+    nextVisibleSlots
+  );
+  const visibleEntries = renderedVisibleSlots
+    .map(resolveSlot)
+    .filter((entry): entry is ProfileActivityEntry => Boolean(entry));
 
   return (
     <article className="profile-page">

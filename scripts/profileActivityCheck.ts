@@ -3,6 +3,7 @@ import type { InquiryItem, ResearchProfile } from "@/lib/mockData";
 import {
   itemMatchesProfilePostAction,
   reconcileProfileActivitySlots,
+  selectProfileActivitySlots,
   uniqueProfileActivityEntries
 } from "@/lib/profileActivity";
 
@@ -76,11 +77,31 @@ assert.deepEqual(reconciled, [
   { id: "existing-a", recency: 12 }
 ]);
 
+const allSlots = [
+  { id: "authored", recency: 12 },
+  { id: "comment", recency: 10 }
+];
+const savedSlots = [{ id: "saved", recency: 20 }];
+
+assert.deepEqual(
+  selectProfileActivitySlots("@ada:all:1", "@ada:saved:2", allSlots, savedSlots),
+  savedSlots
+);
+assert.deepEqual(
+  selectProfileActivitySlots("@ada:saved:2", "@ada:saved:2", savedSlots, allSlots),
+  savedSlots
+);
+
 console.log(
   JSON.stringify(
     {
       ok: true,
-      checked: ["self-authored profile actions", "activity deduplication", "live slot reconciliation"]
+      checked: [
+        "self-authored profile actions",
+        "activity deduplication",
+        "live slot reconciliation",
+        "profile tab isolation"
+      ]
     },
     null,
     2

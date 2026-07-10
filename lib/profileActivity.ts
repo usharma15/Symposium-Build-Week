@@ -43,6 +43,13 @@ export const reconcileProfileActivitySlots = <T extends { id: string }>(current:
   return [...added, ...retained];
 };
 
+export const selectProfileActivitySlots = <T extends { id: string }>(
+  currentContext: string,
+  nextContext: string,
+  current: T[],
+  next: T[]
+) => (currentContext === nextContext ? current : next);
+
 export const canonicalActivityKey = (
   activity: Pick<CanonicalActionActivityContract, "subjectType" | "subjectId" | "actorHandle" | "action">
 ) =>
