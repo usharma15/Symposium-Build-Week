@@ -173,10 +173,26 @@ type ViewSnapshot = {
   officeMode: OfficeMode;
   patronageMode: PatronageMode;
   selectedCommunityId: string | null;
+  messagesOpen: boolean;
   commentSegmentStacks: CommentSegmentStacks;
   scrollAnchor: { id: string; top: number; commentSegmentKey?: string; commentSegmentStack?: string[] } | null;
   scrollY: number;
 };
+
+const roomForCanonicalRoute = (route: CanonicalRoute): RoomId => {
+  if (route.kind === "room") return route.roomId;
+  if (route.kind === "workspace") return "office";
+  if (route.kind === "funding") return "funding";
+  if (route.kind === "opportunities") return "opportunities";
+  if (route.kind === "community" || route.kind === "communities") return "communities";
+  return "hall";
+};
+
+const officeModeForCanonicalRoute = (route: CanonicalRoute): OfficeMode =>
+  route.kind === "workspace" ? route.view ?? "desk" : "desk";
+
+const patronageModeForCanonicalRoute = (route: CanonicalRoute): PatronageMode =>
+  route.kind === "funding" ? route.view ?? "lobby" : "lobby";
 
 type LocalSnapshot = {
   profiles: Record<string, ResearchProfile>;
@@ -1131,9 +1147,7 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
   const [theme, setTheme] = useState<Theme>("day");
   const [entryMode, setEntryMode] = useState<EntryMode>("loading");
   const [signedIn, setSignedIn] = useState(false);
-  const [activeRoom, setActiveRoom] = useState<RoomId>(
-    initialRoute.kind === "community" || initialRoute.kind === "communities" ? "communities" : "hall"
-  );
+  const [activeRoom, setActiveRoom] = useState<RoomId>(roomForCanonicalRoute(initialRoute));
   const [items, setItems] = useState<InquiryItem[]>(inquiryItems);
   const [profiles, setProfiles] = useState<Record<string, ResearchProfile>>({});
   const [currentProfile, setCurrentProfile] = useState<ResearchProfile>(profile);
@@ -1141,8 +1155,8 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
   const [profileSocialLists, setProfileSocialLists] = useState<Record<string, ProfileSocialLists>>({});
   const [feedScope, setFeedScope] = useState<FeedScope>("suggested");
   const [roomChip, setRoomChip] = useState(roomChips[0]);
-  const [officeMode, setOfficeMode] = useState<OfficeMode>("desk");
-  const [patronageMode, setPatronageMode] = useState<PatronageMode>("lobby");
+  const [officeMode, setOfficeMode] = useState<OfficeMode>(officeModeForCanonicalRoute(initialRoute));
+  const [patronageMode, setPatronageMode] = useState<PatronageMode>(patronageModeForCanonicalRoute(initialRoute));
   const [selectedItemId, setSelectedItemId] = useState<string | null>(
     initialRoute.kind === "post" ? initialRoute.postId : null
   );
@@ -1160,7 +1174,7 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
   const [composerOpen, setComposerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [messagesOpen, setMessagesOpen] = useState(false);
+  const [messagesOpen, setMessagesOpen] = useState(initialRoute.kind === "messages");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedProfileName, setSelectedProfileName] = useState<string | null>(
     initialRoute.kind === "profile" ? initialRoute.handle : null
@@ -2095,7 +2109,10 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
       if (signedIn) {
         window.sessionStorage.setItem("symposium-entry-complete", "true");
         setEntryMode("complete");
-        setActiveRoom(initialRoute.kind === "community" || initialRoute.kind === "communities" ? "communities" : "hall");
+        setActiveRoom(roomForCanonicalRoute(initialRoute));
+        setOfficeMode(officeModeForCanonicalRoute(initialRoute));
+        setPatronageMode(patronageModeForCanonicalRoute(initialRoute));
+        setMessagesOpen(initialRoute.kind === "messages");
       } else {
         setEntryMode("auth");
       }
@@ -2148,9 +2165,10 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
       setSignedIn(true);
       setSyncedClerkUserId(userId);
       setEntryMode("complete");
-      setActiveRoom(initialRoute.kind === "community" || initialRoute.kind === "communities" ? "communities" : "hall");
-      setOfficeMode("desk");
-      setPatronageMode("lobby");
+      setActiveRoom(roomForCanonicalRoute(initialRoute));
+      setOfficeMode(officeModeForCanonicalRoute(initialRoute));
+      setPatronageMode(patronageModeForCanonicalRoute(initialRoute));
+      setMessagesOpen(initialRoute.kind === "messages");
       setSelectedCommunityId(initialRoute.kind === "community" ? initialRoute.communityId : null);
       setSelectedItemId(initialRoute.kind === "post" ? initialRoute.postId : null);
       setSelectedCommentId(initialRoute.kind === "post" ? initialRoute.commentId ?? null : null);
@@ -2512,11 +2530,12 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
     return {
       activeRoom,
       selectedItemId,
-      selectedCommentId: null,
+      selectedCommentId,
       selectedProfileName,
       officeMode,
       patronageMode,
       selectedCommunityId,
+      messagesOpen,
       commentSegmentStacks: cloneCommentSegmentStacks({
         ...commentSegmentStacksRef.current,
         ...visibleCommentSegmentStacksRef.current,
@@ -2566,11 +2585,12 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
     setComposerOpen(false);
     setSettingsOpen(false);
     setSearchOpen(false);
-    setMessagesOpen(false);
+    setMessagesOpen(snapshot.messagesOpen);
     restoreScrollPosition(snapshot);
   };
 
   const canonicalRouteForView = (snapshot: ViewSnapshot): CanonicalRoute => {
+    if (snapshot.messagesOpen) return { kind: "messages" };
     if (snapshot.selectedItemId) {
       return {
         kind: "post",
@@ -2585,17 +2605,32 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
       return { kind: "community", communityId: snapshot.selectedCommunityId };
     }
     if (snapshot.activeRoom === "communities") return { kind: "communities" };
+    if (snapshot.activeRoom === "office") {
+      return { kind: "workspace", view: snapshot.officeMode === "desk" ? undefined : snapshot.officeMode };
+    }
+    if (snapshot.activeRoom === "funding") {
+      return { kind: "funding", view: snapshot.patronageMode === "lobby" ? undefined : snapshot.patronageMode };
+    }
+    if (snapshot.activeRoom === "opportunities") return { kind: "opportunities" };
+    if (
+      snapshot.activeRoom === "symposium" ||
+      snapshot.activeRoom === "library" ||
+      snapshot.activeRoom === "amphitheater"
+    ) {
+      return { kind: "room", roomId: snapshot.activeRoom };
+    }
     return { kind: "hall" };
   };
 
   const snapshotForCanonicalRoute = (route: CanonicalRoute): ViewSnapshot => ({
-    activeRoom: route.kind === "community" || route.kind === "communities" ? "communities" : "hall",
+    activeRoom: roomForCanonicalRoute(route),
     selectedItemId: route.kind === "post" ? route.postId : null,
     selectedCommentId: route.kind === "post" ? route.commentId ?? null : null,
     selectedProfileName: route.kind === "profile" ? route.handle : null,
-    officeMode: "desk",
-    patronageMode: "lobby",
+    officeMode: officeModeForCanonicalRoute(route),
+    patronageMode: patronageModeForCanonicalRoute(route),
     selectedCommunityId: route.kind === "community" ? route.communityId : null,
+    messagesOpen: route.kind === "messages",
     commentSegmentStacks: {},
     scrollAnchor: null,
     scrollY: 0
@@ -2638,6 +2673,7 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
       ...currentSnapshot,
       ...next,
       selectedCommentId: next.selectedCommentId ?? (next.selectedItemId !== undefined ? null : currentSnapshot.selectedCommentId),
+      messagesOpen: next.messagesOpen ?? false,
       scrollAnchor: null,
       scrollY: scrollY ?? currentSnapshot.scrollY
     };
@@ -2662,7 +2698,7 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
     setComposerOpen(false);
     setSettingsOpen(false);
     setSearchOpen(false);
-    setMessagesOpen(false);
+    setMessagesOpen(next.messagesOpen ?? false);
     if (scrollY !== null) {
       window.setTimeout(() => window.scrollTo({ top: scrollY, behavior: "auto" }), 0);
     }
@@ -3111,9 +3147,10 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
     setSignedIn(true);
     setAuthError("");
     setEntryMode("complete");
-    setActiveRoom(initialRoute.kind === "community" || initialRoute.kind === "communities" ? "communities" : "hall");
-    setOfficeMode("desk");
-    setPatronageMode("lobby");
+    setActiveRoom(roomForCanonicalRoute(initialRoute));
+    setOfficeMode(officeModeForCanonicalRoute(initialRoute));
+    setPatronageMode(patronageModeForCanonicalRoute(initialRoute));
+    setMessagesOpen(initialRoute.kind === "messages");
     setSelectedCommunityId(initialRoute.kind === "community" ? initialRoute.communityId : null);
     setSelectedItemId(initialRoute.kind === "post" ? initialRoute.postId : null);
     setSelectedCommentId(initialRoute.kind === "post" ? initialRoute.commentId ?? null : null);
@@ -3913,12 +3950,7 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
             type="button"
             title="Messages"
             onClick={() => {
-              setNotebookOpen(false);
-              setTabletOpen(false);
-              setComposerOpen(false);
-              setSettingsOpen(false);
-              setSearchOpen(false);
-              setMessagesOpen(true);
+              navigateView({ messagesOpen: true });
             }}
           >
             <MessageCircle size={18} />
@@ -4121,7 +4153,7 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
         />
       ) : null}
 
-      {messagesOpen ? <MessagesModal onClose={() => setMessagesOpen(false)} /> : null}
+      {messagesOpen ? <MessagesModal onClose={() => (viewHistory.length ? goBack() : enterRoom("hall"))} /> : null}
 
       {composerOpen ? (
         <PostComposerModal
