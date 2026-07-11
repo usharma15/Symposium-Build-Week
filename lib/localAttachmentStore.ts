@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { validateAttachmentContentSignature } from "@/lib/attachmentRules";
+import { attachmentKindForContentType, validateAttachmentContentSignature } from "@/lib/attachmentRules";
+import type { InquiryAttachment } from "@/lib/mockData";
 
 type LocalAttachmentOwnerType = "post" | "message" | "note" | "profile";
 type LocalAttachmentStatus = "pending" | "uploaded";
@@ -207,4 +208,33 @@ export const readLocalAttachment = async (attachmentId: string) => {
     record,
     bytes: await readFile(recordFilePath(record))
   };
+};
+
+export const resolveLocalPostAttachments = async (attachmentIds: string[], actorHandle?: string) => {
+  const store = await loadStore();
+  return attachmentIds.map((attachmentId): InquiryAttachment => {
+    const record = store.attachments[attachmentId];
+    if (
+      !record ||
+      record.ownerType !== "post" ||
+      record.status !== "uploaded" ||
+      (record.actorHandle && actorHandle && record.actorHandle !== actorHandle)
+    ) {
+      throw new LocalAttachmentStoreError(
+        "One or more attachments are not confirmed, no longer available, or already belong to another post.",
+        400
+      );
+    }
+    return {
+      id: record.attachmentId,
+      fileName: record.fileName,
+      contentType: record.contentType,
+      byteSize: record.byteSize,
+      url: localAttachmentPublicPath(record),
+      status: "uploaded",
+      kind: attachmentKindForContentType(record.contentType),
+      metadata: record.metadata,
+      createdAt: record.createdAt
+    };
+  });
 };

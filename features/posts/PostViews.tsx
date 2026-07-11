@@ -75,6 +75,8 @@ export type PostDraft = {
   attachments: InquiryAttachment[];
 };
 
+export type PostCreationResult = { ok: true } | { ok: false; error: string };
+
 export const commentsSectionTargetId = "__symposium-comments-section__";
 export const kindLabels: Record<InquiryItem["kind"], string> = {
   paper: "Paper",
@@ -93,7 +95,7 @@ export function PostComposerModal({
   onUploadAttachment
 }: {
   onClose: () => void;
-  onCreatePost: (draft: PostDraft) => Promise<boolean>;
+  onCreatePost: (draft: PostDraft) => Promise<PostCreationResult>;
   onUploadAttachment: (file: File) => Promise<InquiryAttachment>;
 }) {
   const [kind, setKind] = useState<PostDraft["kind"]>("thought");
@@ -102,15 +104,22 @@ export function PostComposerModal({
   const [attachments, setAttachments] = useState<InquiryAttachment[]>([]);
   const [attachmentStatus, setAttachmentStatus] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   const submitPost = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const cleanTitle = title.trim();
     const cleanBody = body.trim();
-    if (!cleanTitle || !cleanBody || uploading) return;
+    if (!cleanTitle || !cleanBody || uploading || submitting) return;
 
-    const saved = await onCreatePost({ title: cleanTitle, body: cleanBody, kind, attachments });
-    if (!saved) return;
+    setSubmitting(true);
+    setAttachmentStatus(attachments.length ? "Publishing post with attachments" : "Publishing post");
+    const result = await onCreatePost({ title: cleanTitle, body: cleanBody, kind, attachments });
+    setSubmitting(false);
+    if (!result.ok) {
+      setAttachmentStatus(result.error);
+      return;
+    }
     setTitle("");
     setBody("");
     setKind("thought");
@@ -166,7 +175,7 @@ export function PostComposerModal({
               </option>
             ))}
           </select>
-          <button type="submit" disabled={uploading}>Post</button>
+          <button type="submit" disabled={uploading || submitting}>{submitting ? "Posting…" : "Post"}</button>
         </div>
         <input
           value={title}
@@ -186,7 +195,7 @@ export function PostComposerModal({
               type="file"
               multiple
               accept={postAttachmentAccept}
-              disabled={uploading || attachments.length >= maxPostAttachments}
+              disabled={uploading || submitting || attachments.length >= maxPostAttachments}
               onChange={uploadFiles}
             />
           </label>
@@ -201,7 +210,7 @@ export function PostComposerModal({
                   <button
                     type="button"
                     title="Remove attachment"
-                    disabled={uploading}
+                    disabled={uploading || submitting}
                     onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}
                   >
                     <X size={14} />

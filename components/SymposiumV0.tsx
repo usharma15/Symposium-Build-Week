@@ -33,11 +33,6 @@ import type {
   ToggleActionContract
 } from "@/packages/contracts/src";
 import {
-  attachmentKindForContentType,
-  inferAttachmentContentType,
-  validatePostAttachmentDetails
-} from "@/lib/attachmentRules";
-import {
   appendCommentToTree,
   cleanHandle,
   commentActionActive,
@@ -96,6 +91,13 @@ import {
   type AttachmentPreviewHandler
 } from "@/features/attachments/AttachmentViews";
 import {
+  confirmAttachmentUpload,
+  prepareAttachmentUpload,
+  uploadConfirmedPostAttachment,
+  type AttachmentConfirmResponse,
+  type AttachmentUploadResponse
+} from "@/features/attachments/attachmentUploadClient";
+import {
   EntrySequence,
   HallView,
   OfficeDeskView,
@@ -145,6 +147,7 @@ import { MessagesModal } from "@/features/messages/MessagesModal";
 import { RoomView } from "@/features/rooms/RoomView";
 import { CanonicalLink } from "@/features/navigation/CanonicalLink";
 import { useCanonicalBrowserHistory } from "@/features/navigation/useCanonicalBrowserHistory";
+import { useBrowserPresenceEntrance } from "@/features/entrance/useBrowserPresenceEntrance";
 
 type Theme = "day" | "night";
 type EntryMode = "loading" | "approach" | "auth" | "complete";
@@ -168,18 +171,6 @@ type ProfileFollowRecord = {
 type ProfileFollowResponse = {
   following?: ProfileFollowRecord[];
   followers?: ProfileFollowRecord[];
-};
-
-type AttachmentUploadResponse = {
-  attachmentId?: string;
-  uploadUrl?: string;
-  publicUrl?: string | null;
-};
-
-type AttachmentConfirmResponse = {
-  attachmentId?: string;
-  publicUrl?: string | null;
-  status?: string;
 };
 
 type AttachmentPreviewTarget = {
@@ -493,6 +484,7 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
   const [theme, setTheme] = useState<Theme>("day");
   const [entryMode, setEntryMode] = useState<EntryMode>("loading");
   const [signedIn, setSignedIn] = useState(false);
+  const shouldPlayEntrance = useBrowserPresenceEntrance();
   const [activeRoom, setActiveRoom] = useState<RoomId>(roomForCanonicalRoute(initialRoute));
   const { items, itemsRef, replaceItems } = useInquiryEntityStore(inquiryItems);
   const [profiles, setProfiles] = useState<Record<string, ResearchProfile>>({});
@@ -1144,6 +1136,7 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
   }, [entryMode]);
 
   useEffect(() => {
+    if (shouldPlayEntrance === null) return;
     const storedTheme = window.localStorage.getItem("symposium-theme") as Theme | null;
     const storedNote = window.localStorage.getItem("symposium-notebook");
     const storedProfileHandle = window.localStorage.getItem("symposium-profile-handle");
@@ -1176,7 +1169,7 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
       setCurrentProfile(fallbackProfile);
       setSyncStatus("Using seed data");
     });
-  }, []);
+  }, [shouldPlayEntrance]);
 
   useEffect(() => {
     if (!signedIn || !currentProfile.handle) return;
@@ -1224,10 +1217,10 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
       } else {
         setEntryMode("auth");
       }
-    }, 5000);
+    }, shouldPlayEntrance ? 5000 : 0);
 
     return () => window.clearTimeout(timer);
-  }, [authLoaded, entryMode, isSignedIn, signedIn]);
+  }, [authLoaded, entryMode, isSignedIn, shouldPlayEntrance, signedIn]);
 
   useEffect(() => {
     if (!clerkEnabled) return;
@@ -1883,116 +1876,15 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
   const routePostRoom = (kind: PostDraft["kind"]): Exclude<RoomId, "hall" | "office"> =>
     kind === "paper" ? "library" : "amphitheater";
 
-  const prepareAttachmentUploadRequest = async (payload: Record<string, unknown>) => {
-    const idempotencyKey = clientMutationId("attachment-prepare");
-    let lastResponse: Response | undefined;
-    let lastError: unknown;
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      try {
-        const response = await fetch("/api/attachments/upload", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Idempotency-Key": idempotencyKey
-          },
-          body: JSON.stringify(payload)
-        });
-        lastResponse = response;
-        if (response.ok || response.status < 500) return response;
-      } catch (error) {
-        lastError = error;
-      }
-    }
-    if (lastResponse) return lastResponse;
-    throw lastError instanceof Error ? lastError : new Error("Could not reach attachment storage.");
-  };
-
-  const confirmAttachmentUploadRequest = async (payload: Record<string, unknown>) => {
-    let lastResponse: Response | undefined;
-    let lastError: unknown;
-    for (let attempt = 0; attempt < 6; attempt += 1) {
-      try {
-        const response = await fetch("/api/attachments/confirm", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-        lastResponse = response;
-        if (response.status === 409 && attempt < 5) {
-          const detail = (await response.clone().json().catch(() => null)) as { error?: string } | null;
-          if (detail?.error?.includes("already being verified")) {
-            await new Promise((resolve) => window.setTimeout(resolve, 300 * (attempt + 1)));
-            continue;
-          }
-        }
-        if (response.ok || response.status < 500) return response;
-      } catch (error) {
-        lastError = error;
-      }
-      if (attempt < 5) await new Promise((resolve) => window.setTimeout(resolve, 200 * (attempt + 1)));
-    }
-    if (lastResponse) return lastResponse;
-    throw lastError instanceof Error ? lastError : new Error("Could not confirm the attachment.");
-  };
-
   const uploadPostAttachment = async (file: File): Promise<InquiryAttachment> => {
-    const contentType = inferAttachmentContentType(file.name, file.type);
-    const validationError = validatePostAttachmentDetails(file.name, contentType, file.size);
-    if (validationError) throw new Error(validationError);
-
+    const contentType = file.type || "application/octet-stream";
     const metadata = await buildPostAttachmentMetadata(file, contentType);
-    const uploadResponse = await prepareAttachmentUploadRequest({
-        actorHandle: currentProfile.handle,
-        fileName: file.name,
-        contentType,
-        byteSize: file.size,
-        ownerType: "post"
+    return uploadConfirmedPostAttachment({
+      actorHandle: currentProfile.handle,
+      file,
+      idempotencyKey: clientMutationId("attachment-prepare"),
+      metadata
     });
-
-    if (!uploadResponse.ok) {
-      const error = (await uploadResponse.json().catch(() => null)) as { error?: string } | null;
-      throw new Error(error?.error ?? "Could not prepare this attachment upload.");
-    }
-
-    const upload = (await uploadResponse.json()) as AttachmentUploadResponse;
-    if (!upload.uploadUrl || !upload.attachmentId || !upload.publicUrl) {
-      throw new Error("Could not prepare this attachment upload.");
-    }
-
-    const putResponse = await fetch(upload.uploadUrl, {
-      method: "PUT",
-      headers: { "Content-Type": contentType },
-      body: file
-    });
-    if (!putResponse.ok) {
-      throw new Error("Could not upload this attachment.");
-    }
-
-    const confirmResponse = await confirmAttachmentUploadRequest({
-        actorHandle: currentProfile.handle,
-        attachmentId: upload.attachmentId,
-        byteSize: file.size,
-        metadata
-    });
-    if (!confirmResponse.ok) {
-      const error = (await confirmResponse.json().catch(() => null)) as { error?: string } | null;
-      throw new Error(error?.error ?? "Could not confirm this attachment.");
-    }
-    const confirmed = (await confirmResponse.json()) as AttachmentConfirmResponse;
-    const publicUrl = confirmed.publicUrl ?? upload.publicUrl;
-    if (!publicUrl) throw new Error("The confirmed attachment does not have a persistent public URL.");
-
-    return {
-      id: upload.attachmentId,
-      fileName: file.name,
-      contentType,
-      byteSize: file.size,
-      url: publicUrl,
-      status: "uploaded",
-      kind: attachmentKindForContentType(contentType),
-      metadata,
-      createdAt: new Date().toISOString()
-    };
   };
 
   const retryMutationKey = (scope: string, fingerprint: string) => {
@@ -2011,7 +1903,14 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
   const createPost = async ({ title, body, kind, attachments }: PostDraft) => {
     const routedRoom = routePostRoom(kind);
     const createdAt = new Date().toISOString();
-    const postPayload = { title, body, kind, room: routedRoom, authorHandle: currentProfile.handle, attachments };
+    const postPayload = {
+      title,
+      body,
+      kind,
+      room: routedRoom,
+      authorHandle: currentProfile.handle,
+      attachmentIds: attachments.map((attachment) => attachment.id)
+    };
     const mutation = retryMutationKey("post-create", JSON.stringify(postPayload));
     setSyncStatus("Posting");
     let response: Response;
@@ -2026,14 +1925,14 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
       });
     } catch {
       setSyncStatus("Post could not reach the live service");
-      return false;
+      return { ok: false as const, error: "Post could not reach the live service" };
     }
 
     if (!response.ok) {
       const error = (await response.json().catch(() => null)) as { error?: string } | null;
       if (response.status < 500 && response.status !== 409) clearRetryMutationKey(mutation.fingerprintKey);
       setSyncStatus(error?.error ?? "Post could not be saved");
-      return false;
+      return { ok: false as const, error: error?.error ?? "Post could not be saved" };
     }
 
     const data = (await response.json()) as { item: InquiryItem };
@@ -2052,7 +1951,7 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
     });
     setComposerOpen(false);
     setSyncStatus("Post saved");
-    return true;
+    return { ok: true as const };
   };
 
   const addComment = async (itemId: string, body: string, stance: string, parentId?: string | null) => {
@@ -2215,14 +2114,14 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
     }
 
     setSyncStatus("Preparing profile photo");
-    const uploadResponse = await prepareAttachmentUploadRequest({
+    const uploadResponse = await prepareAttachmentUpload({
         actorHandle: currentProfile.handle,
         fileName: file.name,
         contentType: file.type,
         byteSize: file.size,
         ownerType: "profile",
         ownerId: currentProfile.handle
-    });
+    }, clientMutationId("attachment-prepare"));
 
     if (!uploadResponse.ok) {
       const error = (await uploadResponse.json().catch(() => null)) as { error?: string } | null;
@@ -2254,7 +2153,7 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
       throw new Error("Could not upload the profile photo.");
     }
 
-    const confirmResponse = await confirmAttachmentUploadRequest({
+    const confirmResponse = await confirmAttachmentUpload({
         actorHandle: currentProfile.handle,
         attachmentId: upload.attachmentId,
         byteSize: file.size

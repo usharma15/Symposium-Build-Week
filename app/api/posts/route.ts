@@ -3,6 +3,7 @@ import type { ContentKind, RoomId } from "@/lib/mockData";
 import { jsonError, readJson } from "@/lib/api";
 import { proxyLiveBackend } from "@/lib/liveBackendClient";
 import { contentKinds, postRooms } from "@/lib/symposiumCore";
+import { LocalAttachmentStoreError, resolveLocalPostAttachments } from "@/lib/localAttachmentStore";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,7 +18,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   const idempotencyKey = request.headers.get("Idempotency-Key") ?? undefined;
-  const body = await readJson<Partial<CreatePostInput> & { authorHandle?: string }>(request);
+  const body = await readJson<Partial<CreatePostInput> & { attachmentIds?: unknown[]; authorHandle?: string }>(request);
 
   if (!body) {
     return jsonError("Invalid JSON body.", 400);
@@ -25,6 +26,11 @@ export async function POST(request: Request) {
 
   const kind = String(body.kind ?? "");
   const room = String(body.room ?? "");
+  const attachmentIds = Array.isArray(body.attachmentIds)
+    ? body.attachmentIds.map((attachmentId) => String(attachmentId))
+    : Array.isArray(body.attachments)
+      ? body.attachments.map((attachment) => String(attachment.id))
+      : [];
   const input: CreatePostInput = {
     title: String(body.title ?? "").trim(),
     body: String(body.body ?? "").trim(),
@@ -41,12 +47,27 @@ export async function POST(request: Request) {
 
   const live = await proxyLiveBackend("/v1/posts", {
     method: "POST",
-    body: { ...input, authorHandle: body.authorHandle },
+    body: {
+      title: input.title,
+      body: input.body,
+      kind: input.kind,
+      room: input.room,
+      authorHandle: body.authorHandle,
+      attachmentIds
+    },
     actorHandle: body.authorHandle ? String(body.authorHandle) : undefined,
     idempotencyKey
   });
   if (live) return live;
 
-  const item = await createPost(input, String(body.authorHandle ?? ""));
-  return Response.json({ item });
+  try {
+    const localAttachments = attachmentIds.length
+      ? await resolveLocalPostAttachments(attachmentIds, String(body.authorHandle ?? ""))
+      : [];
+    const item = await createPost({ ...input, attachments: localAttachments }, String(body.authorHandle ?? ""));
+    return Response.json({ item });
+  } catch (error) {
+    if (error instanceof LocalAttachmentStoreError) return jsonError(error.message, error.status);
+    throw error;
+  }
 }
