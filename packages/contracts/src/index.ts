@@ -204,6 +204,7 @@ export type InquiryCommentContract = {
   savedBy?: string[];
   signaledBy?: string[];
   forkedBy?: string[];
+  attachments?: InquiryAttachmentContract[];
   replies?: InquiryCommentContract[];
 };
 
@@ -223,6 +224,7 @@ export const inquiryCommentSchema: z.ZodType<InquiryCommentContract> = z.lazy(()
     savedBy: z.array(z.string()).optional(),
     signaledBy: z.array(z.string()).optional(),
     forkedBy: z.array(z.string()).optional(),
+    attachments: z.array(inquiryAttachmentSchema).max(10).optional(),
     replies: z.array(inquiryCommentSchema).optional()
   })
 );
@@ -311,19 +313,40 @@ export const createPostInputSchema = z.object({
 export const updatePostInputSchema = z.object({
   title: z.string().trim().min(1).max(240),
   body: z.string().trim().min(1).max(20000),
+  expectedEditedAt: z.string().datetime().nullable().optional(),
+  attachmentIds: z.array(postAttachmentIdSchema).max(10).optional(),
   actorHandle: z.string().optional()
+}).superRefine((input, context) => {
+  if (input.attachmentIds !== undefined && input.expectedEditedAt === undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["expectedEditedAt"],
+      message: "Editing post attachments requires the content version that was loaded."
+    });
+  }
 });
 
 export const createCommentInputSchema = z.object({
   body: z.string().trim().min(1).max(8000),
   stance: z.string().trim().min(1).default("Comment"),
   parentId: z.string().nullable().optional(),
+  attachmentIds: z.array(postAttachmentIdSchema).max(10).optional(),
   authorHandle: z.string().optional()
 });
 
 export const updateCommentInputSchema = z.object({
   body: z.string().trim().min(1).max(8000),
+  expectedEditedAt: z.string().datetime().nullable().optional(),
+  attachmentIds: z.array(postAttachmentIdSchema).max(10).optional(),
   actorHandle: z.string().optional()
+}).superRefine((input, context) => {
+  if (input.attachmentIds !== undefined && input.expectedEditedAt === undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["expectedEditedAt"],
+      message: "Editing comment attachments requires the content version that was loaded."
+    });
+  }
 });
 
 export const postActionInputSchema = z.object({
@@ -399,7 +422,7 @@ export const createAttachmentUploadInputSchema = z.object({
   fileName: z.string().min(1).max(255),
   contentType: z.string().min(1).max(160),
   byteSize: z.number().int().positive().max(50 * 1024 * 1024),
-  ownerType: z.enum(["post", "message", "note", "profile"]),
+  ownerType: z.enum(["post", "comment", "message", "note", "profile"]),
   ownerId: z.string().trim().min(1).max(200).optional()
 });
 

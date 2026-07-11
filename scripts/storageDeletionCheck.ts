@@ -40,8 +40,9 @@ const main = async () => {
   assert.match(queries[1].text, /'storageState', 'deletion_pending'/);
 
   const root = process.cwd();
-  const [postSource, attachmentSource, identitySource, maintenanceSource, migrationSource] = await Promise.all([
+  const [postSource, commentSource, attachmentSource, identitySource, maintenanceSource, migrationSource] = await Promise.all([
     readFile(path.join(root, "apps/api/src/repository/posts.ts"), "utf8"),
+    readFile(path.join(root, "apps/api/src/repository/comments.ts"), "utf8"),
     readFile(path.join(root, "apps/api/src/repository/attachments.ts"), "utf8"),
     readFile(path.join(root, "apps/api/src/repository/identity.ts"), "utf8"),
     readFile(path.join(root, "apps/api/src/services/maintenance.ts"), "utf8"),
@@ -49,6 +50,8 @@ const main = async () => {
   ]);
 
   assert.match(postSource, /queueAttachmentsForOwnerStorageDeletion[\s\S]*"post_deleted"/);
+  assert.match(postSource, /"comment",[\s\S]*commentIds,[\s\S]*"post_deleted"/);
+  assert.match(commentSource, /"comment",[\s\S]*commentId,[\s\S]*"comment_deleted"/);
   assert.match(postSource, /publishStoredEvent[\s\S]*triggerStorageDeletion/);
   assert.match(attachmentSource, /queueStagingObjectDeletion\(client, \[attachment\]\)/);
   assert.match(attachmentSource, /pg_advisory_xact_lock/);
@@ -58,6 +61,7 @@ const main = async () => {
   assert.match(attachmentSource, /"verification_failed"/);
   assert.match(identitySource, /queueUnreferencedProfileStorageDeletion/);
   assert.match(maintenanceSource, /failed_or_abandoned_upload/);
+  assert.match(maintenanceSource, /owner_type IN \('post', 'comment'\)/);
   assert.match(maintenanceSource, /profile_attachment_replaced/);
   assert.match(maintenanceSource, /storageDeletionIntervalMs = 60 \* 1000/);
   assert.match(migrationSource, /0015_durable_r2_deletion/);
@@ -73,6 +77,8 @@ const main = async () => {
           "race-safe global upload cost ceilings",
           "atomic attachment unavailability and deletion enqueue",
           "post tombstone storage cleanup",
+          "comment and reply tombstone storage cleanup",
+          "ownerless comment upload cleanup",
           "failed and abandoned upload cleanup",
           "legacy promoted staging-object cleanup",
           "replaced profile image cleanup",

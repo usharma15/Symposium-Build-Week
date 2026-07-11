@@ -347,6 +347,7 @@ export const tombstoneComment = (
   savedBy: [],
   signaledBy: [],
   forkedBy: [],
+  attachments: [],
   replies: comment.replies ?? []
 });
 

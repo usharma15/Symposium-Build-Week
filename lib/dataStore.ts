@@ -73,9 +73,11 @@ export type CreatePostInput = {
 };
 
 export type CreateCommentInput = {
+  id?: string;
   body: string;
   stance: string;
   parentId?: string | null;
+  attachments?: InquiryAttachment[];
 };
 
 export type { PostAction };
@@ -89,10 +91,12 @@ export type ActionMutationResult = {
 export type UpdatePostInput = {
   title: string;
   body: string;
+  attachments?: InquiryAttachment[];
 };
 
 export type UpdateCommentInput = {
   body: string;
+  attachments?: InquiryAttachment[];
 };
 
 const viewDedupeWindowMs = 60 * 60 * 1000;
@@ -1117,10 +1121,11 @@ export const addComment = async (itemId: string, input: CreateCommentInput, auth
   const existing = data.items.find((item) => item.id === itemId);
   if (!existing || isDeletedPost(existing)) return null;
   if (input.parentId && !findCommentInTree(existing.comments, input.parentId)) return null;
+  if (input.attachments?.length && (existing.room === "office" || existing.kind === "draft")) return null;
 
   const author = data.profiles[authorHandle] ?? defaultProfile;
   const comment: InquiryComment = {
-    id: newId("comment"),
+    id: input.id ?? newId("comment"),
     revision: 1,
     parentId: input.parentId ?? null,
     author: author.name,
@@ -1132,6 +1137,7 @@ export const addComment = async (itemId: string, input: CreateCommentInput, auth
     savedBy: [],
     signaledBy: [],
     forkedBy: [],
+    attachments: input.attachments,
     replies: []
   };
   const nextCritiques = incrementMetric(existing.metrics.critiques, 1);
@@ -1353,13 +1359,15 @@ const updatePostShape = (item: InquiryItem, input: UpdatePostInput, editedAt = n
   body: input.body.trim(),
   excerpt: input.body.trim(),
   claims: [input.body.trim()],
+  attachments: input.attachments ?? item.attachments,
   editedAt
 });
 
 export const updatePost = async (itemId: string, input: UpdatePostInput, actorHandle = defaultProfile.handle) => {
   const cleanInput = {
     title: input.title.trim(),
-    body: input.body.trim()
+    body: input.body.trim(),
+    attachments: input.attachments
   };
   if (!cleanInput.title || !cleanInput.body) return null;
 
@@ -1367,6 +1375,7 @@ export const updatePost = async (itemId: string, input: UpdatePostInput, actorHa
     const data = await getSnapshot();
     const existing = data.items.find((item) => item.id === itemId);
     if (!existing || isDeletedPost(existing) || !canManagePost(existing, actorHandle)) return null;
+    if (input.attachments?.length && (existing.room === "office" || existing.kind === "draft")) return null;
 
     const updated = updatePostShape(existing, cleanInput);
     await getPool().query(
@@ -1386,6 +1395,7 @@ export const updatePost = async (itemId: string, input: UpdatePostInput, actorHa
   let updated: InquiryItem | null = null;
   local.items = local.items.map((item) => {
     if (item.id !== itemId || isDeletedPost(item) || !canManagePost(item, actorHandle)) return item;
+    if (input.attachments?.length && (item.room === "office" || item.kind === "draft")) return item;
     updated = updatePostShape(item, cleanInput);
     return updated;
   });
@@ -1471,6 +1481,7 @@ const updateCommentShape = (
   ...comment,
   revision: (comment.revision ?? 1) + 1,
   body: input.body.trim(),
+  attachments: input.attachments ?? comment.attachments,
   editedAt
 });
 
@@ -1480,13 +1491,14 @@ export const updateComment = async (
   input: UpdateCommentInput,
   actorHandle = defaultProfile.handle
 ) => {
-  const cleanInput = { body: input.body.trim() };
+  const cleanInput = { body: input.body.trim(), attachments: input.attachments };
   if (!cleanInput.body) return null;
 
   if (usePostgres) {
     const data = await getSnapshot();
     const existing = data.items.find((item) => item.id === itemId);
     if (!existing) return null;
+    if (input.attachments?.length && (existing.room === "office" || existing.kind === "draft")) return null;
     const mapped = mapCommentTree(existing.comments, commentId, (comment) => {
       if (isDeletedComment(comment) || !canManageComment(comment, actorHandle)) return comment;
       return updateCommentShape(comment, cleanInput);
@@ -1510,6 +1522,7 @@ export const updateComment = async (
   let updated: InquiryItem | null = null;
   local.items = local.items.map((item) => {
     if (item.id !== itemId) return item;
+    if (input.attachments?.length && (item.room === "office" || item.kind === "draft")) return item;
     const mapped = mapCommentTree(item.comments, commentId, (comment) => {
       if (isDeletedComment(comment) || !canManageComment(comment, actorHandle)) return comment;
       return updateCommentShape(comment, cleanInput);

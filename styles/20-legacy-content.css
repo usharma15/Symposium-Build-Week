@@ -196,6 +196,19 @@
   gap: 8px;
 }
 
+.composer-attachment-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.composer-attachment-toolbar > small,
+.composer-submit-status {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
 .attachment-picker {
   display: inline-flex;
   align-items: center;
@@ -214,11 +227,6 @@
 
 .attachment-picker input {
   display: none;
-}
-
-.composer-attachments > small {
-  color: var(--muted);
-  font-size: 0.78rem;
 }
 
 .composer-attachment-list {

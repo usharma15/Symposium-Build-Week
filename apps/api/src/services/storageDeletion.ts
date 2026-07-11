@@ -132,9 +132,11 @@ export const queueStagingObjectDeletion = async (
 export const queueAttachmentsForOwnerStorageDeletion = async (
   client: PoolClient,
   ownerType: string,
-  ownerId: string,
+  ownerId: string | string[],
   reason: string
 ) => {
+  const ownerIds = Array.isArray(ownerId) ? ownerId : [ownerId];
+  if (!ownerIds.length) return [];
   const result = await client.query<AttachmentStorageRow>(
     `SELECT
        id::text AS "attachmentId",
@@ -143,10 +145,10 @@ export const queueAttachmentsForOwnerStorageDeletion = async (
        upload_object_key AS "uploadObjectKey"
      FROM attachments
      WHERE owner_type = $1
-       AND owner_id = $2
+       AND owner_id = ANY($2::text[])
        AND COALESCE(metadata->>'storageState', '') <> 'deleted'
      FOR UPDATE`,
-    [ownerType, ownerId]
+    [ownerType, ownerIds]
   );
   return queueAttachmentRowsForStorageDeletion(client, result.rows, reason);
 };

@@ -164,7 +164,7 @@ export const createAttachmentUpload = async (
   };
   const handle = actorHandle(actor);
 
-  if (input.ownerType !== "post" && input.ownerType !== "profile") {
+  if (input.ownerType !== "post" && input.ownerType !== "comment" && input.ownerType !== "profile") {
     throw new TRPCError({
       code: "PRECONDITION_FAILED",
       message: "Private attachment delivery must be enabled before message or note uploads can be accepted."
@@ -191,7 +191,10 @@ export const createAttachmentUpload = async (
     }
   } else {
     if (input.ownerId) {
-      throw new TRPCError({ code: "BAD_REQUEST", message: "A post attachment is assigned when its post is created." });
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: `A ${input.ownerType} attachment is assigned when its ${input.ownerType} is saved.`
+      });
     }
     const validationError = validatePostAttachmentDetails(input.fileName, input.contentType, input.byteSize);
     if (validationError) {

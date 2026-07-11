@@ -87,6 +87,8 @@ Posts, comments, notes, drafts, and messages receive capability policies over th
 
 Attachments remain independent staged resources. Binding them to posts, comments, notes, drafts, or messages is an atomic owner transition performed inside the owning domain mutation. Editing uses a declared retained/added/removed set so detached objects can be expired safely.
 
+Post, comment, and reply attachments now use the shared owner-neutral claim service. Post and comment edits submit the complete desired attachment identity set under a content-version precondition; retained objects stay ordered, new staged objects are claimed in the owning transaction, and removed objects become unavailable and enter the durable deletion queue before commit. Comments under private Office/draft posts fail closed until protected attachment delivery is available.
+
 ## Client reconciliation
 
 Inbound state has three classes:
@@ -133,7 +135,7 @@ Backend persistence is split into bounded repositories for posts, comments, iden
 2. Canonical URL routing and shell/navigation separation. Complete for current surfaces.
 3. Shared normalized entity store and live-sync controller. Complete for current inquiry entities and action reconciliation.
 4. Comment tree and composer extraction. Complete.
-5. Attachment gallery, viewer, uploader, and ownership extraction. Client domain complete; future owner types remain additive backend work.
+5. Attachment gallery, viewer, uploader, post/comment ownership, editing, and deletion extraction. Complete for public posts, comments, and replies; private note/message delivery remains intentionally fail-closed.
 6. Post composer/detail/feed extraction. Complete.
 7. Profile activity and social graph extraction. Complete.
 8. Workspace/notes wiring and shared editor foundation. Presentation extracted and authoritative note/block revision guards are in place; durable structured-document/editor integration remains next-stage work.

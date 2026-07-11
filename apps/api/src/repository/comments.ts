@@ -26,9 +26,11 @@ import {
 } from "@/lib/symposiumCore";
 import { getPool, hasDatabase } from "../db/client";
 import type { Actor } from "../services/auth";
+import { assertUniqueAttachmentIds, canonicalAttachmentIds, replaceOwnerAttachments } from "../services/attachmentOwnership";
 import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
 import { publishStoredEvent, stageEvent, type StoredLiveEvent } from "../services/events";
 import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
+import { queueAttachmentsForOwnerStorageDeletion, triggerStorageDeletion } from "../services/storageDeletion";
 import { transitionCommentAction } from "./actions";
 import { recordContentView, recordMemoryContentView } from "./contentViews";
 import {
@@ -36,7 +38,9 @@ import {
   commentTreesFromRows,
   ensureLiveData,
   getInitialState,
+  getPostConversationAttachments,
   newId,
+  rowToAttachment,
   rowToItem,
   type CommentRow,
   type SnapshotRow
@@ -54,6 +58,8 @@ export const addComment = async (
   mutation?: MutationContext
 ) => {
   const input = createCommentInputSchema.parse(rawInput);
+  const requestedAttachmentIds = canonicalAttachmentIds(input);
+  assertUniqueAttachmentIds(requestedAttachmentIds, "comment");
   const snapshot = await getInitialState();
   const existing = snapshot.items.find((item) => item.id === postId);
   if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
@@ -62,6 +68,12 @@ export const addComment = async (
   }
   if (input.parentId && !findCommentInTree(existing.comments, input.parentId)) {
     throw new TRPCError({ code: "BAD_REQUEST", message: "Parent comment was not found on this post." });
+  }
+  if (requestedAttachmentIds.length && (existing.room === "office" || existing.kind === "draft")) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: "Private comment attachments require protected delivery before they can be published."
+    });
   }
 
   const handle = actorHandle(actor, input.authorHandle);
@@ -86,6 +98,7 @@ export const addComment = async (
     savedBy: [],
     signaledBy: [],
     forkedBy: [],
+    attachments: [],
     replies: []
   };
   const nextCritiques = incrementMetric(existing.metrics.critiques, 1);
@@ -186,7 +199,12 @@ export const addComment = async (
        ORDER BY created_at ASC`,
       [postId]
     );
-    const commentsByPost = commentTreesFromRows(commentsResult.rows);
+    const [commentAttachments, postAttachments] = await getPostConversationAttachments(
+      client,
+      postId,
+      commentsResult.rows
+    );
+    const commentsByPost = commentTreesFromRows(commentsResult.rows, commentAttachments);
     const existingComments = commentsByPost.get(postId) ?? [];
     const lockedItem = rowToItem(row, existingComments);
     if (isDeletedPost(lockedItem)) {
@@ -195,6 +213,14 @@ export const addComment = async (
     if (comment.parentId && !findCommentInTree(existingComments, comment.parentId)) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "Parent comment was not found on this post." });
     }
+    const attachmentChange = await replaceOwnerAttachments(client, {
+      attachmentIds: requestedAttachmentIds,
+      ownerId: comment.id as string,
+      ownerType: "comment",
+      uploaderHandle: handle
+    });
+    comment.attachments = attachmentChange.attachments.map(rowToAttachment);
+
     const lockedNextCritiques = incrementMetric(lockedItem.metrics.critiques, 1);
     const lockedNextMetrics = { ...lockedItem.metrics, critiques: lockedNextCritiques };
     const lockedNextSignals = updateSignalValue(lockedItem.signals, "Critiques", lockedNextCritiques);
@@ -242,7 +268,8 @@ export const addComment = async (
         signals: lockedNextSignals,
         revision: revisionResult.rows[0].revision
       },
-      appended.comments
+      appended.comments,
+      postAttachments.get(postId) ?? []
     );
 
     await stageAuditLog(client, {
@@ -251,6 +278,7 @@ export const addComment = async (
       subjectType: "comment",
       subjectId: comment.id as string,
       metadata: mutationAuditMetadata(mutation, {
+        attachmentCount: comment.attachments.length,
         parentId: comment.parentId,
         postId
       })
@@ -324,6 +352,7 @@ export const updateComment = async (
   await ensureLiveData();
   const client = await getPool().connect();
   let updatedItem: InquiryItemContract;
+  let removedAttachmentIds: string[] = [];
   let stagedEvent: StoredLiveEvent | undefined;
 
   try {
@@ -365,7 +394,8 @@ export const updateComment = async (
        ORDER BY created_at ASC`,
       [postId]
     );
-    const commentsByPost = commentTreesFromRows(commentsResult.rows);
+    const [commentAttachments, postAttachments] = await getPostConversationAttachments(client, postId, commentsResult.rows);
+    const commentsByPost = commentTreesFromRows(commentsResult.rows, commentAttachments);
     const existingComments = commentsByPost.get(postId) ?? [];
     const original = findCommentInTree(existingComments, commentId);
     if (!original) throw new TRPCError({ code: "NOT_FOUND", message: "Comment not found." });
@@ -375,10 +405,32 @@ export const updateComment = async (
     if (!canManageComment(original, handle)) {
       throw new TRPCError({ code: "FORBIDDEN", message: "Only the author can edit this comment." });
     }
+    const currentEditedAt = original.editedAt ?? null;
+    if (input.expectedEditedAt !== undefined && input.expectedEditedAt !== currentEditedAt) {
+      throw new TRPCError({
+        code: "CONFLICT",
+        message: "This comment changed after it was opened. Refresh before replacing its attachments."
+      });
+    }
+    if (input.attachmentIds?.length && (row.room === "office" || row.kind === "draft")) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "Private comment attachments require protected delivery before they can be published."
+      });
+    }
+
+    const attachmentChange = await replaceOwnerAttachments(client, {
+      attachmentIds: input.attachmentIds,
+      ownerId: commentId,
+      ownerType: "comment",
+      uploaderHandle: handle
+    });
+    removedAttachmentIds = attachmentChange.removedAttachmentIds;
 
     const mapped = mapCommentTree(existingComments, commentId, (comment) => ({
       ...comment,
       body: input.body,
+      attachments: attachmentChange.attachments.map(rowToAttachment),
       editedAt,
       revision: (comment.revision ?? 1) + 1
     }));
@@ -398,13 +450,22 @@ export const updateComment = async (
       `UPDATE posts SET revision = revision + 1, updated_at = now() WHERE id = $1 RETURNING revision`,
       [postId]
     );
-    updatedItem = rowToItem({ ...row, revision: postRevisionResult.rows[0].revision }, mapped.comments);
+    updatedItem = rowToItem(
+      { ...row, revision: postRevisionResult.rows[0].revision },
+      mapped.comments,
+      postAttachments.get(postId) ?? []
+    );
     await stageAuditLog(client, {
       actorHandle: handle,
       action: "comment.update",
       subjectType: "comment",
       subjectId: commentId,
-      metadata: { editedAt, postId }
+      metadata: {
+        attachmentCount: attachmentChange.attachments.length,
+        removedAttachmentCount: removedAttachmentIds.length,
+        editedAt,
+        postId
+      }
     });
     await completeMutation(client, handle, mutation, updatedItem);
     stagedEvent = await stageEvent(client, {
@@ -427,6 +488,7 @@ export const updateComment = async (
   }
 
   if (stagedEvent) await publishStoredEvent(stagedEvent);
+  if (removedAttachmentIds.length) await triggerStorageDeletion(removedAttachmentIds);
 
   return updatedItem;
 };
@@ -471,6 +533,7 @@ export const deleteComment = async (
   const client = await getPool().connect();
   let updatedItem: InquiryItemContract;
   let didDelete = false;
+  let storageAttachmentIds: string[] = [];
   let stagedEvent: StoredLiveEvent | undefined;
 
   try {
@@ -512,12 +575,19 @@ export const deleteComment = async (
        ORDER BY created_at ASC`,
       [postId]
     );
-    const commentsByPost = commentTreesFromRows(commentsResult.rows);
+    const [commentAttachments, postAttachments] = await getPostConversationAttachments(client, postId, commentsResult.rows);
+    const commentsByPost = commentTreesFromRows(commentsResult.rows, commentAttachments);
     const existingComments = commentsByPost.get(postId) ?? [];
     const original = findCommentInTree(existingComments, commentId);
     if (!original) throw new TRPCError({ code: "NOT_FOUND", message: "Comment not found." });
     if (isDeletedComment(original)) {
-      updatedItem = rowToItem(row, existingComments);
+      updatedItem = rowToItem(row, existingComments, postAttachments.get(postId) ?? []);
+      storageAttachmentIds = await queueAttachmentsForOwnerStorageDeletion(
+        client,
+        "comment",
+        commentId,
+        "comment_deleted"
+      );
       await completeMutation(client, handle, mutation, updatedItem);
       await client.query("COMMIT");
     } else {
@@ -573,20 +643,28 @@ export const deleteComment = async (
 
       const comments = mapCommentTree(deletion.item.comments, commentId, (comment) => ({
         ...comment,
+        attachments: [],
         revision: (original.revision ?? 1) + 1
       })).comments;
       updatedItem = {
         ...deletion.item,
         comments,
+        attachments: postAttachments.get(postId) ?? [],
         revision: postRevisionResult.rows[0].revision
       };
+      storageAttachmentIds = await queueAttachmentsForOwnerStorageDeletion(
+        client,
+        "comment",
+        commentId,
+        "comment_deleted"
+      );
       didDelete = true;
       await stageAuditLog(client, {
         actorHandle: handle,
         action: "comment.delete",
         subjectType: "comment",
         subjectId: commentId,
-        metadata: { deletedAt, postId }
+        metadata: { deletedAt, postId, storageAttachmentCount: storageAttachmentIds.length }
       });
       stagedEvent = await stageEvent(client, {
         kind: "comment.deleted",
@@ -610,6 +688,7 @@ export const deleteComment = async (
   }
 
   if (didDelete && stagedEvent) await publishStoredEvent(stagedEvent);
+  if (storageAttachmentIds.length) await triggerStorageDeletion(storageAttachmentIds);
 
   return updatedItem;
 };
@@ -696,12 +775,13 @@ export const applyCommentAction = async (
        ORDER BY created_at ASC`,
       [postId]
     );
-    const commentsByPost = commentTreesFromRows(commentsResult.rows);
+    const [commentAttachments, postAttachments] = await getPostConversationAttachments(client, postId, commentsResult.rows);
+    const commentsByPost = commentTreesFromRows(commentsResult.rows, commentAttachments);
     const existingComments = commentsByPost.get(postId) ?? [];
     const original = findCommentInTree(existingComments, commentId);
     if (!original) throw new TRPCError({ code: "NOT_FOUND", message: "Comment not found." });
     if (isDeletedComment(original)) {
-      updatedItem = rowToItem(row, existingComments);
+      updatedItem = rowToItem(row, existingComments, postAttachments.get(postId) ?? []);
       await completeMutation(client, handle, mutation, { item: updatedItem });
       await client.query("COMMIT");
       return { item: updatedItem };
@@ -711,7 +791,7 @@ export const applyCommentAction = async (
       input.action === "read" &&
       !(await recordContentView(client, "comment", commentId, handle, input.trigger, input.surface))
     ) {
-      updatedItem = rowToItem(row, existingComments);
+      updatedItem = rowToItem(row, existingComments, postAttachments.get(postId) ?? []);
       await completeMutation(client, handle, mutation, { item: updatedItem });
       await client.query("COMMIT");
       return { item: updatedItem };
@@ -769,7 +849,11 @@ export const applyCommentAction = async (
       `UPDATE posts SET revision = revision + 1, updated_at = now() WHERE id = $1 RETURNING revision`,
       [postId]
     );
-    updatedItem = rowToItem({ ...row, revision: postRevisionResult.rows[0].revision }, mapped.comments);
+    updatedItem = rowToItem(
+      { ...row, revision: postRevisionResult.rows[0].revision },
+      mapped.comments,
+      postAttachments.get(postId) ?? []
+    );
     if (input.action !== "read") {
       await stageAuditLog(client, {
         actorHandle: handle,

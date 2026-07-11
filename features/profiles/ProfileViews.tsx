@@ -35,8 +35,15 @@ import {
   uniqueProfileActivityEntries
 } from "@/lib/profileActivity";
 import type { CommentActionHandler, PostActionHandler } from "@/features/actions/actionTypes";
-import type { AttachmentPreviewHandler } from "@/features/attachments/AttachmentViews";
-import { CommentActions, CommentOwnerControls } from "@/features/comments/CommentThread";
+import {
+  AttachmentCarousel,
+  type AttachmentPreviewHandler
+} from "@/features/attachments/AttachmentViews";
+import {
+  CommentActions,
+  CommentOwnerControls,
+  type CommentAttachmentPreviewHandler
+} from "@/features/comments/CommentThread";
 import { ExpandableBodyText } from "@/features/content/ExpandableBodyText";
 import { profileForHandle, profileInitials } from "@/features/identity/profilePresentation";
 import { FeedPost } from "@/features/posts/PostViews";
@@ -194,7 +201,8 @@ export function ProfileView({
   onSocialViewChange,
   onEditPost,
   onDeletePost,
-  onOpenAttachmentPreview
+  onOpenAttachmentPreview,
+  onOpenCommentAttachmentPreview
 }: {
   person: ResearchProfile;
   items: InquiryItem[];
@@ -228,6 +236,7 @@ export function ProfileView({
   onEditPost: (item: InquiryItem) => void;
   onDeletePost: (itemId: string) => void;
   onOpenAttachmentPreview: AttachmentPreviewHandler;
+  onOpenCommentAttachmentPreview: CommentAttachmentPreviewHandler;
 }) {
   const [visibleSlots, setVisibleSlots] = useState<ProfileActivitySlot[]>([]);
   const visibleSlotContextRef = useRef("");
@@ -483,6 +492,7 @@ export function ProfileView({
                 onCommentAction={onCommentAction}
                 onEditComment={onEditComment}
                 onDeleteComment={onDeleteComment}
+                onOpenAttachmentPreview={onOpenCommentAttachmentPreview}
                 actorHandle={actorHandle}
               />
             ) : (
@@ -532,6 +542,7 @@ function ProfileCommentCard({
   onCommentAction,
   onEditComment,
   onDeleteComment,
+  onOpenAttachmentPreview,
   actorHandle
 }: {
   activity: ProfileCommentActivity;
@@ -541,6 +552,7 @@ function ProfileCommentCard({
   onCommentAction: CommentActionHandler;
   onEditComment: (itemId: string, commentId: string) => void;
   onDeleteComment: (itemId: string, commentId: string) => void;
+  onOpenAttachmentPreview: CommentAttachmentPreviewHandler;
   actorHandle: string;
 }) {
   const cardRef = useRef<HTMLElement | null>(null);
@@ -617,6 +629,16 @@ function ProfileCommentCard({
           }
         }}
       />
+      {activity.comment.id && !commentDeleted ? (
+        <AttachmentCarousel
+          attachments={activity.comment.attachments ?? []}
+          label="Comment attachments"
+          variant="comment"
+          onOpenPreview={(attachmentId) =>
+            onOpenAttachmentPreview(activity.item.id, activity.comment.id as string, attachmentId)
+          }
+        />
+      ) : null}
       <CommentActions
         comment={activity.comment}
         itemId={activity.item.id}

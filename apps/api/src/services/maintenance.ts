@@ -94,7 +94,7 @@ export const runDatabaseMaintenance = async () => {
            AND COALESCE(metadata->>'storageState', '') NOT IN ('deletion_pending', 'deleted')
            AND updated_at < now() - interval '1 minute'
          ) OR (
-           owner_type = 'post'
+           owner_type IN ('post', 'comment')
            AND owner_id IS NULL
            AND status IN ('uploaded', 'previewed')
            AND updated_at < now() - interval '1 day'

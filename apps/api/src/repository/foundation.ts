@@ -56,6 +56,7 @@ export type CommentRow = {
 
 export type AttachmentRow = {
   id: string;
+  ownerType?: string;
   ownerId: string | null;
   fileName: string;
   contentType: string;
@@ -517,7 +518,10 @@ export const ensureLiveData = async () => {
   await seedReady;
 };
 
-export const commentTreesFromRows = (rows: CommentRow[]) => {
+export const commentTreesFromRows = (
+  rows: CommentRow[],
+  attachmentsByComment: Map<string, InquiryAttachmentContract[]> = new Map()
+) => {
   const byPostAndParent = new Map<string, Map<string, CommentRow[]>>();
 
   for (const row of rows) {
@@ -543,6 +547,7 @@ export const commentTreesFromRows = (rows: CommentRow[]) => {
       savedBy: json(row.savedBy, []),
       signaledBy: json(row.signaledBy, []),
       forkedBy: json(row.forkedBy, []),
+      attachments: attachmentsByComment.get(row.id),
       replies: buildTree(byParent, row.id)
     }));
 
@@ -581,6 +586,43 @@ export const attachmentsByOwner = (rows: AttachmentRow[]) => {
   }
   return byOwner;
 };
+
+export const getActiveAttachmentsByOwner = async (
+  client: PoolClient,
+  ownerType: "post" | "comment",
+  ownerIds: string[]
+) => {
+  if (!ownerIds.length) return new Map<string, InquiryAttachmentContract[]>();
+  const result = await client.query<AttachmentRow>(
+    `SELECT
+       id::text,
+       owner_id AS "ownerId",
+       file_name AS "fileName",
+       content_type AS "contentType",
+       byte_size AS "byteSize",
+       status,
+       metadata,
+       object_key AS "objectKey",
+       created_at AS "createdAt"
+     FROM attachments
+     WHERE owner_type = $1
+       AND owner_id = ANY($2::text[])
+       AND status IN ('uploaded', 'previewed')
+     ORDER BY created_at ASC`,
+    [ownerType, ownerIds]
+  );
+  return attachmentsByOwner(result.rows);
+};
+
+export const getPostConversationAttachments = (
+  client: PoolClient,
+  postId: string,
+  commentRows: CommentRow[]
+) =>
+  Promise.all([
+    getActiveAttachmentsByOwner(client, "comment", commentRows.map((comment) => comment.id)),
+    getActiveAttachmentsByOwner(client, "post", [postId])
+  ]);
 
 const actionHandlesBySubject = (rows: ActionProjectionRow[]) => {
   const bySubject = new Map<string, ActionHandleProjection>();
@@ -746,6 +788,7 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
       client.query<AttachmentRow>(
         `SELECT
           id::text,
+          owner_type AS "ownerType",
           owner_id AS "ownerId",
           file_name AS "fileName",
           content_type AS "contentType",
@@ -755,7 +798,7 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
           object_key AS "objectKey",
           created_at AS "createdAt"
          FROM attachments
-         WHERE owner_type = 'post'
+         WHERE owner_type IN ('post', 'comment')
            AND status IN ('uploaded', 'previewed')
          ORDER BY created_at ASC`
       ),
@@ -801,8 +844,11 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
     const projectedComments = commentResult.rows.map((row) =>
       applyCommentActionProjection(row, commentActionHandles.get(row.id))
     );
-    const commentsByPost = commentTreesFromRows(projectedComments);
-    const attachmentsByPost = attachmentsByOwner(attachmentResult.rows);
+    const postAttachmentRows = attachmentResult.rows.filter((row) => row.ownerType === "post");
+    const commentAttachmentRows = attachmentResult.rows.filter((row) => row.ownerType === "comment");
+    const attachmentsByComment = attachmentsByOwner(commentAttachmentRows);
+    const commentsByPost = commentTreesFromRows(projectedComments, attachmentsByComment);
+    const attachmentsByPost = attachmentsByOwner(postAttachmentRows);
     const profiles = Object.fromEntries(
       profileResult.rows.map((person) => [
         person.handle,

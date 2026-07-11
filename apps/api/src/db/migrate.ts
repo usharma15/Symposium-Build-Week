@@ -1119,6 +1119,15 @@ const migrations: Migration[] = [
         AND attachment.owner_id = post.id
         AND post.deleted_at IS NOT NULL;
     `
+  },
+  {
+    id: "0016_comment_attachment_ownership",
+    sql: `
+      ALTER TABLE attachments DROP CONSTRAINT IF EXISTS attachments_owner_type_check;
+      ALTER TABLE attachments
+        ADD CONSTRAINT attachments_owner_type_check
+        CHECK (owner_type IN ('post', 'comment', 'message', 'note', 'profile'));
+    `
   }
 ];
 

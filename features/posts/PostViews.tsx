@@ -4,7 +4,6 @@ import {
   useEffect,
   useRef,
   useState,
-  type ChangeEvent,
   type FormEvent,
   type KeyboardEvent,
   type MouseEvent
@@ -14,7 +13,6 @@ import {
   Bookmark,
   Eye,
   MessageCircle,
-  Paperclip,
   Pencil,
   Repeat2,
   ThumbsUp,
@@ -30,11 +28,6 @@ import {
   type ResearchProfile,
   type Room
 } from "@/lib/mockData";
-import {
-  formatAttachmentBytes,
-  maxPostAttachments,
-  postAttachmentAccept
-} from "@/lib/attachmentRules";
 import {
   cleanHandle,
   countComments,
@@ -54,13 +47,16 @@ import type {
   ViewSurface
 } from "@/features/actions/actionTypes";
 import {
+  AttachmentComposerField,
   PostAttachmentCarousel,
-  attachmentIcon,
-  type AttachmentPreviewHandler
+  type AttachmentPreviewHandler,
+  type AttachmentUploadHandler
 } from "@/features/attachments/AttachmentViews";
 import {
   CommentComposer,
   CommentThread,
+  type AddCommentHandler,
+  type CommentAttachmentPreviewHandler,
   type CommentSegmentStacks
 } from "@/features/comments/CommentThread";
 import { ExpandableBodyText } from "@/features/content/ExpandableBodyText";
@@ -96,7 +92,7 @@ export function PostComposerModal({
 }: {
   onClose: () => void;
   onCreatePost: (draft: PostDraft) => Promise<PostCreationResult>;
-  onUploadAttachment: (file: File) => Promise<InquiryAttachment>;
+  onUploadAttachment: AttachmentUploadHandler;
 }) {
   const [kind, setKind] = useState<PostDraft["kind"]>("thought");
   const [title, setTitle] = useState("");
@@ -125,34 +121,6 @@ export function PostComposerModal({
     setKind("thought");
     setAttachments([]);
     setAttachmentStatus("");
-  };
-
-  const uploadFiles = async (event: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files ?? []);
-    event.target.value = "";
-    if (!files.length) return;
-
-    const openSlots = maxPostAttachments - attachments.length;
-    const selectedFiles = files.slice(0, Math.max(0, openSlots));
-    if (!selectedFiles.length) {
-      setAttachmentStatus(`Attachment limit reached (${maxPostAttachments})`);
-      return;
-    }
-
-    setUploading(true);
-    setAttachmentStatus(`Uploading ${selectedFiles.length} file${selectedFiles.length === 1 ? "" : "s"}`);
-    try {
-      const uploaded: InquiryAttachment[] = [];
-      for (const file of selectedFiles) {
-        uploaded.push(await onUploadAttachment(file));
-      }
-      setAttachments((current) => [...current, ...uploaded].slice(0, maxPostAttachments));
-      setAttachmentStatus(`${uploaded.length} file${uploaded.length === 1 ? "" : "s"} attached`);
-    } catch (error) {
-      setAttachmentStatus(error instanceof Error ? error.message : "Could not attach this file.");
-    } finally {
-      setUploading(false);
-    }
   };
 
   return (
@@ -187,39 +155,14 @@ export function PostComposerModal({
           onChange={(event) => setBody(event.target.value)}
           placeholder="Write the thing itself"
         />
-        <div className="composer-attachments">
-          <label className="attachment-picker">
-            <Paperclip size={16} />
-            <span>{attachments.length}/{maxPostAttachments}</span>
-            <input
-              type="file"
-              multiple
-              accept={postAttachmentAccept}
-              disabled={uploading || submitting || attachments.length >= maxPostAttachments}
-              onChange={uploadFiles}
-            />
-          </label>
-          {attachmentStatus ? <small>{attachmentStatus}</small> : null}
-          {attachments.length ? (
-            <div className="composer-attachment-list">
-              {attachments.map((attachment) => (
-                <div key={attachment.id} className="composer-attachment-chip">
-                  {attachmentIcon(attachment)}
-                  <span>{attachment.fileName}</span>
-                  <small>{formatAttachmentBytes(attachment.byteSize)}</small>
-                  <button
-                    type="button"
-                    title="Remove attachment"
-                    disabled={uploading || submitting}
-                    onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}
-                  >
-                    <X size={14} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          ) : null}
-        </div>
+        <AttachmentComposerField
+          attachments={attachments}
+          disabled={submitting}
+          onAttachmentsChange={setAttachments}
+          onBusyChange={setUploading}
+          onUploadAttachment={onUploadAttachment}
+        />
+        {attachmentStatus ? <small className="composer-submit-status">{attachmentStatus}</small> : null}
       </form>
     </div>
   );
@@ -229,19 +172,29 @@ export function PostEditModal({
   item,
   onClose,
   onSave,
-  onDelete
+  onDelete,
+  onUploadAttachment
 }: {
   item: InquiryItem;
   onClose: () => void;
-  onSave: (itemId: string, draft: { title: string; body: string }) => void;
+  onSave: (itemId: string, draft: { title: string; body: string; attachments: InquiryAttachment[] }) => Promise<void>;
   onDelete: (itemId: string) => void;
+  onUploadAttachment: AttachmentUploadHandler;
 }) {
   const [title, setTitle] = useState(item.title);
   const [body, setBody] = useState(item.body);
+  const [attachments, setAttachments] = useState<InquiryAttachment[]>(item.attachments ?? []);
+  const [busy, setBusy] = useState(false);
 
-  const submitEdit = (event: FormEvent<HTMLFormElement>) => {
+  const submitEdit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    onSave(item.id, { title, body });
+    if (busy || !title.trim() || !body.trim()) return;
+    setBusy(true);
+    try {
+      await onSave(item.id, { title, body, attachments });
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -261,7 +214,7 @@ export function PostEditModal({
             <Trash2 size={16} />
             Delete
           </button>
-          <button type="submit">Save</button>
+          <button type="submit" disabled={busy}>{busy ? "Saving…" : "Save"}</button>
         </div>
         <input
           value={title}
@@ -273,6 +226,13 @@ export function PostEditModal({
           onChange={(event) => setBody(event.target.value)}
           placeholder="Write the thing itself"
         />
+        <AttachmentComposerField
+          attachments={attachments}
+          disabled={busy}
+          onAttachmentsChange={setAttachments}
+          onBusyChange={setBusy}
+          onUploadAttachment={onUploadAttachment}
+        />
       </form>
     </div>
   );
@@ -283,20 +243,34 @@ export function CommentEditModal({
   comment,
   onClose,
   onSave,
-  onDelete
+  onDelete,
+  onUploadAttachment
 }: {
   item: InquiryItem;
   comment: InquiryComment;
   onClose: () => void;
-  onSave: (itemId: string, commentId: string, body: string) => void;
+  onSave: (
+    itemId: string,
+    commentId: string,
+    body: string,
+    attachments: InquiryAttachment[]
+  ) => Promise<void>;
   onDelete: (itemId: string, commentId: string) => void;
+  onUploadAttachment: AttachmentUploadHandler;
 }) {
   const [body, setBody] = useState(comment.body);
+  const [attachments, setAttachments] = useState<InquiryAttachment[]>(comment.attachments ?? []);
+  const [busy, setBusy] = useState(false);
 
-  const submitEdit = (event: FormEvent<HTMLFormElement>) => {
+  const submitEdit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!comment.id) return;
-    onSave(item.id, comment.id, body);
+    if (!comment.id || busy || !body.trim()) return;
+    setBusy(true);
+    try {
+      await onSave(item.id, comment.id, body, attachments);
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -316,12 +290,19 @@ export function CommentEditModal({
             <Trash2 size={16} />
             Delete
           </button>
-          <button type="submit">Save</button>
+          <button type="submit" disabled={busy}>{busy ? "Saving…" : "Save"}</button>
         </div>
         <textarea
           value={body}
           onChange={(event) => setBody(event.target.value)}
           placeholder="Write the comment"
+        />
+        <AttachmentComposerField
+          attachments={attachments}
+          disabled={busy}
+          onAttachmentsChange={setAttachments}
+          onBusyChange={setBusy}
+          onUploadAttachment={onUploadAttachment}
         />
       </form>
     </div>
@@ -587,6 +568,8 @@ export function DetailView({
   onBack,
   onOpenProfile,
   onAddComment,
+  onUploadCommentAttachment,
+  onOpenCommentAttachmentPreview,
   onAction,
   onCommentAction,
   onEditComment,
@@ -607,7 +590,9 @@ export function DetailView({
   room: Room;
   onBack: () => void;
   onOpenProfile: (name: string) => void;
-  onAddComment: (itemId: string, body: string, stance: string, parentId?: string | null) => void;
+  onAddComment: AddCommentHandler;
+  onUploadCommentAttachment: AttachmentUploadHandler;
+  onOpenCommentAttachmentPreview: CommentAttachmentPreviewHandler;
   onAction: PostActionHandler;
   onCommentAction: CommentActionHandler;
   onEditComment: (itemId: string, commentId: string) => void;
@@ -716,7 +701,13 @@ export function DetailView({
 
         <section className="comments-section" id={commentsSectionId}>
           <h2>Discussion</h2>
-          {postDeleted ? null : <CommentComposer itemId={item.id} onAddComment={onAddComment} />}
+          {postDeleted ? null : (
+            <CommentComposer
+              itemId={item.id}
+              onAddComment={onAddComment}
+              onUploadAttachment={onUploadCommentAttachment}
+            />
+          )}
           <CommentThread
             comments={item.comments}
             itemId={item.id}
@@ -724,6 +715,8 @@ export function DetailView({
             selectedCommentId={threadSelectedCommentId}
             onOpenProfile={onOpenProfile}
             onAddComment={onAddComment}
+            onUploadAttachment={onUploadCommentAttachment}
+            onOpenAttachmentPreview={onOpenCommentAttachmentPreview}
             onCommentAction={onCommentAction}
             onEditComment={onEditComment}
             onDeleteComment={onDeleteComment}

@@ -104,6 +104,7 @@ import {
 import {
   confirmAttachmentUpload,
   prepareAttachmentUpload,
+  uploadConfirmedAttachment,
   uploadConfirmedPostAttachment,
   type AttachmentConfirmResponse,
   type AttachmentUploadResponse
@@ -196,6 +197,7 @@ type ProfileFollowResponse = {
 
 type AttachmentPreviewTarget = {
   itemId: string;
+  commentId?: string;
   attachmentId: string;
 };
 
@@ -488,9 +490,21 @@ function SymposiumExperience({
         : themedRoomRenders[activeRoom];
   const themePreloadRenders = useMemo(() => getThemePreloadRenders(theme), [theme]);
   const selectedItem = items.find((item) => item.id === selectedItemId) ?? null;
-  const attachmentPreviewItem = attachmentPreview
+  const attachmentPreviewBaseItem = attachmentPreview
     ? items.find((item) => item.id === attachmentPreview.itemId) ?? null
     : null;
+  const attachmentPreviewItem = attachmentPreviewBaseItem && attachmentPreview?.commentId
+    ? (() => {
+        const comment = findCommentById(attachmentPreviewBaseItem.comments, attachmentPreview.commentId as string);
+        return comment
+          ? {
+              ...attachmentPreviewBaseItem,
+              title: `Comment on ${attachmentPreviewBaseItem.title}`,
+              attachments: comment.attachments ?? []
+            }
+          : null;
+      })()
+    : attachmentPreviewBaseItem;
   const activeItems = useMemo(() => items.filter((item) => !isDeletedPost(item)), [items]);
   const editingPostItem = editingPost ? items.find((item) => item.id === editingPost.id) ?? editingPost : null;
   const editingCommentItem = editingComment ? items.find((item) => item.id === editingComment.itemId) ?? null : null;
@@ -1966,6 +1980,10 @@ function SymposiumExperience({
     setAttachmentPreview({ itemId: item.id, attachmentId });
   };
 
+  const openCommentAttachmentPreview = (itemId: string, commentId: string, attachmentId: string) => {
+    setAttachmentPreview({ itemId, commentId, attachmentId });
+  };
+
   const routePostRoom = (kind: PostDraft["kind"]): Exclude<RoomId, "hall" | "office"> =>
     kind === "paper" ? "library" : "amphitheater";
 
@@ -1977,6 +1995,18 @@ function SymposiumExperience({
       file,
       idempotencyKey: createClientMutationId("attachment-prepare"),
       metadata
+    });
+  };
+
+  const uploadCommentAttachment = async (file: File): Promise<InquiryAttachment> => {
+    const contentType = file.type || "application/octet-stream";
+    const metadata = await buildPostAttachmentMetadata(file, contentType);
+    return uploadConfirmedAttachment({
+      actorHandle: currentProfile.handle,
+      file,
+      idempotencyKey: createClientMutationId("comment-attachment-prepare"),
+      metadata,
+      ownerType: "comment"
     });
   };
 
@@ -2042,19 +2072,25 @@ function SymposiumExperience({
     return { ok: true as const };
   };
 
-  const addComment = async (itemId: string, body: string, stance: string, parentId?: string | null) => {
+  const addComment = async (
+    itemId: string,
+    body: string,
+    stance: string,
+    parentId: string | null,
+    attachments: InquiryAttachment[]
+  ) => {
     const previousItems = itemsRef.current;
     const previousSelectedItemId = selectedItemId;
     const previousSelectedCommentId = selectedCommentId;
     const existing = previousItems.find((item) => item.id === itemId);
     if (!existing || isDeletedPost(existing)) {
       setSyncStatus("This post cannot accept comments");
-      return;
+      return false;
     }
 
     if (parentId && !findCommentById(existing.comments, parentId)) {
       setSyncStatus("Reply target is no longer available");
-      return;
+      return false;
     }
 
     setSyncStatus(parentId ? "Saving reply" : "Saving comment");
@@ -2071,12 +2107,13 @@ function SymposiumExperience({
       savedBy: [],
       signaledBy: [],
       forkedBy: [],
+      attachments,
       replies: []
     };
     const appended = appendCommentToTree(existing.comments, optimisticComment);
     if (!appended.inserted) {
       setSyncStatus("Reply target is no longer available");
-      return;
+      return false;
     }
 
     itemMutationCoordinatorRef.current.begin(itemId);
@@ -2103,7 +2140,13 @@ function SymposiumExperience({
       setSyncStatus(message);
     };
 
-    const commentPayload = { body, stance, parentId: parentId ?? null, authorHandle: currentProfile.handle };
+    const commentPayload = {
+      body,
+      stance,
+      parentId: parentId ?? null,
+      authorHandle: currentProfile.handle,
+      attachmentIds: attachments.map((attachment) => attachment.id)
+    };
     const mutation = retryMutationKey(
       "comment-create",
       JSON.stringify({ itemId, ...commentPayload })
@@ -2133,6 +2176,7 @@ function SymposiumExperience({
         replaceCanonicalRoute({ kind: "post", postId: itemId, commentId: committedCommentId });
       }
       setSyncStatus(parentId ? "Reply saved" : "Comment saved");
+      return true;
     } catch (error) {
       if (!shouldRetainRetryMutation(error)) clearRetryMutationKey(mutation.fingerprintKey);
       const message =
@@ -2146,6 +2190,7 @@ function SymposiumExperience({
               ? "Reply could not be saved"
               : "Comment could not be saved";
       rollbackOptimisticComment(message);
+      return false;
     } finally {
       itemMutationCoordinatorRef.current.complete(itemId);
     }
@@ -2681,7 +2726,10 @@ function SymposiumExperience({
     }
   };
 
-  const savePostEdit = async (itemId: string, draft: { title: string; body: string }) => {
+  const savePostEdit = async (
+    itemId: string,
+    draft: { title: string; body: string; attachments: InquiryAttachment[] }
+  ) => {
     const cleanTitle = draft.title.trim();
     const cleanBody = draft.body.trim();
     if (!cleanTitle || !cleanBody) return;
@@ -2693,26 +2741,40 @@ function SymposiumExperience({
     const editedAt = new Date().toISOString();
     const optimisticItems = previousItems.map((item) =>
       item.id === itemId
-        ? { ...item, title: cleanTitle, body: cleanBody, excerpt: cleanBody, claims: [cleanBody], editedAt }
+        ? {
+            ...item,
+            title: cleanTitle,
+            body: cleanBody,
+            excerpt: cleanBody,
+            claims: [cleanBody],
+            attachments: draft.attachments,
+            editedAt
+          }
         : item
     );
 
     replaceItems(optimisticItems);
     persistLocalSnapshot(optimisticItems, profilesRef.current);
-    setEditingPost(null);
     setSyncStatus("Saving post edit");
 
     try {
       const data = await symposiumApi.request<{ item: InquiryItem }>(`/api/posts/${itemId}`, {
         method: "PATCH",
         idempotencyKey: createClientMutationId("post-update"),
-        body: { title: cleanTitle, body: cleanBody, actorHandle: currentProfile.handle }
+        body: {
+          title: cleanTitle,
+          body: cleanBody,
+          actorHandle: currentProfile.handle,
+          expectedEditedAt: existing.editedAt ?? null,
+          attachmentIds: draft.attachments.map((attachment) => attachment.id)
+        }
       });
       const committedItems = itemsRef.current.map((item) =>
         item.id === itemId ? reconcileCommittedItem(data.item, item) : item
       );
       replaceItems(committedItems);
       persistLocalSnapshot(committedItems, profilesRef.current);
+      setEditingPost(null);
       setSyncStatus("Post edited");
     } catch {
       replaceItems(previousItems);
@@ -2760,7 +2822,12 @@ function SymposiumExperience({
     }
   };
 
-  const saveCommentEdit = async (itemId: string, commentId: string, body: string) => {
+  const saveCommentEdit = async (
+    itemId: string,
+    commentId: string,
+    body: string,
+    attachments: InquiryAttachment[]
+  ) => {
     const cleanBody = body.trim();
     if (!cleanBody) return;
 
@@ -2783,6 +2850,7 @@ function SymposiumExperience({
       const mapped = mapCommentTree(item.comments, commentId, (comment) => ({
         ...comment,
         body: cleanBody,
+        attachments,
         editedAt
       }));
       return mapped.updated ? { ...item, comments: mapped.comments } : item;
@@ -2790,7 +2858,6 @@ function SymposiumExperience({
 
     replaceItems(optimisticItems);
     persistLocalSnapshot(optimisticItems, profilesRef.current);
-    setEditingComment(null);
     setSyncStatus("Saving comment edit");
 
     try {
@@ -2799,7 +2866,12 @@ function SymposiumExperience({
         {
         method: "PATCH",
         idempotencyKey: createClientMutationId("comment-update"),
-        body: { body: cleanBody, actorHandle: currentProfile.handle }
+        body: {
+          body: cleanBody,
+          actorHandle: currentProfile.handle,
+          expectedEditedAt: existingComment.editedAt ?? null,
+          attachmentIds: attachments.map((attachment) => attachment.id)
+        }
         }
       );
       const committedItems = itemsRef.current.map((item) =>
@@ -2807,6 +2879,7 @@ function SymposiumExperience({
       );
       replaceItems(committedItems);
       persistLocalSnapshot(committedItems, profilesRef.current);
+      setEditingComment(null);
       setSyncStatus("Comment edited");
     } catch {
       replaceItems(previousItems);
@@ -3041,6 +3114,7 @@ function SymposiumExperience({
             onEditPost={setEditingPost}
             onDeletePost={deletePost}
             onOpenAttachmentPreview={openAttachmentPreview}
+            onOpenCommentAttachmentPreview={openCommentAttachmentPreview}
           />
         ) : selectedItem ? (
           <DetailView
@@ -3049,6 +3123,8 @@ function SymposiumExperience({
             onBack={goBack}
             onOpenProfile={openProfile}
             onAddComment={addComment}
+            onUploadCommentAttachment={uploadCommentAttachment}
+            onOpenCommentAttachmentPreview={openCommentAttachmentPreview}
             onAction={applyAction}
             onCommentAction={applyCommentAction}
             onEditComment={(itemId, commentId) => setEditingComment({ itemId, commentId })}
@@ -3212,6 +3288,7 @@ function SymposiumExperience({
           onClose={() => setEditingPost(null)}
           onSave={savePostEdit}
           onDelete={deletePost}
+          onUploadAttachment={uploadPostAttachment}
         />
       ) : null}
 
@@ -3223,6 +3300,7 @@ function SymposiumExperience({
           onClose={() => setEditingComment(null)}
           onSave={saveCommentEdit}
           onDelete={deleteComment}
+          onUploadAttachment={uploadCommentAttachment}
         />
       ) : null}
 

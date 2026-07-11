@@ -20,7 +20,11 @@ import type { Actor } from "../services/auth";
 import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
 import { publishStoredEvent, stageEvent, type StoredLiveEvent } from "../services/events";
 import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
-import { canonicalPostAttachmentIds, claimPostAttachments } from "../services/postAttachmentClaims";
+import {
+  assertUniqueAttachmentIds,
+  canonicalAttachmentIds,
+  replaceOwnerAttachments
+} from "../services/attachmentOwnership";
 import {
   queueAttachmentsForOwnerStorageDeletion,
   triggerStorageDeletion
@@ -32,6 +36,7 @@ import {
   commentTreesFromRows,
   defaultProfile,
   ensureLiveData,
+  getActiveAttachmentsByOwner,
   getInitialState,
   newId,
   rowToAttachment,
@@ -58,9 +63,13 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
     ...attachment,
     status: "uploaded" as const
   }));
-  const requestedAttachmentIds = canonicalPostAttachmentIds(input);
-  if (new Set(requestedAttachmentIds).size !== requestedAttachmentIds.length) {
-    throw new TRPCError({ code: "BAD_REQUEST", message: "Each post attachment can only be attached once." });
+  const requestedAttachmentIds = canonicalAttachmentIds(input);
+  assertUniqueAttachmentIds(requestedAttachmentIds, "post");
+  if (requestedAttachmentIds.length && (input.room === "office" || input.kind === "draft")) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: "Private post attachments require protected delivery before they can be published."
+    });
   }
   const item: InquiryItemContract = {
     id: newId("post"),
@@ -162,11 +171,13 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
       );
     }
 
-    attachedRows = await claimPostAttachments(client, {
+    const attachmentChange = await replaceOwnerAttachments(client, {
       attachmentIds: requestedAttachmentIds,
-      postId: item.id,
+      ownerId: item.id,
+      ownerType: "post",
       uploaderHandle: handle
     });
+    attachedRows = attachmentChange.attachments;
 
     item.attachments = attachedRows.map(rowToAttachment);
     await stageAuditLog(client, {
@@ -308,8 +319,16 @@ export const applyPostAction = async (
        ORDER BY created_at ASC`,
       [postId]
     );
-    const commentsByPost = commentTreesFromRows(commentsResult.rows);
-    const existing = rowToItem(row, commentsByPost.get(postId) ?? []);
+    const [commentAttachments, postAttachments] = await Promise.all([
+      getActiveAttachmentsByOwner(client, "comment", commentsResult.rows.map((comment) => comment.id)),
+      getActiveAttachmentsByOwner(client, "post", [postId])
+    ]);
+    const commentsByPost = commentTreesFromRows(commentsResult.rows, commentAttachments);
+    const existing = rowToItem(
+      row,
+      commentsByPost.get(postId) ?? [],
+      postAttachments.get(postId) ?? []
+    );
     if (
       (existing.room === "office" || existing.kind === "draft") &&
       (!existing.authorHandle || cleanHandle(existing.authorHandle) !== handle)
@@ -479,6 +498,7 @@ export const updatePost = async (
   await ensureLiveData();
   const client = await getPool().connect();
   let updated: InquiryItemContract;
+  let removedAttachmentIds: string[] = [];
   let stagedEvent: StoredLiveEvent | undefined;
 
   try {
@@ -515,6 +535,27 @@ export const updatePost = async (
     if (row.authorHandle && cleanHandle(row.authorHandle) !== handle) {
       throw new TRPCError({ code: "FORBIDDEN", message: "Only the author can edit this post." });
     }
+    const currentEditedAt = row.editedAt ? new Date(row.editedAt).toISOString() : null;
+    if (input.expectedEditedAt !== undefined && input.expectedEditedAt !== currentEditedAt) {
+      throw new TRPCError({
+        code: "CONFLICT",
+        message: "This post changed after it was opened. Refresh before replacing its attachments."
+      });
+    }
+    if (input.attachmentIds?.length && (row.room === "office" || row.kind === "draft")) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "Private post attachments require protected delivery before they can be published."
+      });
+    }
+
+    const attachmentChange = await replaceOwnerAttachments(client, {
+      attachmentIds: input.attachmentIds,
+      ownerId: postId,
+      ownerType: "post",
+      uploaderHandle: handle
+    });
+    removedAttachmentIds = attachmentChange.removedAttachmentIds;
 
     const revisionResult = await client.query<{ revision: number }>(
       `UPDATE posts
@@ -548,7 +589,12 @@ export const updatePost = async (
        ORDER BY created_at ASC`,
       [postId]
     );
-    const commentsByPost = commentTreesFromRows(commentsResult.rows);
+    const commentAttachments = await getActiveAttachmentsByOwner(
+      client,
+      "comment",
+      commentsResult.rows.map((comment) => comment.id)
+    );
+    const commentsByPost = commentTreesFromRows(commentsResult.rows, commentAttachments);
     updated = rowToItem(
       {
         ...row,
@@ -559,7 +605,8 @@ export const updatePost = async (
         editedAt,
         revision: revisionResult.rows[0].revision
       },
-      commentsByPost.get(postId) ?? []
+      commentsByPost.get(postId) ?? [],
+      attachmentChange.attachments.map(rowToAttachment)
     );
 
     await stageAuditLog(client, {
@@ -567,7 +614,11 @@ export const updatePost = async (
       action: "post.update",
       subjectType: "post",
       subjectId: postId,
-      metadata: { editedAt }
+      metadata: {
+        attachmentCount: attachmentChange.attachments.length,
+        removedAttachmentCount: removedAttachmentIds.length,
+        editedAt
+      }
     });
     await completeMutation(client, handle, mutation, updated);
     stagedEvent = await stageEvent(client, {
@@ -590,6 +641,7 @@ export const updatePost = async (
   }
 
   if (stagedEvent) await publishStoredEvent(stagedEvent);
+  if (removedAttachmentIds.length) await triggerStorageDeletion(removedAttachmentIds);
 
   return updated;
 };
@@ -654,8 +706,17 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
        ORDER BY created_at ASC`,
       [postId]
     );
-    const commentsByPost = commentTreesFromRows(commentsResult.rows);
-    const existing = rowToItem(row, commentsByPost.get(postId) ?? []);
+    const [commentAttachments, postAttachments] = await Promise.all([
+      getActiveAttachmentsByOwner(client, "comment", commentsResult.rows.map((comment) => comment.id)),
+      getActiveAttachmentsByOwner(client, "post", [postId])
+    ]);
+    const commentsByPost = commentTreesFromRows(commentsResult.rows, commentAttachments);
+    const existing = rowToItem(
+      row,
+      commentsByPost.get(postId) ?? [],
+      postAttachments.get(postId) ?? []
+    );
+    const commentIds = commentsResult.rows.map((comment) => comment.id);
 
     if (isDeletedPost(existing)) {
       deleted = existing;
@@ -664,6 +725,14 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
         "post",
         postId,
         "post_deleted"
+      );
+      storageAttachmentIds.push(
+        ...(await queueAttachmentsForOwnerStorageDeletion(
+          client,
+          "comment",
+          commentIds,
+          "post_deleted"
+        ))
       );
       await completeMutation(client, handle, mutation, deleted);
       await client.query("COMMIT");
@@ -749,6 +818,14 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
         "post",
         postId,
         "post_deleted"
+      );
+      storageAttachmentIds.push(
+        ...(await queueAttachmentsForOwnerStorageDeletion(
+          client,
+          "comment",
+          commentIds,
+          "post_deleted"
+        ))
       );
       didDelete = true;
       await stageAuditLog(client, {

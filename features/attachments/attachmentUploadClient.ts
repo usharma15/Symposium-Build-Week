@@ -78,11 +78,12 @@ export const confirmAttachmentUpload = (payload: Record<string, unknown>) =>
     (attempt) => 300 * (attempt + 1)
   );
 
-export const uploadConfirmedPostAttachment = async (input: {
+export const uploadConfirmedAttachment = async (input: {
   actorHandle: string;
   file: File;
   idempotencyKey: string;
   metadata: Record<string, unknown>;
+  ownerType: "post" | "comment";
 }): Promise<InquiryAttachment> => {
   const contentType = inferAttachmentContentType(input.file.name, input.file.type);
   const validationError = validatePostAttachmentDetails(input.file.name, contentType, input.file.size);
@@ -94,7 +95,7 @@ export const uploadConfirmedPostAttachment = async (input: {
       fileName: input.file.name,
       contentType,
       byteSize: input.file.size,
-      ownerType: "post"
+      ownerType: input.ownerType
     },
     input.idempotencyKey
   );
@@ -134,3 +135,7 @@ export const uploadConfirmedPostAttachment = async (input: {
     createdAt: new Date().toISOString()
   };
 };
+
+export const uploadConfirmedPostAttachment = (
+  input: Omit<Parameters<typeof uploadConfirmedAttachment>[0], "ownerType">
+) => uploadConfirmedAttachment({ ...input, ownerType: "post" });

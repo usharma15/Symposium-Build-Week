@@ -6,7 +6,8 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties
+  type CSSProperties,
+  type ChangeEvent
 } from "react";
 import {
   ChevronLeft,
@@ -26,12 +27,15 @@ import type { InquiryAttachment, InquiryItem } from "@/lib/mockData";
 import {
   formatAttachmentBytes,
   maxAttachmentPreviewTextLength,
+  maxPostAttachments,
+  postAttachmentAccept,
   splitPreviewTextIntoPages
 } from "@/lib/attachmentRules";
 import { deletedPostContextTitle, isDeletedPost } from "@/lib/symposiumCore";
 import { isSafeExternalUrl } from "@/packages/contracts/src";
 
 export type AttachmentPreviewHandler = (item: InquiryItem, attachmentId: string) => void;
+export type AttachmentUploadHandler = (file: File) => Promise<InquiryAttachment>;
 type AttachmentRenderMode = "feed" | "detail" | "modal" | "expanded";
 type MediaIntrinsicSize = { width: number; height: number };
 type AttachmentViewportSize = { width: number; height: number };
@@ -289,6 +293,88 @@ export const buildPostAttachmentMetadata = async (file: File, contentType: strin
   return {};
 };
 
+export function AttachmentComposerField({
+  attachments,
+  disabled = false,
+  onAttachmentsChange,
+  onBusyChange,
+  onUploadAttachment
+}: {
+  attachments: InquiryAttachment[];
+  disabled?: boolean;
+  onAttachmentsChange: (attachments: InquiryAttachment[]) => void;
+  onBusyChange?: (busy: boolean) => void;
+  onUploadAttachment: AttachmentUploadHandler;
+}) {
+  const [status, setStatus] = useState("");
+  const [uploading, setUploading] = useState(false);
+
+  const uploadFiles = async (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    if (!files.length) return;
+    const openSlots = maxPostAttachments - attachments.length;
+    const selectedFiles = files.slice(0, Math.max(0, openSlots));
+    if (!selectedFiles.length) {
+      setStatus(`Attachment limit reached (${maxPostAttachments})`);
+      return;
+    }
+
+    setUploading(true);
+    onBusyChange?.(true);
+    setStatus(`Uploading ${selectedFiles.length} file${selectedFiles.length === 1 ? "" : "s"}`);
+    try {
+      const uploaded: InquiryAttachment[] = [];
+      for (const file of selectedFiles) uploaded.push(await onUploadAttachment(file));
+      onAttachmentsChange([...attachments, ...uploaded].slice(0, maxPostAttachments));
+      setStatus(`${uploaded.length} file${uploaded.length === 1 ? "" : "s"} attached`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not attach this file.");
+    } finally {
+      setUploading(false);
+      onBusyChange?.(false);
+    }
+  };
+
+  return (
+    <div className="composer-attachments">
+      <div className="composer-attachment-toolbar">
+        <label className="attachment-picker">
+          <Paperclip size={16} />
+          <span>{attachments.length}/{maxPostAttachments}</span>
+          <input
+            type="file"
+            multiple
+            accept={postAttachmentAccept}
+            disabled={disabled || uploading || attachments.length >= maxPostAttachments}
+            onChange={uploadFiles}
+          />
+        </label>
+        {status ? <small>{status}</small> : <small>Images, video, PDF, text, or DOCX</small>}
+      </div>
+      {attachments.length ? (
+        <div className="composer-attachment-list">
+          {attachments.map((attachment) => (
+            <div key={attachment.id} className="composer-attachment-chip">
+              {attachmentIcon(attachment)}
+              <span>{attachment.fileName}</span>
+              <small>{formatAttachmentBytes(attachment.byteSize)}</small>
+              <button
+                type="button"
+                title="Remove attachment"
+                disabled={disabled || uploading}
+                onClick={() => onAttachmentsChange(attachments.filter((item) => item.id !== attachment.id))}
+              >
+                <X size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 const startAttachmentDrag = (attachment: InquiryAttachment) => (event: React.DragEvent<HTMLElement>) => {
   if (!attachment.url) return;
   const url = new URL(attachment.url, window.location.href).toString();
@@ -302,16 +388,21 @@ function postPreviewAttachments(item: InquiryItem) {
   return (item.attachments ?? []).filter((attachment) => attachment.url);
 }
 
-export function PostAttachmentCarousel({
-  item,
+const visibleAttachments = (attachments: InquiryAttachment[]) =>
+  attachments.filter((attachment) => attachment.url);
+
+export function AttachmentCarousel({
+  attachments: sourceAttachments,
+  label = "Attachments",
   onOpenPreview,
   variant = "feed"
 }: {
-  item: InquiryItem;
-  onOpenPreview: AttachmentPreviewHandler;
-  variant?: "feed" | "detail";
+  attachments: InquiryAttachment[];
+  label?: string;
+  onOpenPreview: (attachmentId: string) => void;
+  variant?: "feed" | "detail" | "comment";
 }) {
-  const attachments = postPreviewAttachments(item);
+  const attachments = visibleAttachments(sourceAttachments);
   const [activeIndex, setActiveIndex] = useState(0);
   const activeAttachment = attachments[Math.min(activeIndex, Math.max(attachments.length - 1, 0))];
 
@@ -320,20 +411,22 @@ export function PostAttachmentCarousel({
   }, [attachments.length]);
 
   if (!attachments.length || !activeAttachment) return null;
-
   const move = (event: React.MouseEvent<HTMLButtonElement>, direction: -1 | 1) => {
     event.stopPropagation();
     setActiveIndex((current) => (current + direction + attachments.length) % attachments.length);
   };
-
   const openPreview = (event: React.MouseEvent<HTMLElement>) => {
     event.stopPropagation();
-    onOpenPreview(item, activeAttachment.id);
+    onOpenPreview(activeAttachment.id);
   };
   const openOnSingleClick = activeAttachment.kind !== "video";
+  const previewMode = variant === "detail" ? "detail" : "feed";
 
   return (
-    <section className={`post-attachments post-attachments-${variant}`} aria-label="Post attachments">
+    <section
+      className={`post-attachments post-attachments-${variant}${variant === "comment" ? " comment-attachments" : ""}`}
+      aria-label={label}
+    >
       <div
         className={`attachment-frame attachment-frame-${activeAttachment.kind}`}
         role="button"
@@ -346,17 +439,12 @@ export function PostAttachmentCarousel({
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
-            onOpenPreview(item, activeAttachment.id);
+            onOpenPreview(activeAttachment.id);
           }
         }}
       >
-        <AttachmentPreviewPane
-          attachment={activeAttachment}
-          mode={variant === "detail" ? "detail" : "feed"}
-          onOpenPreview={openPreview}
-        />
+        <AttachmentPreviewPane attachment={activeAttachment} mode={previewMode} onOpenPreview={openPreview} />
       </div>
-
       <div className="attachment-rail">
         <button
           type="button"
@@ -383,6 +471,25 @@ export function PostAttachmentCarousel({
         ) : null}
       </div>
     </section>
+  );
+}
+
+export function PostAttachmentCarousel({
+  item,
+  onOpenPreview,
+  variant = "feed"
+}: {
+  item: InquiryItem;
+  onOpenPreview: AttachmentPreviewHandler;
+  variant?: "feed" | "detail";
+}) {
+  return (
+    <AttachmentCarousel
+      attachments={postPreviewAttachments(item)}
+      label="Post attachments"
+      variant={variant}
+      onOpenPreview={(attachmentId) => onOpenPreview(item, attachmentId)}
+    />
   );
 }
 

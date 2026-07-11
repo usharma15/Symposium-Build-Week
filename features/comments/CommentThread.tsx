@@ -19,7 +19,7 @@ import {
   Trash2
 } from "lucide-react";
 import type { CommentAction } from "@/lib/dataStore";
-import type { InquiryComment, ResearchProfile } from "@/lib/mockData";
+import type { InquiryAttachment, InquiryComment, ResearchProfile } from "@/lib/mockData";
 import {
   cleanHandle,
   commentActionActive,
@@ -38,8 +38,25 @@ import { ExpandableBodyText } from "@/features/content/ExpandableBodyText";
 import { profileForHandle, profileInitials } from "@/features/identity/profilePresentation";
 import { useQualifiedView } from "@/features/live-sync/useQualifiedView";
 import { CanonicalLink } from "@/features/navigation/CanonicalLink";
+import {
+  AttachmentCarousel,
+  AttachmentComposerField,
+  type AttachmentUploadHandler
+} from "@/features/attachments/AttachmentViews";
 
 export type CommentSegmentStacks = Record<string, string[]>;
+export type AddCommentHandler = (
+  itemId: string,
+  body: string,
+  stance: string,
+  parentId: string | null,
+  attachments: InquiryAttachment[]
+) => Promise<boolean>;
+export type CommentAttachmentPreviewHandler = (
+  itemId: string,
+  commentId: string,
+  attachmentId: string
+) => void;
 
 const maxVisibleCommentPathLength = 6;
 const commentSegmentStackKey = (itemId: string, rootCommentId?: string | null) =>
@@ -114,34 +131,51 @@ export function CommentOwnerControls({
 export function CommentComposer({
   itemId,
   onAddComment,
+  onUploadAttachment,
   parentId,
   compact = false
 }: {
   itemId: string;
-  onAddComment: (itemId: string, body: string, stance: string, parentId?: string | null) => void;
+  onAddComment: AddCommentHandler;
+  onUploadAttachment: AttachmentUploadHandler;
   parentId?: string | null;
   compact?: boolean;
 }) {
   const [body, setBody] = useState("");
+  const [attachments, setAttachments] = useState<InquiryAttachment[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
-  const submitComment = (event: FormEvent<HTMLFormElement>) => {
+  const submitComment = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const cleanBody = body.trim();
-    if (!cleanBody) return;
+    if (!cleanBody || busy || submitting) return;
 
-    onAddComment(itemId, cleanBody, "Comment", parentId ?? null);
-    setBody("");
+    setSubmitting(true);
+    const saved = await onAddComment(itemId, cleanBody, "Comment", parentId ?? null, attachments);
+    setSubmitting(false);
+    if (saved) {
+      setBody("");
+      setAttachments([]);
+    }
   };
 
   return (
     <form className={`comment-composer ${compact ? "compact" : ""}`} onSubmit={submitComment}>
       <div>
-        <button type="submit">Add comment</button>
+        <button type="submit" disabled={busy || submitting}>{submitting ? "Saving…" : parentId ? "Add reply" : "Add comment"}</button>
       </div>
         <textarea
         value={body}
         onChange={(event) => setBody(event.target.value)}
         placeholder={compact ? "Write a reply" : "Add a critique, question, test, or reasoned response"}
+      />
+      <AttachmentComposerField
+        attachments={attachments}
+        disabled={submitting}
+        onAttachmentsChange={setAttachments}
+        onBusyChange={setBusy}
+        onUploadAttachment={onUploadAttachment}
       />
     </form>
   );
@@ -154,6 +188,8 @@ export function CommentThread({
   selectedCommentId,
   onOpenProfile,
   onAddComment,
+  onUploadAttachment,
+  onOpenAttachmentPreview,
   onCommentAction,
   onEditComment,
   onDeleteComment,
@@ -170,7 +206,9 @@ export function CommentThread({
   profiles: Record<string, ResearchProfile>;
   selectedCommentId: string | null;
   onOpenProfile: (name: string) => void;
-  onAddComment: (itemId: string, body: string, stance: string, parentId?: string | null) => void;
+  onAddComment: AddCommentHandler;
+  onUploadAttachment: AttachmentUploadHandler;
+  onOpenAttachmentPreview: CommentAttachmentPreviewHandler;
   onCommentAction: CommentActionHandler;
   onEditComment: (itemId: string, commentId: string) => void;
   onDeleteComment: (itemId: string, commentId: string) => void;
@@ -196,6 +234,8 @@ export function CommentThread({
             selectedCommentId={selectedCommentId}
             onOpenProfile={onOpenProfile}
             onAddComment={onAddComment}
+            onUploadAttachment={onUploadAttachment}
+            onOpenAttachmentPreview={onOpenAttachmentPreview}
             onCommentAction={onCommentAction}
             onEditComment={onEditComment}
             onDeleteComment={onDeleteComment}
@@ -238,6 +278,8 @@ function CommentRootSegment({
   selectedCommentId,
   onOpenProfile,
   onAddComment,
+  onUploadAttachment,
+  onOpenAttachmentPreview,
   onCommentAction,
   onEditComment,
   onDeleteComment,
@@ -255,7 +297,9 @@ function CommentRootSegment({
   profiles: Record<string, ResearchProfile>;
   selectedCommentId: string | null;
   onOpenProfile: (name: string) => void;
-  onAddComment: (itemId: string, body: string, stance: string, parentId?: string | null) => void;
+  onAddComment: AddCommentHandler;
+  onUploadAttachment: AttachmentUploadHandler;
+  onOpenAttachmentPreview: CommentAttachmentPreviewHandler;
   onCommentAction: CommentActionHandler;
   onEditComment: (itemId: string, commentId: string) => void;
   onDeleteComment: (itemId: string, commentId: string) => void;
@@ -326,6 +370,8 @@ function CommentRootSegment({
         selectedCommentId={selectedCommentId}
         onOpenProfile={onOpenProfile}
         onAddComment={onAddComment}
+        onUploadAttachment={onUploadAttachment}
+        onOpenAttachmentPreview={onOpenAttachmentPreview}
         onCommentAction={onCommentAction}
         onEditComment={onEditComment}
         onDeleteComment={onDeleteComment}
@@ -358,6 +404,8 @@ function CommentNode({
   selectedCommentId,
   onOpenProfile,
   onAddComment,
+  onUploadAttachment,
+  onOpenAttachmentPreview,
   onCommentAction,
   onEditComment,
   onDeleteComment,
@@ -374,7 +422,9 @@ function CommentNode({
   profiles: Record<string, ResearchProfile>;
   selectedCommentId: string | null;
   onOpenProfile: (name: string) => void;
-  onAddComment: (itemId: string, body: string, stance: string, parentId?: string | null) => void;
+  onAddComment: AddCommentHandler;
+  onUploadAttachment: AttachmentUploadHandler;
+  onOpenAttachmentPreview: CommentAttachmentPreviewHandler;
   onCommentAction: CommentActionHandler;
   onEditComment: (itemId: string, commentId: string) => void;
   onDeleteComment: (itemId: string, commentId: string) => void;
@@ -456,6 +506,16 @@ function CommentNode({
             }
           }}
         />
+        {comment.id && !commentDeleted ? (
+          <AttachmentCarousel
+            attachments={comment.attachments ?? []}
+            label="Comment attachments"
+            variant="comment"
+            onOpenPreview={(attachmentId) =>
+              onOpenAttachmentPreview(itemId, comment.id as string, attachmentId)
+            }
+          />
+        ) : null}
         <CommentTimeFooter comment={comment} />
         {comment.id && !commentDeleted ? (
           <CanonicalLink
@@ -484,9 +544,11 @@ function CommentNode({
                 itemId={itemId}
                 parentId={comment.id ?? null}
                 compact
-                onAddComment={(id, body, stance, parentId) => {
-                  onAddComment(id, body, stance, parentId);
-                  setReplyOpen(false);
+                onUploadAttachment={onUploadAttachment}
+                onAddComment={async (id, body, stance, parentId, attachments) => {
+                  const saved = await onAddComment(id, body, stance, parentId, attachments);
+                  if (saved) setReplyOpen(false);
+                  return saved;
                 }}
               />
             ) : null}
@@ -517,6 +579,8 @@ function CommentNode({
                 selectedCommentId={selectedCommentId}
                 onOpenProfile={onOpenProfile}
                 onAddComment={onAddComment}
+                onUploadAttachment={onUploadAttachment}
+                onOpenAttachmentPreview={onOpenAttachmentPreview}
                 onCommentAction={onCommentAction}
                 onEditComment={onEditComment}
                 onDeleteComment={onDeleteComment}

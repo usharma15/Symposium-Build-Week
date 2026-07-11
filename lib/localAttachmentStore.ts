@@ -7,7 +7,7 @@ import type { InquiryAttachment } from "@/lib/mockData";
 
 const docxContentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
-type LocalAttachmentOwnerType = "post" | "message" | "note" | "profile";
+type LocalAttachmentOwnerType = "post" | "comment" | "message" | "note" | "profile";
 type LocalAttachmentStatus = "pending" | "uploaded";
 
 export type LocalAttachmentRecord = {
@@ -216,6 +216,83 @@ export const readLocalAttachment = async (attachmentId: string) => {
   };
 };
 
+const localRecordToAttachment = (record: LocalAttachmentRecord): InquiryAttachment => ({
+  id: record.attachmentId,
+  fileName: record.fileName,
+  contentType: record.contentType,
+  byteSize: record.byteSize,
+  url: localAttachmentPublicPath(record),
+  status: "uploaded",
+  kind: attachmentKindForContentType(record.contentType),
+  metadata: record.metadata,
+  createdAt: record.createdAt
+});
+
+export const replaceLocalOwnerAttachments = async (input: {
+  actorHandle?: string;
+  attachmentIds: string[];
+  ownerId: string;
+  ownerType: "post" | "comment";
+}) =>
+  withStoreLock(async () => {
+    if (input.attachmentIds.length > 10) {
+      throw new LocalAttachmentStoreError(`${input.ownerType === "post" ? "Posts" : "Comments"} can have up to 10 attachments.`, 400);
+    }
+    if (new Set(input.attachmentIds).size !== input.attachmentIds.length) {
+      throw new LocalAttachmentStoreError(`Each ${input.ownerType} attachment can only be attached once.`, 400);
+    }
+    const store = await loadStore();
+    const desired = input.attachmentIds.map((attachmentId) => store.attachments[attachmentId]);
+    if (
+      desired.some(
+        (record) =>
+          !record ||
+          record.ownerType !== input.ownerType ||
+          record.status !== "uploaded" ||
+          (record.actorHandle && record.actorHandle !== input.actorHandle) ||
+          (record.ownerId && record.ownerId !== input.ownerId)
+      )
+    ) {
+      throw new LocalAttachmentStoreError(
+        `One or more attachments are not confirmed, no longer available, or already belong to another ${input.ownerType}.`,
+        400
+      );
+    }
+
+    const desiredIds = new Set(input.attachmentIds);
+    const removed = Object.values(store.attachments).filter(
+      (record) =>
+        record.ownerType === input.ownerType && record.ownerId === input.ownerId && !desiredIds.has(record.attachmentId)
+    );
+    for (const record of removed) {
+      await unlink(recordFilePath(record)).catch(() => undefined);
+      delete store.attachments[record.attachmentId];
+    }
+    for (const record of desired as LocalAttachmentRecord[]) {
+      store.attachments[record.attachmentId] = {
+        ...record,
+        ownerId: input.ownerId,
+        updatedAt: new Date().toISOString()
+      };
+    }
+    await saveStore(store);
+    return input.attachmentIds.map((attachmentId) => localRecordToAttachment(store.attachments[attachmentId]!));
+  });
+
+export const deleteLocalOwnerAttachments = async (ownerType: "post" | "comment", ownerId: string) =>
+  withStoreLock(async () => {
+    const store = await loadStore();
+    const owned = Object.values(store.attachments).filter(
+      (record) => record.ownerType === ownerType && record.ownerId === ownerId
+    );
+    for (const record of owned) {
+      await unlink(recordFilePath(record)).catch(() => undefined);
+      delete store.attachments[record.attachmentId];
+    }
+    if (owned.length) await saveStore(store);
+    return owned.length;
+  });
+
 export const resolveLocalPostAttachments = async (attachmentIds: string[], actorHandle?: string) => {
   const store = await loadStore();
   return attachmentIds.map((attachmentId): InquiryAttachment => {
@@ -224,23 +301,14 @@ export const resolveLocalPostAttachments = async (attachmentIds: string[], actor
       !record ||
       record.ownerType !== "post" ||
       record.status !== "uploaded" ||
-      (record.actorHandle && actorHandle && record.actorHandle !== actorHandle)
+      Boolean(record.ownerId) ||
+      (record.actorHandle && record.actorHandle !== actorHandle)
     ) {
       throw new LocalAttachmentStoreError(
         "One or more attachments are not confirmed, no longer available, or already belong to another post.",
         400
       );
     }
-    return {
-      id: record.attachmentId,
-      fileName: record.fileName,
-      contentType: record.contentType,
-      byteSize: record.byteSize,
-      url: localAttachmentPublicPath(record),
-      status: "uploaded",
-      kind: attachmentKindForContentType(record.contentType),
-      metadata: record.metadata,
-      createdAt: record.createdAt
-    };
+    return localRecordToAttachment(record);
   });
 };

@@ -178,6 +178,7 @@ The current guarantees are:
 - Migration `0013_authoritative_entity_revisions` adds monotonic revisions to posts, comments, profiles, and follow relationships so clients can deterministically reject stale snapshots across tabs, browsers, devices, bootstrap refreshes, and delayed live events.
 - Migration `0014_note_revision_guards` adds authoritative note and note-block revisions. Existing-note writes must supply the revisions they loaded, so delayed autosaves fail with a conflict instead of overwriting newer work.
 - Migration `0015_durable_r2_deletion` adds a leased, retry-safe object-deletion queue and backfills attachments belonging to existing post tombstones. Post deletion keeps its database tombstone and live event, but atomically removes the attachment from read projections and queues both canonical and staging R2 keys before commit. Removal is attempted before the delete request returns and retried every minute after transient provider failures.
+- Migration `0016_comment_attachment_ownership` extends the attachment-owner constraint to comments. Comment and reply creation claims verified staged objects in the comment transaction; post/comment edits replace a content-version-guarded desired attachment set; comment deletion and parent-post deletion queue every canonical and staging object durably.
 
 `npm run verify` is the local release gate. It runs security, infrastructure, domain, attachment, mutation, profile, TypeScript, and production-build checks. `npm audit --audit-level=high` is the dependency vulnerability gate.
 
@@ -222,6 +223,7 @@ Implemented now:
 - server-side ownership and membership boundaries across Office/drafts, communities/calls, DMs, notifications, workspaces/notes, and AI conversations
 - migration/readiness/release/maintenance observability plus structured request correlation
 - verified R2 staging uploads promoted to immutable public objects only after size, MIME, signature, and DOCX-structure checks
+- shared post, comment, and reply attachment ownership with transactional create/edit claims, bootstrap/live projection, and durable removal
 - an enabled R2 lifecycle rule that deletes abandoned `pending/` upload objects after one day
 - durable R2 removal for deleted posts, failed verification, promoted staging copies, abandoned confirmed post uploads, and replaced profile images, with leased retries and idempotent object deletion
 - transaction-serialized global upload ceilings of 500 preparations or 1 GiB per day and 8 GiB of active attachment metadata, alongside the tighter per-user quotas

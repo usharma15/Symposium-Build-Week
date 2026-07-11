@@ -111,6 +111,25 @@
   white-space: pre-wrap;
 }
 
+.comment-attachments {
+  width: calc(100% - 39px);
+  max-width: 620px;
+  margin: 10px 0 4px 39px;
+}
+
+.comment-attachments .attachment-frame {
+  aspect-ratio: 16 / 9;
+  max-height: 320px;
+}
+
+.comment-attachments .attachment-rail {
+  min-width: 0;
+}
+
+.comment-composer .composer-attachments {
+  margin-top: 2px;
+}
+
 .comment-card.highlighted {
   margin-inline: -10px;
   padding-inline: 10px;

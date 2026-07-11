@@ -3,7 +3,11 @@ import type { ContentKind, RoomId } from "@/lib/mockData";
 import { jsonError, readJson } from "@/lib/api";
 import { proxyLiveBackend } from "@/lib/liveBackendClient";
 import { contentKinds, postRooms } from "@/lib/symposiumCore";
-import { LocalAttachmentStoreError, resolveLocalPostAttachments } from "@/lib/localAttachmentStore";
+import {
+  LocalAttachmentStoreError,
+  replaceLocalOwnerAttachments,
+  resolveLocalPostAttachments
+} from "@/lib/localAttachmentStore";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -61,10 +65,19 @@ export async function POST(request: Request) {
   if (live) return live;
 
   try {
+    if (attachmentIds.length && (input.room === "office" || input.kind === "draft")) {
+      return jsonError("Private post attachments require protected delivery before they can be published.", 412);
+    }
     const localAttachments = attachmentIds.length
       ? await resolveLocalPostAttachments(attachmentIds, String(body.authorHandle ?? ""))
       : [];
     const item = await createPost({ ...input, attachments: localAttachments }, String(body.authorHandle ?? ""));
+    await replaceLocalOwnerAttachments({
+      actorHandle: String(body.authorHandle ?? ""),
+      attachmentIds,
+      ownerId: item.id,
+      ownerType: "post"
+    });
     return Response.json({ item });
   } catch (error) {
     if (error instanceof LocalAttachmentStoreError) return jsonError(error.message, error.status);
