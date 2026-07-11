@@ -47,7 +47,9 @@ export function EntrySequence({
 
   onLocalPreview,
 
-  preloadRenders
+  preloadRenders,
+
+  playApproach
 
 }: {
 
@@ -67,13 +69,15 @@ export function EntrySequence({
 
   preloadRenders: string[];
 
+  playApproach: boolean;
+
 }) {
 
   return (
 
-    <main className={`entry-sequence ${theme}`} aria-label="Approaching Symposium">
+    <main className={`entry-sequence ${theme}`} aria-label={playApproach ? "Approaching Symposium" : "Loading Symposium"}>
 
-      <Image
+      {playApproach ? <Image
 
         src={entranceRender}
 
@@ -87,13 +91,13 @@ export function EntrySequence({
 
         className="entry-image"
 
-      />
+      /> : null}
 
       <RenderPreloadDeck sources={preloadRenders} />
 
-      <div className="entry-veil" />
+      {playApproach ? <div className="entry-veil" /> : null}
 
-      <div className="entry-stair-lines" aria-hidden="true">
+      {playApproach ? <div className="entry-stair-lines" aria-hidden="true">
 
         {Array.from({ length: 9 }).map((_, index) => (
 
@@ -101,13 +105,13 @@ export function EntrySequence({
 
         ))}
 
-      </div>
+      </div> : null}
 
-      <div className="entry-copy">
+      {playApproach ? <div className="entry-copy">
 
         <p>Welcome to the Symposium</p>
 
-      </div>
+      </div> : null}
 
       {mode === "auth" ? (
 

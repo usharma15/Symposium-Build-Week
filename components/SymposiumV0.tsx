@@ -2820,6 +2820,7 @@ function SymposiumExperience({ auth, initialRoute }: { auth: SymposiumAuthState;
         clerkEnabled={clerkEnabled}
         onLocalPreview={enterLocalPreview}
         preloadRenders={themePreloadRenders}
+        playApproach={shouldPlayEntrance === true}
       />
     );
   }
