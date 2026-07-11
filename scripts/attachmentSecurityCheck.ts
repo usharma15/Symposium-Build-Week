@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import JSZip from "jszip";
+import { validateDocxArchive } from "@/lib/docxSecurity";
 import {
   attachmentContentTypesMatch,
   validateAttachmentContentSignature,
@@ -10,6 +14,25 @@ import { confirmAttachmentInputSchema } from "@/packages/contracts/src";
 const bytes = (...values: number[]) => Uint8Array.from(values);
 const ascii = (value: string) => new TextEncoder().encode(value);
 
+const makeDocx = async (relationships: string, extraFiles: Record<string, string> = {}) => {
+  const archive = new JSZip();
+  archive.file(
+    "[Content_Types].xml",
+    `<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`
+  );
+  archive.file(
+    "word/document.xml",
+    `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Safe document</w:t></w:r></w:p></w:body></w:document>`
+  );
+  archive.file(
+    "word/_rels/document.xml.rels",
+    `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${relationships}</Relationships>`
+  );
+  for (const [fileName, content] of Object.entries(extraFiles)) archive.file(fileName, content);
+  return archive.generateAsync({ type: "uint8array" });
+};
+
+const main = async () => {
 assert.equal(attachmentContentTypesMatch("image/jpg", "image/jpeg"), true);
 assert.equal(validateAttachmentNameAndContentType("result.pdf", "image/png"), "The .pdf file extension does not match the declared attachment type.");
 assert.equal(validateAttachmentNameAndContentType("figure.PNG", "image/png"), null);
@@ -48,6 +71,45 @@ assert.equal(
   }).success,
   false
 );
+
+const hyperlinkType = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
+assert.equal(
+  await validateDocxArchive(
+    await makeDocx(`<Relationship Id="rId1" Type="${hyperlinkType}" Target="https://example.com/source" TargetMode="External"/>`)
+  ),
+  true
+);
+assert.equal(
+  await validateDocxArchive(
+    await makeDocx(`<Relationship Id="rId1" Type="${hyperlinkType}" Target="javascript:alert(1)" TargetMode="External"/>`)
+  ),
+  false
+);
+assert.equal(
+  await validateDocxArchive(
+    await makeDocx(
+      `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk" Target="afchunk1.html"/>`,
+      { "word/afchunk1.html": "<script>alert(1)</script>" }
+    )
+  ),
+  false
+);
+assert.equal(
+  await validateDocxArchive(await makeDocx("", { "word/embeddings/object.bin": "active package" })),
+  false
+);
+
+const root = process.cwd();
+const [viewerSource, storageSource, maintenanceSource] = await Promise.all([
+  readFile(path.join(root, "features/attachments/AttachmentViews.tsx"), "utf8"),
+  readFile(path.join(root, "apps/api/src/services/storage.ts"), "utf8"),
+  readFile(path.join(root, "apps/api/src/services/maintenance.ts"), "utf8")
+]);
+assert.match(viewerSource, /renderAltChunks: false/);
+assert.match(viewerSource, /sanitizeRenderedDocx\(target\)/);
+assert.match(storageSource, /ContentLength: byteSize/);
+assert.match(storageSource, /signableHeaders: new Set\(\["content-type"\]\)/);
+assert.match(maintenanceSource, /deleteUploadedObject/);
 assert.equal(
   confirmAttachmentInputSchema.safeParse({
     attachmentId: "00000000-0000-4000-8000-000000000001",
@@ -67,12 +129,19 @@ console.log(
         "video signatures",
         "text binary rejection",
         "attachment identifier validation",
-        "metadata size bounds"
+        "metadata size bounds",
+        "DOCX active-content and unsafe-relationship rejection",
+        "defense-in-depth DOCX render sanitization",
+        "signed upload size and type binding",
+        "expired R2 object cleanup"
       ]
     },
     null,
     2
   )
 );
+};
+
+void main();
 
 export {};

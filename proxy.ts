@@ -1,9 +1,49 @@
 import { clerkMiddleware } from "@clerk/nextjs/server";
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
+import {
+  clerkContentSecurityPolicyDirectives,
+  createLocalContentSecurityPolicy
+} from "@/lib/contentSecurityPolicy";
+import { isCrossSiteMutation } from "@/lib/requestSecurity";
 
 const clerkEnabled = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && process.env.CLERK_SECRET_KEY);
 
-export default clerkEnabled ? clerkMiddleware() : () => NextResponse.next();
+const crossSiteMutationResponse = (request: NextRequest) =>
+  isCrossSiteMutation({
+    method: request.method,
+    origin: request.headers.get("origin"),
+    requestOrigin: request.nextUrl.origin,
+    secFetchSite: request.headers.get("sec-fetch-site")
+  })
+    ? Response.json(
+        { error: "Cross-site mutations are not allowed." },
+        { status: 403, headers: { "Cache-Control": "no-store" } }
+      )
+    : null;
+
+const localSecurityMiddleware = (request: NextRequest) => {
+  const nonce = crypto.randomUUID().replaceAll("-", "");
+  const policy = createLocalContentSecurityPolicy(nonce, process.env.NODE_ENV !== "production");
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("Content-Security-Policy", policy);
+  requestHeaders.set("x-nonce", nonce);
+  const response = crossSiteMutationResponse(request) ?? NextResponse.next({ request: { headers: requestHeaders } });
+  response.headers.set("Content-Security-Policy", policy);
+  response.headers.set("x-nonce", nonce);
+  return response;
+};
+
+export default clerkEnabled
+  ? clerkMiddleware(
+      (_auth, request) => crossSiteMutationResponse(request) ?? undefined,
+      {
+        contentSecurityPolicy: {
+          strict: true,
+          directives: clerkContentSecurityPolicyDirectives
+        }
+      }
+    )
+  : localSecurityMiddleware;
 
 export const config = {
   matcher: [

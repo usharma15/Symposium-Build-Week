@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { TRPCError } from "@trpc/server";
-import JSZip from "jszip";
 import type { PoolClient } from "pg";
 import {
   confirmAttachmentInputSchema,
@@ -29,6 +28,7 @@ import {
   promoteUploadedObject
 } from "../services/storage";
 import { runAtomic } from "../services/transactions";
+import { validateDocxArchive } from "@/lib/docxSecurity";
 import { actorHandle, ensureLiveData } from "./foundation";
 
 const allowedProfileImageTypes = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif", "image/avif"]);
@@ -69,7 +69,7 @@ const requireAttachmentDatabase = () => {
 };
 
 const assertUploadAllowance = async (client: PoolClient, handle: string, incomingByteSize: number) => {
-  await client.query(
+  const expired = await client.query<{ uploadObjectKey: string }>(
     `UPDATE attachments
      SET status = 'failed',
          metadata = metadata || jsonb_build_object('verificationError', 'Upload window expired.'),
@@ -78,7 +78,8 @@ const assertUploadAllowance = async (client: PoolClient, handle: string, incomin
        AND (
          (status = 'pending' AND updated_at < now() - interval '15 minutes')
          OR (status = 'verifying' AND updated_at < now() - interval '30 minutes')
-       )`,
+       )
+     RETURNING upload_object_key AS "uploadObjectKey"`,
     [handle]
   );
   const result = await client.query<{
@@ -104,6 +105,7 @@ const assertUploadAllowance = async (client: PoolClient, handle: string, incomin
   ) {
     throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "The 24-hour attachment upload allowance has been reached." });
   }
+  return expired.rows.map((row) => row.uploadObjectKey);
 };
 
 export const createAttachmentUpload = async (
@@ -158,6 +160,7 @@ export const createAttachmentUpload = async (
 
   requireAttachmentDatabase();
   await ensureLiveData();
+  let expiredUploadObjectKeys: string[] = [];
   const prepared = await runAtomic(async (client) => {
     const claim = await claimMutation<{
       attachmentId: string;
@@ -167,7 +170,7 @@ export const createAttachmentUpload = async (
     }>(client, handle, mutation);
     if (claim.replayed) return { value: claim.response };
 
-    await assertUploadAllowance(client, handle, input.byteSize);
+    expiredUploadObjectKeys = await assertUploadAllowance(client, handle, input.byteSize);
     const attachmentId = randomUUID();
     const objectKey = createObjectKey(input.ownerType, input.fileName);
     const uploadObjectKey = createUploadObjectKey(attachmentId);
@@ -211,7 +214,12 @@ export const createAttachmentUpload = async (
     return { value };
   });
 
-  const uploadUrl = await createUploadUrl(prepared.uploadObjectKey, input.contentType);
+  const expiredCleanup = await Promise.allSettled(expiredUploadObjectKeys.map(deleteUploadedObject));
+  if (expiredCleanup.some((result) => result.status === "rejected")) {
+    console.warn("SYMPOSIUM expired staged attachment cleanup was incomplete.");
+  }
+
+  const uploadUrl = await createUploadUrl(prepared.uploadObjectKey, input.contentType, input.byteSize);
 
   return {
     attachmentId: prepared.attachmentId,
@@ -239,40 +247,6 @@ const markVerificationFailed = async (
     console.warn("SYMPOSIUM rejected attachment cleanup failed.", error);
   });
   throw new TRPCError({ code: "BAD_REQUEST", message });
-};
-
-const validateDocxArchive = async (bytes: Uint8Array) => {
-  try {
-    const archive = await JSZip.loadAsync(bytes);
-    const entries = Object.values(archive.files) as Array<{
-      _data?: { uncompressedSize?: number };
-      dir: boolean;
-      name: string;
-    }>;
-    if (entries.length > 10_000) return false;
-    if (entries.some((entry) => /(?:^|\/)vbaProject\.bin$/i.test(entry.name))) return false;
-
-    let totalUncompressedBytes = 0;
-    for (const entry of entries) {
-      const uncompressedSize = Number(entry._data?.uncompressedSize ?? 0);
-      if (!Number.isSafeInteger(uncompressedSize) || uncompressedSize < 0 || uncompressedSize > 64 * 1024 * 1024) {
-        return false;
-      }
-      totalUncompressedBytes += uncompressedSize;
-      if (totalUncompressedBytes > 128 * 1024 * 1024) return false;
-    }
-
-    const document = archive.file("word/document.xml") as
-      | ({ _data?: { uncompressedSize?: number } } & NonNullable<ReturnType<typeof archive.file>>)
-      | null;
-    return Boolean(
-      archive.file("[Content_Types].xml") &&
-        document &&
-        Number(document._data?.uncompressedSize ?? 0) <= 20 * 1024 * 1024
-    );
-  } catch {
-    return false;
-  }
 };
 
 const selectAttachment = async (attachmentId: string, handle: string) => {

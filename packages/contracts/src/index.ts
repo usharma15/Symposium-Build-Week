@@ -51,6 +51,25 @@ export const resourceTypeSchema = z.enum([
 export const resourceVisibilitySchema = z.enum(["private", "restricted", "community", "public"]);
 export const resourceLifecycleSchema = z.enum(["draft", "active", "archived", "deleted"]);
 
+export const isSafeExternalUrl = (value: string) => {
+  try {
+    const url = new URL(value);
+    return (url.protocol === "https:" || url.protocol === "http:") &&
+      Boolean(url.hostname) &&
+      !url.username &&
+      !url.password;
+  } catch {
+    return false;
+  }
+};
+
+export const safeExternalUrlSchema = z
+  .string()
+  .trim()
+  .url()
+  .max(2048)
+  .refine(isSafeExternalUrl, "Use an http or https URL without embedded credentials.");
+
 export const resourceReferenceSchema = z.object({
   type: resourceTypeSchema,
   id: z.string().trim().min(1).max(240),
@@ -61,7 +80,7 @@ const textMarksSchema = z.array(z.enum(["bold", "italic", "code", "strikethrough
 export const documentTextSchema = z.object({
   text: z.string(),
   marks: textMarksSchema.optional(),
-  link: z.string().url().optional()
+  link: safeExternalUrlSchema.optional()
 });
 
 export const documentNodeSchema = z.discriminatedUnion("type", [
@@ -76,7 +95,7 @@ export const documentNodeSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("attachment"), attachmentId: z.string().min(1), caption: z.string().max(1000).optional() }),
   z.object({ type: z.literal("quote"), content: z.array(documentTextSchema).default([]), source: resourceReferenceSchema.optional() }),
   z.object({ type: z.literal("reference"), resource: resourceReferenceSchema }),
-  z.object({ type: z.literal("citation"), label: z.string().max(120), href: z.string().url().optional() })
+  z.object({ type: z.literal("citation"), label: z.string().max(120), href: safeExternalUrlSchema.optional() })
 ]);
 
 export const versionedDocumentSchema = z.object({
@@ -88,7 +107,7 @@ export const researchProfileSchema = z.object({
   name: z.string().min(1),
   handle: z.string().min(1),
   email: z.string().email().optional(),
-  avatarUrl: z.string().url().optional(),
+  avatarUrl: safeExternalUrlSchema.optional(),
   likesPublic: z.boolean().optional(),
   resharesPublic: z.boolean().optional(),
   role: z.string().min(1),
@@ -102,7 +121,7 @@ export const createProfileInputSchema = z.object({
   name: z.string().trim().min(1),
   handle: z.string().trim().min(1),
   email: z.string().trim().email().optional().or(z.literal("")),
-  avatarUrl: z.string().trim().url().optional().or(z.literal("")),
+  avatarUrl: safeExternalUrlSchema.optional().or(z.literal("")),
   likesPublic: z.boolean().optional(),
   resharesPublic: z.boolean().optional(),
   role: z.string().trim().default("Symposium participant"),
@@ -151,7 +170,7 @@ export const inquiryAttachmentSchema = z.object({
   fileName: z.string().min(1).max(255),
   contentType: z.string().min(1).max(160),
   byteSize: z.number().int().positive(),
-  url: z.string().url().optional(),
+  url: safeExternalUrlSchema.optional(),
   status: attachmentStatusSchema.default("uploaded"),
   kind: attachmentKindSchema,
   metadata: attachmentMetadataSchema.optional(),
@@ -263,7 +282,7 @@ export const authSyncInputSchema = z.object({
   email: z.string().email().optional(),
   name: z.string().trim().min(1).max(160).optional(),
   handle: z.string().trim().min(1).max(80).optional(),
-  imageUrl: z.string().url().optional()
+  imageUrl: safeExternalUrlSchema.optional()
 });
 
 export const createPostInputSchema = z.object({
@@ -405,6 +424,8 @@ export const saveNoteBlockInputSchema = z.object({
   workspaceId: z.string().uuid().optional(),
   noteId: z.string().uuid().optional(),
   blockId: z.string().uuid().optional(),
+  expectedNoteRevision: z.number().int().positive().optional(),
+  expectedBlockRevision: z.number().int().positive().optional(),
   body: z.string().max(50000),
   visibility: z.enum(["private", "community", "public"]).default("private")
 });

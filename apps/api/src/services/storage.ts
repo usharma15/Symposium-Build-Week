@@ -42,14 +42,18 @@ export const createObjectKey = (ownerType: string, fileName: string) => {
 
 export const createUploadObjectKey = (attachmentId: string) => `pending/${attachmentId}`;
 
-export const createUploadUrl = async (objectKey: string, contentType: string) => {
+export const createUploadUrl = async (objectKey: string, contentType: string, byteSize: number) => {
   const command = new PutObjectCommand({
     Bucket: env.R2_BUCKET!,
     Key: objectKey,
-    ContentType: contentType
+    ContentType: contentType,
+    ContentLength: byteSize
   });
 
-  return getSignedUrl(getS3Client(), command, { expiresIn: 60 * 5 });
+  return getSignedUrl(getS3Client(), command, {
+    expiresIn: 60 * 5,
+    signableHeaders: new Set(["content-type"])
+  });
 };
 
 const readObjectBytes = async (objectKey: string, range?: string) => {

@@ -136,7 +136,7 @@ Backend persistence is split into bounded repositories for posts, comments, iden
 5. Attachment gallery, viewer, uploader, and ownership extraction. Client domain complete; future owner types remain additive backend work.
 6. Post composer/detail/feed extraction. Complete.
 7. Profile activity and social graph extraction. Complete.
-8. Workspace/notes wiring and shared editor foundation. Presentation extracted; durable document/editor contract remains next-stage work.
+8. Workspace/notes wiring and shared editor foundation. Presentation extracted and authoritative note/block revision guards are in place; durable structured-document/editor integration remains next-stage work.
 9. Layer `globals.css` into tokens, foundations, layout, shared components, and feature styles. Complete with cascade-preserving layers.
 10. Split the backend live repository by domain while retaining the shared transaction kernel. Complete: routes now address domain repositories directly and cross-domain orchestration is service-owned.
 11. Add server-authoritative entity revisions and a shared cross-tab mutation coordinator. Complete for posts, comments, profiles, follows, bootstrap, live events, and the current edit/delete mutation envelope.

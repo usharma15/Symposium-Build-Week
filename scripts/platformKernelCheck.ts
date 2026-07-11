@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
+  documentNodeSchema,
+  documentTextSchema,
   resourceReferenceSchema,
+  safeExternalUrlSchema,
   versionedDocumentSchema
 } from "@/packages/contracts/src";
 
@@ -61,6 +64,12 @@ const main = async () => {
   }
 
   resourceReferenceSchema.parse({ type: "comment", id: "comment-1", label: "A comment" });
+  safeExternalUrlSchema.parse("https://example.com/reference");
+  for (const unsafeUrl of ["javascript:alert(1)", "data:text/html,<script>alert(1)</script>", "https://user:secret@example.com/"]) {
+    assert.equal(safeExternalUrlSchema.safeParse(unsafeUrl).success, false);
+    assert.equal(documentTextSchema.safeParse({ text: "unsafe", link: unsafeUrl }).success, false);
+    assert.equal(documentNodeSchema.safeParse({ type: "citation", label: "unsafe", href: unsafeUrl }).success, false);
+  }
   versionedDocumentSchema.parse({
     version: 1,
     nodes: [
@@ -81,7 +90,8 @@ const main = async () => {
           "bounded backend domain repositories",
           "direct route-to-domain ownership",
           "social graph route ownership",
-          "versioned document and resource-reference contracts"
+          "versioned document and resource-reference contracts",
+          "protocol-safe external document links"
         ]
       },
       null,

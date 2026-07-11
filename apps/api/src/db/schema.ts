@@ -575,12 +575,14 @@ export const notes = pgTable(
       .references(() => workspaces.id, { onDelete: "cascade" }),
     title: text("title").notNull(),
     visibility: text("visibility").default("private").notNull(),
+    revision: integer("revision").default(1).notNull(),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn()
   },
   (table) => [
     index("notes_workspace_updated_idx").on(table.workspaceId, table.updatedAt),
-    check("notes_visibility_check", sql`${table.visibility} IN ('private', 'community', 'public')`)
+    check("notes_visibility_check", sql`${table.visibility} IN ('private', 'community', 'public')`),
+    check("notes_revision_check", sql`${table.revision} >= 1`)
   ]
 );
 
@@ -594,12 +596,14 @@ export const noteBlocks = pgTable(
     kind: text("kind").default("text").notNull(),
     body: text("body").notNull(),
     sortOrder: integer("sort_order").default(0).notNull(),
+    revision: integer("revision").default(1).notNull(),
     metadata: jsonb("metadata").$type<Record<string, unknown>>().default(jsonObject).notNull(),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn()
   },
   (table) => [
-    index("note_blocks_note_updated_idx").on(table.noteId, table.updatedAt)
+    index("note_blocks_note_updated_idx").on(table.noteId, table.updatedAt),
+    check("note_blocks_revision_check", sql`${table.revision} >= 1`)
   ]
 );
 

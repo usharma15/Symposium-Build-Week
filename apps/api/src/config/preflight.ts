@@ -10,6 +10,18 @@ import {
 
 const localOriginPattern = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/;
 
+export const validWebOrigin = (origin: string, strict = env.SYMPOSIUM_STRICT_ENV) => {
+  if (origin === "*") return false;
+  try {
+    const parsed = new URL(origin);
+    if (parsed.username || parsed.password || parsed.pathname !== "/" || parsed.search || parsed.hash) return false;
+    if (parsed.protocol !== "https:" && (!(!strict && parsed.protocol === "http:"))) return false;
+    return parsed.origin === origin.replace(/\/$/, "");
+  } catch {
+    return false;
+  }
+};
+
 export const clerkSecretMode = (secret?: string | null) => {
   if (!secret) return "missing" as const;
   if (secret.startsWith("sk_live_")) return "production" as const;
@@ -55,6 +67,10 @@ export const deploymentEnvIssues = () => {
     issues.push("SYMPOSIUM_WEB_ORIGINS must include the deployed Vercel origin.");
   }
 
+  if (webOrigins.some((origin) => !validWebOrigin(origin, true))) {
+    issues.push("SYMPOSIUM_WEB_ORIGINS must contain exact HTTPS origins without wildcards, credentials, paths, or query strings.");
+  }
+
   if (webOrigins.some((origin) => localOriginPattern.test(origin))) {
     issues.push("SYMPOSIUM_WEB_ORIGINS must not include localhost-only origins in strict live mode.");
   }
@@ -69,6 +85,8 @@ export const deploymentEnvIssues = () => {
 
   if (!env.R2_PUBLIC_BASE_URL) {
     issues.push("R2_PUBLIC_BASE_URL is required for persistent public post and profile attachments.");
+  } else if (new URL(env.R2_PUBLIC_BASE_URL).protocol !== "https:") {
+    issues.push("R2_PUBLIC_BASE_URL must use HTTPS in strict live mode.");
   }
 
   const ownerHandle = cleanHandle(env.SYMPOSIUM_OWNER_HANDLE);

@@ -13,6 +13,11 @@ const booleanFromEnv = (fallback: boolean) =>
     return value;
   }, z.boolean());
 
+const safeHttpUrl = z.string().url().refine((value) => {
+  const url = new URL(value);
+  return (url.protocol === "https:" || url.protocol === "http:") && !url.username && !url.password;
+}, "Use an http or https URL without embedded credentials.");
+
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   HOST: z.string().default("0.0.0.0"),
@@ -35,7 +40,7 @@ const envSchema = z.object({
   R2_BUCKET: z.string().optional(),
   R2_ACCESS_KEY_ID: z.string().optional(),
   R2_SECRET_ACCESS_KEY: z.string().optional(),
-  R2_PUBLIC_BASE_URL: z.string().url().optional().or(z.literal("")),
+  R2_PUBLIC_BASE_URL: safeHttpUrl.optional().or(z.literal("")),
   APP_VERSION: z.string().max(120).optional(),
   RENDER_GIT_COMMIT: z.string().max(120).optional(),
   VERCEL_GIT_COMMIT_SHA: z.string().max(120).optional(),

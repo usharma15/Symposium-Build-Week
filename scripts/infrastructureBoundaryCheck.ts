@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { buildApp } from "@/apps/api/src/server";
 import { latestMigrationId, migrationIds } from "@/apps/api/src/db/migrate";
-import { comments, events, posts, profileFollows, profiles } from "@/apps/api/src/db/schema";
+import { comments, events, noteBlocks, notes, posts, profileFollows, profiles } from "@/apps/api/src/db/schema";
 import { parseEventCursor } from "@/apps/api/src/services/events";
 import { clerkSecretMode } from "@/apps/api/src/config/preflight";
 
 const main = async () => {
-  assert.equal(latestMigrationId, "0013_authoritative_entity_revisions");
+  assert.equal(latestMigrationId, "0014_note_revision_guards");
   assert.equal(clerkSecretMode("sk_test_example"), "development");
   assert.equal(clerkSecretMode("sk_live_example"), "production");
   assert.equal(clerkSecretMode(undefined), "missing");
@@ -18,6 +18,8 @@ const main = async () => {
   assert.ok("revision" in comments);
   assert.ok("revision" in profiles);
   assert.ok("revision" in profileFollows);
+  assert.ok("revision" in notes);
+  assert.ok("revision" in noteBlocks);
 
   const validCursor = "2026-07-10T12:00:00.000Z::00000000-0000-4000-8000-000000000001";
   assert.deepEqual(parseEventCursor(validCursor), {
@@ -71,6 +73,7 @@ const main = async () => {
           "Clerk provider mode visibility",
           "event audience schema placement",
           "authoritative entity revision schema",
+          "note and note-block revision schema",
           "strict event cursor parsing",
           "request correlation headers",
           "no-store API policy",

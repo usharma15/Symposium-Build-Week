@@ -29,6 +29,7 @@ import {
   splitPreviewTextIntoPages
 } from "@/lib/attachmentRules";
 import { deletedPostContextTitle, isDeletedPost } from "@/lib/symposiumCore";
+import { isSafeExternalUrl } from "@/packages/contracts/src";
 
 export type AttachmentPreviewHandler = (item: InquiryItem, attachmentId: string) => void;
 type AttachmentRenderMode = "feed" | "detail" | "modal" | "expanded";
@@ -118,6 +119,40 @@ const docxContentType = "application/vnd.openxmlformats-officedocument.wordproce
 const isDocxAttachment = (attachment: InquiryAttachment) =>
   attachment.contentType.toLowerCase() === docxContentType ||
   attachment.fileName.toLowerCase().endsWith(".docx");
+
+const safeEmbeddedImageSource = (value: string) =>
+  value.startsWith("blob:") || /^data:image\/(?:avif|gif|jpeg|jpg|png|webp);base64,/i.test(value);
+
+export const sanitizeRenderedDocx = (target: HTMLElement) => {
+  target.querySelectorAll("script, iframe, object, embed, form, base, meta[http-equiv]").forEach((element) => {
+    element.remove();
+  });
+
+  target.querySelectorAll<HTMLElement>("*").forEach((element) => {
+    for (const attribute of Array.from(element.attributes)) {
+      if (attribute.name.toLowerCase().startsWith("on")) element.removeAttribute(attribute.name);
+    }
+
+    if (element instanceof HTMLAnchorElement) {
+      const href = element.getAttribute("href")?.trim() ?? "";
+      if (href.startsWith("#")) return;
+      if (!isSafeExternalUrl(href)) {
+        element.removeAttribute("href");
+        element.removeAttribute("target");
+        element.removeAttribute("rel");
+        return;
+      }
+      element.target = "_blank";
+      element.rel = "noopener noreferrer nofollow";
+      return;
+    }
+
+    for (const attributeName of ["href", "xlink:href", "src"]) {
+      const value = element.getAttribute(attributeName)?.trim();
+      if (value && !safeEmbeddedImageSource(value)) element.removeAttribute(attributeName);
+    }
+  });
+};
 
 const extractDocxParagraphText = (paragraphXml: string) =>
   Array.from(paragraphXml.matchAll(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g))
@@ -567,10 +602,12 @@ function DocxAttachmentPreview({
           renderFooters: true,
           renderFootnotes: true,
           renderHeaders: true,
+          renderAltChunks: false,
           useBase64URL: true
         });
 
         if (cancelled) return;
+        sanitizeRenderedDocx(target);
         const renderedPages = Array.from(target.querySelectorAll<HTMLElement>("section.symposium-docx"));
         if (!renderedPages.length) throw new Error("Document pages missing.");
         renderedPages.forEach((renderedPage, index) => {

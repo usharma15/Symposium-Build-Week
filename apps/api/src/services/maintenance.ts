@@ -1,4 +1,5 @@
 import { getPool, hasDatabase } from "../db/client";
+import { deleteUploadedObject } from "./storage";
 
 const maintenanceIntervalMs = 6 * 60 * 60 * 1000;
 let maintenanceTimer: NodeJS.Timeout | null = null;
@@ -17,6 +18,8 @@ export const runDatabaseMaintenance = async () => {
   if (!hasDatabase()) return;
   lastStartedAt = new Date().toISOString();
   const client = await getPool().connect();
+  let committed = false;
+  let expiredUploadObjectKeys: string[] = [];
   try {
     await client.query("BEGIN");
     await client.query(
@@ -46,15 +49,18 @@ export const runDatabaseMaintenance = async () => {
          LIMIT 5000
        )`
     );
-    await client.query(
+    const expiredUploads = await client.query<{ uploadObjectKey: string }>(
       `UPDATE attachments
        SET status = 'failed',
            metadata = metadata || jsonb_build_object('verificationError', 'Upload window expired.'),
            updated_at = now()
        WHERE status IN ('pending', 'verifying')
-         AND updated_at < now() - interval '1 day'`
+         AND updated_at < now() - interval '1 day'
+       RETURNING upload_object_key AS "uploadObjectKey"`
     );
+    expiredUploadObjectKeys = expiredUploads.rows.map((row) => row.uploadObjectKey);
     await client.query("COMMIT");
+    committed = true;
     lastCompletedAt = new Date().toISOString();
     lastErrorAt = null;
   } catch (error) {
@@ -63,6 +69,13 @@ export const runDatabaseMaintenance = async () => {
     throw error;
   } finally {
     client.release();
+  }
+
+  if (committed && expiredUploadObjectKeys.length) {
+    const cleanup = await Promise.allSettled(expiredUploadObjectKeys.map(deleteUploadedObject));
+    if (cleanup.some((result) => result.status === "rejected")) {
+      console.warn("SYMPOSIUM expired R2 attachment cleanup was incomplete.");
+    }
   }
 };
 

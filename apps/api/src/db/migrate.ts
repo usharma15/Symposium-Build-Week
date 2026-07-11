@@ -1047,6 +1047,24 @@ const migrations: Migration[] = [
       END
       $$;
     `
+  },
+  {
+    id: "0014_note_revision_guards",
+    sql: `
+      ALTER TABLE notes ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE note_blocks ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1;
+
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'notes_revision_check') THEN
+          ALTER TABLE notes ADD CONSTRAINT notes_revision_check CHECK (revision >= 1);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'note_blocks_revision_check') THEN
+          ALTER TABLE note_blocks ADD CONSTRAINT note_blocks_revision_check CHECK (revision >= 1);
+        END IF;
+      END
+      $$;
+    `
   }
 ];
 

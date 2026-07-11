@@ -6,11 +6,17 @@ import {
   localPreviewRouteUnavailableResponse
 } from "@/lib/runtimeSafety";
 import { actorHandle } from "@/apps/api/src/repository/foundation";
+import { validWebOrigin } from "@/apps/api/src/config/preflight";
+import {
+  clerkContentSecurityPolicyDirectives,
+  createLocalContentSecurityPolicy
+} from "@/lib/contentSecurityPolicy";
 import { joinOrRequestCommunity } from "@/apps/api/src/repository/communities";
 import { upsertProfile } from "@/apps/api/src/repository/identity";
 import { search } from "@/apps/api/src/repository/search";
 import { getPublicInitialState } from "@/apps/api/src/repository/foundation";
 import { readJson } from "@/lib/api";
+import { isCrossSiteMutation } from "@/lib/requestSecurity";
 
 const main = async () => {
   assert.equal(localDataFallbackAllowed("development"), true);
@@ -109,6 +115,41 @@ const main = async () => {
   assert.equal(headers.get("referrer-policy"), "strict-origin-when-cross-origin");
   assert.equal(headers.get("x-frame-options"), "SAMEORIGIN");
   assert.equal(headers.get("permissions-policy"), "camera=(), microphone=(), geolocation=()");
+  assert.equal(headers.get("strict-transport-security"), "max-age=63072000; includeSubDomains; preload");
+
+  const localCsp = createLocalContentSecurityPolicy("testnonce", false);
+  assert.match(localCsp, /script-src 'self' 'nonce-testnonce' 'strict-dynamic'/);
+  assert.match(localCsp, /script-src-attr 'none'/);
+  assert.match(localCsp, /object-src 'none'/);
+  assert.match(localCsp, /frame-ancestors 'self'/);
+  assert.deepEqual(clerkContentSecurityPolicyDirectives["script-src-attr"], ["none"]);
+  assert.deepEqual(clerkContentSecurityPolicyDirectives["object-src"], ["none"]);
+  assert.equal(validWebOrigin("https://symposium.example", true), true);
+  assert.equal(validWebOrigin("http://symposium.example", true), false);
+  assert.equal(validWebOrigin("https://symposium.example/path", true), false);
+  assert.equal(validWebOrigin("*", true), false);
+  assert.equal(
+    isCrossSiteMutation({
+      method: "POST",
+      origin: "https://attacker.example",
+      requestOrigin: "https://symposium.example",
+      secFetchSite: "cross-site"
+    }),
+    true
+  );
+  assert.equal(
+    isCrossSiteMutation({
+      method: "PATCH",
+      origin: "https://symposium.example",
+      requestOrigin: "https://symposium.example",
+      secFetchSite: "same-origin"
+    }),
+    false
+  );
+  assert.equal(
+    isCrossSiteMutation({ method: "GET", origin: "https://attacker.example", requestOrigin: "https://symposium.example" }),
+    false
+  );
 
   const mutableEnv = process.env as Record<string, string | undefined>;
   const originalNodeEnv = mutableEnv.NODE_ENV;
@@ -179,7 +220,10 @@ const main = async () => {
           "server-derived mutation identity",
           "profile ownership enforcement",
           "live bridge cache isolation",
-          "browser security headers"
+          "browser security headers",
+          "nonce-based script policy",
+          "strict production origin validation",
+          "cross-site mutation rejection"
         ]
       },
       null,

@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { attachmentKindForContentType, validateAttachmentContentSignature } from "@/lib/attachmentRules";
+import { validateDocxArchive } from "@/lib/docxSecurity";
 import type { InquiryAttachment } from "@/lib/mockData";
+
+const docxContentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
 type LocalAttachmentOwnerType = "post" | "message" | "note" | "profile";
 type LocalAttachmentStatus = "pending" | "uploaded";
@@ -160,6 +163,9 @@ export const writeLocalAttachmentFile = async (attachmentId: string, bytes: Buff
     }
     const signatureError = validateAttachmentContentSignature(record.contentType, bytes.slice(0, 65_536));
     if (signatureError) throw new LocalAttachmentStoreError(signatureError, 400);
+    if (record.contentType === docxContentType && !(await validateDocxArchive(bytes))) {
+      throw new LocalAttachmentStoreError("The uploaded file is not a safe DOCX document.", 400);
+    }
 
     const filePath = recordFilePath(record);
     const temporaryPath = `${filePath}.${randomUUID()}.tmp`;
