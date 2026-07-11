@@ -59,6 +59,7 @@ export const profiles = pgTable(
     bio: text("bio").notNull(),
     fields: jsonb("fields").$type<string[]>().default(jsonArray).notNull(),
     preferences: jsonb("preferences").$type<Record<string, unknown>>().default(jsonObject).notNull(),
+    revision: integer("revision").default(1).notNull(),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn()
   },
@@ -78,6 +79,7 @@ export const profileFollows = pgTable(
       .notNull()
       .references(() => profiles.handle, { onDelete: "cascade" }),
     status: text("status").default("active").notNull(),
+    revision: integer("revision").default(1).notNull(),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn()
   },
@@ -86,7 +88,8 @@ export const profileFollows = pgTable(
     index("profile_follows_following_idx").on(table.followingHandle),
     index("profile_follows_follower_idx").on(table.followerHandle),
     check("profile_follows_no_self_check", sql`${table.followerHandle} <> ${table.followingHandle}`),
-    check("profile_follows_status_check", sql`${table.status} IN ('active', 'muted', 'blocked')`)
+    check("profile_follows_status_check", sql`${table.status} IN ('active', 'muted', 'blocked', 'none')`),
+    check("profile_follows_revision_check", sql`${table.revision} >= 1`)
   ]
 );
 
@@ -232,6 +235,7 @@ export const posts = pgTable(
     searchText: text("search_text").notNull(),
     editedAt: timestamp("edited_at", { withTimezone: true }),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    revision: integer("revision").default(1).notNull(),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn()
   },
@@ -285,6 +289,7 @@ export const comments = pgTable(
     forkedBy: jsonb("forked_by").$type<string[]>().default(jsonArray).notNull(),
     editedAt: timestamp("edited_at", { withTimezone: true }),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    revision: integer("revision").default(1).notNull(),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn()
   },

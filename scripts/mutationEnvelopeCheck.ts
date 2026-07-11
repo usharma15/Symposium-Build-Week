@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import type { PoolClient } from "pg";
 import { publishStoredEvent, stageEvent } from "@/apps/api/src/services/events";
 import {
@@ -112,6 +113,15 @@ const main = async () => {
   assert.deepEqual(privateEvent.audienceHandles, ["@ada"]);
   unsubscribe();
 
+  const postRoutes = readFileSync("apps/api/src/routes/postRoutes.ts", "utf8");
+  for (const scope of ["post.update", "post.delete", "comment.update", "comment.delete"]) {
+    assert.match(postRoutes, new RegExp(`mutationContextFromRequest\\(request, "${scope.replace(".", "\\.")}"`));
+  }
+  const postProxy = readFileSync("app/api/posts/[id]/route.ts", "utf8");
+  const commentProxy = readFileSync("app/api/posts/[id]/comments/[commentId]/route.ts", "utf8");
+  assert.equal((postProxy.match(/idempotencyKey/g) ?? []).length >= 4, true);
+  assert.equal((commentProxy.match(/idempotencyKey/g) ?? []).length >= 4, true);
+
   console.log(
     JSON.stringify(
       {
@@ -122,7 +132,8 @@ const main = async () => {
           "response replay",
           "payload conflict rejection",
           "transactional event staging",
-          "private event audience defaults"
+          "private event audience defaults",
+          "edit and delete idempotency coverage"
         ]
       },
       null,

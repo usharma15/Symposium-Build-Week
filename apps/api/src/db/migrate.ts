@@ -1016,6 +1016,37 @@ const migrations: Migration[] = [
       END
       $$;
     `
+  },
+  {
+    id: "0013_authoritative_entity_revisions",
+    sql: `
+      ALTER TABLE posts ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE comments ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE profiles ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE profile_follows ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1;
+
+      ALTER TABLE profile_follows DROP CONSTRAINT IF EXISTS profile_follows_status_check;
+      ALTER TABLE profile_follows
+        ADD CONSTRAINT profile_follows_status_check
+        CHECK (status IN ('active', 'muted', 'blocked', 'none'));
+
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'posts_revision_check') THEN
+          ALTER TABLE posts ADD CONSTRAINT posts_revision_check CHECK (revision >= 1);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'comments_revision_check') THEN
+          ALTER TABLE comments ADD CONSTRAINT comments_revision_check CHECK (revision >= 1);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'profiles_revision_check') THEN
+          ALTER TABLE profiles ADD CONSTRAINT profiles_revision_check CHECK (revision >= 1);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'profile_follows_revision_check') THEN
+          ALTER TABLE profile_follows ADD CONSTRAINT profile_follows_revision_check CHECK (revision >= 1);
+        END IF;
+      END
+      $$;
+    `
   }
 ];
 

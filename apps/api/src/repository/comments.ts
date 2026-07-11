@@ -75,6 +75,7 @@ export const addComment = async (
   if (!author) throw new TRPCError({ code: "NOT_FOUND", message: "Author profile not found." });
   const comment: InquiryCommentContract = {
     id: newId("comment"),
+    revision: 1,
     parentId: input.parentId ?? null,
     author: author.name,
     authorHandle: author.handle,
@@ -101,6 +102,7 @@ export const addComment = async (
       comment,
       item: {
         ...existing,
+        revision: (existing.revision ?? 1) + 1,
         metrics: nextMetrics,
         signals: nextSignals,
         comments: memoryAppend.comments
@@ -126,6 +128,7 @@ export const addComment = async (
     const postResult = await client.query<SnapshotRow>(
       `SELECT
         id,
+        revision,
         kind,
         room,
         title,
@@ -164,6 +167,7 @@ export const addComment = async (
     const commentsResult = await client.query<CommentRow>(
       `SELECT
         id,
+        revision,
         post_id AS "postId",
         parent_id AS "parentId",
         author_handle AS "authorHandle",
@@ -220,17 +224,24 @@ export const addComment = async (
         comment.createdAt
       ]
     );
-    await client.query(
+    const revisionResult = await client.query<{ revision: number }>(
       `UPDATE posts
        SET metrics = $2,
            signals = $3,
+           revision = revision + 1,
            updated_at = now()
-       WHERE id = $1`,
+       WHERE id = $1
+       RETURNING revision`,
       [postId, JSON.stringify(lockedNextMetrics), JSON.stringify(lockedNextSignals)]
     );
 
     updatedItem = rowToItem(
-      { ...row, metrics: lockedNextMetrics, signals: lockedNextSignals },
+      {
+        ...row,
+        metrics: lockedNextMetrics,
+        signals: lockedNextSignals,
+        revision: revisionResult.rows[0].revision
+      },
       appended.comments
     );
 
@@ -272,7 +283,13 @@ export const addComment = async (
 
 
 
-export const updateComment = async (postId: string, commentId: string, rawInput: unknown, actor: Actor) => {
+export const updateComment = async (
+  postId: string,
+  commentId: string,
+  rawInput: unknown,
+  actor: Actor,
+  mutation?: MutationContext
+) => {
   const input = updateCommentInputSchema.parse(rawInput);
   const handle = actorHandle(actor, input.actorHandle);
   const editedAt = new Date().toISOString();
@@ -298,9 +315,10 @@ export const updateComment = async (postId: string, commentId: string, rawInput:
     const mapped = mapCommentTree(existing.comments, commentId, (comment) => ({
       ...comment,
       body: input.body,
-      editedAt
+      editedAt,
+      revision: (comment.revision ?? 1) + 1
     }));
-    return { ...existing, comments: mapped.comments };
+    return { ...existing, comments: mapped.comments, revision: (existing.revision ?? 1) + 1 };
   }
 
   await ensureLiveData();
@@ -310,9 +328,14 @@ export const updateComment = async (postId: string, commentId: string, rawInput:
 
   try {
     await client.query("BEGIN");
+    const claim = await claimMutation<InquiryItemContract>(client, handle, mutation);
+    if (claim.replayed) {
+      await client.query("COMMIT");
+      return claim.response;
+    }
     const postResult = await client.query<SnapshotRow>(
       `SELECT
-        id, kind, room, title, author_handle AS "authorHandle", author_name AS "authorName",
+        id, revision, kind, room, title, author_handle AS "authorHandle", author_name AS "authorName",
         affiliation, date_label AS "dateLabel", created_at AS "createdAt", edited_at AS "editedAt",
         deleted_at AS "deletedAt",
         status, metrics, gathering_reason AS "gatheringReason", excerpt, body, tags, signals,
@@ -333,7 +356,7 @@ export const updateComment = async (postId: string, commentId: string, rawInput:
     }
 
     const commentsResult = await client.query<CommentRow>(
-      `SELECT id, post_id AS "postId", parent_id AS "parentId", author_handle AS "authorHandle",
+      `SELECT id, revision, post_id AS "postId", parent_id AS "parentId", author_handle AS "authorHandle",
         author_name AS "authorName", stance, body, metrics, saved_by AS "savedBy",
         signaled_by AS "signaledBy", forked_by AS "forkedBy", edited_at AS "editedAt",
         deleted_at AS "deletedAt", created_at AS "createdAt"
@@ -356,7 +379,8 @@ export const updateComment = async (postId: string, commentId: string, rawInput:
     const mapped = mapCommentTree(existingComments, commentId, (comment) => ({
       ...comment,
       body: input.body,
-      editedAt
+      editedAt,
+      revision: (comment.revision ?? 1) + 1
     }));
     if (!mapped.updated) throw new TRPCError({ code: "NOT_FOUND", message: "Comment not found." });
 
@@ -364,12 +388,17 @@ export const updateComment = async (postId: string, commentId: string, rawInput:
       `UPDATE comments
        SET body = $3,
            edited_at = $4,
+           revision = revision + 1,
            updated_at = now()
        WHERE post_id = $1 AND id = $2`,
       [postId, commentId, input.body, editedAt]
     );
 
-    updatedItem = rowToItem(row, mapped.comments);
+    const postRevisionResult = await client.query<{ revision: number }>(
+      `UPDATE posts SET revision = revision + 1, updated_at = now() WHERE id = $1 RETURNING revision`,
+      [postId]
+    );
+    updatedItem = rowToItem({ ...row, revision: postRevisionResult.rows[0].revision }, mapped.comments);
     await stageAuditLog(client, {
       actorHandle: handle,
       action: "comment.update",
@@ -377,6 +406,7 @@ export const updateComment = async (postId: string, commentId: string, rawInput:
       subjectId: commentId,
       metadata: { editedAt, postId }
     });
+    await completeMutation(client, handle, mutation, updatedItem);
     stagedEvent = await stageEvent(client, {
       kind: "comment.updated",
       actorHandle: handle,
@@ -401,7 +431,13 @@ export const updateComment = async (postId: string, commentId: string, rawInput:
   return updatedItem;
 };
 
-export const deleteComment = async (postId: string, commentId: string, rawInput: unknown, actor: Actor) => {
+export const deleteComment = async (
+  postId: string,
+  commentId: string,
+  rawInput: unknown,
+  actor: Actor,
+  mutation?: MutationContext
+) => {
   const input = rawInput && typeof rawInput === "object" ? (rawInput as { actorHandle?: unknown }) : {};
   const handle = actorHandle(actor, typeof input.actorHandle === "string" ? input.actorHandle : undefined);
   const deletedAt = new Date().toISOString();
@@ -422,7 +458,13 @@ export const deleteComment = async (postId: string, commentId: string, rawInput:
     if (!canManageComment(original, handle)) {
       throw new TRPCError({ code: "FORBIDDEN", message: "Only the author can delete this comment." });
     }
-    return tombstoneCommentInItem(existing, commentId, deletedAt).item;
+    const deletion = tombstoneCommentInItem(existing, commentId, deletedAt);
+    if (!deletion.deletedComment) return existing;
+    const comments = mapCommentTree(deletion.item.comments, commentId, (comment) => ({
+      ...comment,
+      revision: (original.revision ?? 1) + 1
+    })).comments;
+    return { ...deletion.item, comments, revision: (existing.revision ?? 1) + 1 };
   }
 
   await ensureLiveData();
@@ -433,9 +475,14 @@ export const deleteComment = async (postId: string, commentId: string, rawInput:
 
   try {
     await client.query("BEGIN");
+    const claim = await claimMutation<InquiryItemContract>(client, handle, mutation);
+    if (claim.replayed) {
+      await client.query("COMMIT");
+      return claim.response;
+    }
     const postResult = await client.query<SnapshotRow>(
       `SELECT
-        id, kind, room, title, author_handle AS "authorHandle", author_name AS "authorName",
+        id, revision, kind, room, title, author_handle AS "authorHandle", author_name AS "authorName",
         affiliation, date_label AS "dateLabel", created_at AS "createdAt", edited_at AS "editedAt",
         deleted_at AS "deletedAt",
         status, metrics, gathering_reason AS "gatheringReason", excerpt, body, tags, signals,
@@ -456,7 +503,7 @@ export const deleteComment = async (postId: string, commentId: string, rawInput:
     }
 
     const commentsResult = await client.query<CommentRow>(
-      `SELECT id, post_id AS "postId", parent_id AS "parentId", author_handle AS "authorHandle",
+      `SELECT id, revision, post_id AS "postId", parent_id AS "parentId", author_handle AS "authorHandle",
         author_name AS "authorName", stance, body, metrics, saved_by AS "savedBy",
         signaled_by AS "signaledBy", forked_by AS "forkedBy", edited_at AS "editedAt",
         deleted_at AS "deletedAt", created_at AS "createdAt"
@@ -471,6 +518,7 @@ export const deleteComment = async (postId: string, commentId: string, rawInput:
     if (!original) throw new TRPCError({ code: "NOT_FOUND", message: "Comment not found." });
     if (isDeletedComment(original)) {
       updatedItem = rowToItem(row, existingComments);
+      await completeMutation(client, handle, mutation, updatedItem);
       await client.query("COMMIT");
     } else {
       if (!canManageComment(original, handle)) {
@@ -490,6 +538,7 @@ export const deleteComment = async (postId: string, commentId: string, rawInput:
              forked_by = $8,
              edited_at = NULL,
              deleted_at = $9,
+             revision = revision + 1,
              updated_at = now()
          WHERE post_id = $1 AND id = $2`,
         [
@@ -511,16 +560,26 @@ export const deleteComment = async (postId: string, commentId: string, rawInput:
         [commentId]
       );
 
-      await client.query(
+      const postRevisionResult = await client.query<{ revision: number }>(
         `UPDATE posts
          SET metrics = $2,
              signals = $3,
+             revision = revision + 1,
              updated_at = now()
-         WHERE id = $1`,
+         WHERE id = $1
+         RETURNING revision`,
         [postId, JSON.stringify(deletion.item.metrics), JSON.stringify(deletion.item.signals)]
       );
 
-      updatedItem = deletion.item;
+      const comments = mapCommentTree(deletion.item.comments, commentId, (comment) => ({
+        ...comment,
+        revision: (original.revision ?? 1) + 1
+      })).comments;
+      updatedItem = {
+        ...deletion.item,
+        comments,
+        revision: postRevisionResult.rows[0].revision
+      };
       didDelete = true;
       await stageAuditLog(client, {
         actorHandle: handle,
@@ -540,6 +599,7 @@ export const deleteComment = async (postId: string, commentId: string, rawInput:
             ? { item: updatedItem, commentId }
             : { itemId: postId, commentId }
       });
+      await completeMutation(client, handle, mutation, updatedItem);
       await client.query("COMMIT");
     }
   } catch (error) {
@@ -580,11 +640,14 @@ export const applyCommentAction = async (
     if (input.action === "read" && !recordMemoryContentView("comment", commentId, handle)) {
       return { item: existing };
     }
-    const mapped = mapCommentTree(existing.comments, commentId, (comment) =>
-      mutateCommentForActor(comment, input.action, handle, input.active)
-    );
+    const mapped = mapCommentTree(existing.comments, commentId, (comment) => ({
+      ...mutateCommentForActor(comment, input.action, handle, input.active),
+      revision: (comment.revision ?? 1) + 1
+    }));
     if (!mapped.updated) throw new TRPCError({ code: "NOT_FOUND", message: "Comment not found." });
-    return { item: { ...existing, comments: mapped.comments } };
+    return {
+      item: { ...existing, comments: mapped.comments, revision: (existing.revision ?? 1) + 1 }
+    };
   }
 
   await ensureLiveData();
@@ -603,7 +666,7 @@ export const applyCommentAction = async (
     }
     const postResult = await client.query<SnapshotRow>(
       `SELECT
-        id, kind, room, title, author_handle AS "authorHandle", author_name AS "authorName",
+        id, revision, kind, room, title, author_handle AS "authorHandle", author_name AS "authorName",
         affiliation, date_label AS "dateLabel", created_at AS "createdAt", edited_at AS "editedAt",
         deleted_at AS "deletedAt",
         status, metrics, gathering_reason AS "gatheringReason", excerpt, body, tags, signals,
@@ -624,7 +687,7 @@ export const applyCommentAction = async (
     }
 
     const commentsResult = await client.query<CommentRow>(
-      `SELECT id, post_id AS "postId", parent_id AS "parentId", author_handle AS "authorHandle",
+      `SELECT id, revision, post_id AS "postId", parent_id AS "parentId", author_handle AS "authorHandle",
         author_name AS "authorName", stance, body, metrics, saved_by AS "savedBy",
         signaled_by AS "signaledBy", forked_by AS "forkedBy", edited_at AS "editedAt",
         deleted_at AS "deletedAt", created_at AS "createdAt"
@@ -675,8 +738,10 @@ export const applyCommentAction = async (
       );
     }
 
-    const mapped = mapCommentTree(existingComments, commentId, () =>
-      mutateCommentForActor(canonicalOriginal, input.action, handle, canonicalActive)
+    const mapped = mapCommentTree(existingComments, commentId, () => ({
+      ...mutateCommentForActor(canonicalOriginal, input.action, handle, canonicalActive),
+      revision: (canonicalOriginal.revision ?? 1) + 1
+    })
     );
     if (!mapped.updated) throw new TRPCError({ code: "NOT_FOUND", message: "Comment not found." });
     updatedComment = mapped.updated;
@@ -687,6 +752,7 @@ export const applyCommentAction = async (
            saved_by = $4,
            signaled_by = $5,
            forked_by = $6,
+           revision = revision + 1,
            updated_at = now()
        WHERE post_id = $1 AND id = $2`,
       [
@@ -699,7 +765,11 @@ export const applyCommentAction = async (
       ]
     );
 
-    updatedItem = rowToItem(row, mapped.comments);
+    const postRevisionResult = await client.query<{ revision: number }>(
+      `UPDATE posts SET revision = revision + 1, updated_at = now() WHERE id = $1 RETURNING revision`,
+      [postId]
+    );
+    updatedItem = rowToItem({ ...row, revision: postRevisionResult.rows[0].revision }, mapped.comments);
     if (input.action !== "read") {
       await stageAuditLog(client, {
         actorHandle: handle,

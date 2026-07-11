@@ -95,15 +95,15 @@ Inbound state has three classes:
 2. Live events are monotonic hints or complete entities when privacy allows.
 3. Bootstrap is a canonical snapshot, but a request that began before a local content mutation must not erase optimistic or newly committed state.
 
-The item mutation guard records per-item epochs and pending mutations, including post and comment actions. Bootstrap reconciliation preserves an item when the item is currently mutating or changed after that bootstrap request began, then converges on the next fresh snapshot.
+The shared item mutation coordinator records per-item epochs and pending mutations, publishes ordered cross-tab snapshots, and reconciles bootstrap and live input. Posts expose an authoritative aggregate revision that advances for direct post mutations and every nested-comment mutation. Profiles, comments, and follow relationships also expose revisions. A higher authoritative revision converges immediately; a lower one is rejected permanently; equal or legacy snapshots still use the optimistic mutation guard and bounded cross-tab convergence lease.
 
 Optimistic action membership and metrics use a clock-independent action-state guard. Stale live events remain unable to reverse the latest local intent, regardless of request duration. Protection is retired only when a bootstrap request that began after the mutation confirms both membership and metric direction. This avoids timer-based snap-back while still allowing later canonical changes to converge.
 
-The client collection is normalized into `byId` plus stable order before it reaches the shell. Synchronous refs and React state are updated through one entity-store boundary, so mutation handlers, live events, bootstrap replacement, persistence, and rendering cannot maintain divergent copies. Action reconciliation is owned by `features/live-sync/inquiryActionReconciler.ts`, not by UI components.
+The client collection is normalized into `byId` plus stable order before it reaches the shell. Synchronous refs and React state are updated through one entity-store boundary, so mutation handlers, live events, bootstrap replacement, persistence, and rendering cannot maintain divergent copies. Mutation ordering is owned by `features/mutations/itemMutationCoordinator.ts`; action reconciliation is owned by `features/live-sync/inquiryActionReconciler.ts`, not by UI components.
 
 ## Frontend ownership
 
-`SymposiumV0.tsx` is the application controller: authentication lifecycle, route-level state, mutation orchestration, live-event subscription, persistence calls, and composition. Rendering and feature policy are owned below it:
+`SymposiumV0.tsx` is the application controller: authentication lifecycle, route-level state, mutation invocation, live-event subscription, persistence calls, and composition. Mutation ordering and reconciliation are delegated to the shared coordinator. Rendering and feature policy are owned below it:
 
 - `features/posts`: composers, feed cards, detail views, edit surfaces, post action presentation
 - `features/comments`: discussion trees, reply-window paging, comment ownership and actions
@@ -136,6 +136,7 @@ Backend persistence is split into bounded repositories for posts, comments, iden
 8. Workspace/notes wiring and shared editor foundation. Presentation extracted; durable document/editor contract remains next-stage work.
 9. Layer `globals.css` into tokens, foundations, layout, shared components, and feature styles. Complete with cascade-preserving layers.
 10. Split the backend live repository by domain while retaining the shared transaction kernel. Complete: routes now address domain repositories directly and cross-domain orchestration is service-owned.
+11. Add server-authoritative entity revisions and a shared cross-tab mutation coordinator. Complete for posts, comments, profiles, follows, bootstrap, live events, and the current edit/delete mutation envelope.
 
 ## Checkpoint gates
 

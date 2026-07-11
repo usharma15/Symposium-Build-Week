@@ -175,6 +175,7 @@ The current guarantees are:
 - Event cursors are strictly parsed, event delivery is audience-filtered in both durable polling and local streaming, slow SSE clients are dropped, and both SSE and Socket.IO connections have process/client/room/buffer bounds.
 - The API caps JSON bodies at 1 MiB, constrains route parameter length, sets request timeouts, redacts authorization/cookie headers from logs, returns generic `500` responses, applies no-store API caching, and uses a shared Redis rate limiter with a bounded process-local outage fallback.
 - Migration `0012_operational_integrity` backfills event audiences, removes impossible self-follows and duplicate publication links, normalizes legacy enum values conservatively, adds database checks, and adds compound/GIN indexes for the live read paths.
+- Migration `0013_authoritative_entity_revisions` adds monotonic revisions to posts, comments, profiles, and follow relationships so clients can deterministically reject stale snapshots across tabs, browsers, devices, bootstrap refreshes, and delayed live events.
 
 `npm run verify` is the local release gate. It runs security, infrastructure, domain, attachment, mutation, profile, TypeScript, and production-build checks. `npm audit --audit-level=high` is the dependency vulnerability gate.
 

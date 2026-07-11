@@ -94,7 +94,8 @@ export const researchProfileSchema = z.object({
   role: z.string().min(1),
   location: z.string().min(1),
   bio: z.string(),
-  fields: z.array(z.string()).default([])
+  fields: z.array(z.string()).default([]),
+  revision: z.number().int().positive().optional()
 });
 
 export const createProfileInputSchema = z.object({
@@ -179,6 +180,7 @@ export type InquiryCommentContract = {
   createdAt?: string;
   editedAt?: string;
   deletedAt?: string;
+  revision?: number;
   metrics?: Pick<InquiryMetricsContract, "signal" | "forks" | "saves" | "reads">;
   savedBy?: string[];
   signaledBy?: string[];
@@ -197,6 +199,7 @@ export const inquiryCommentSchema: z.ZodType<InquiryCommentContract> = z.lazy(()
     createdAt: z.string().optional(),
     editedAt: z.string().optional(),
     deletedAt: z.string().optional(),
+    revision: z.number().int().positive().optional(),
     metrics: inquiryMetricsSchema.pick({ signal: true, forks: true, saves: true, reads: true }).optional(),
     savedBy: z.array(z.string()).optional(),
     signaledBy: z.array(z.string()).optional(),
@@ -207,6 +210,7 @@ export const inquiryCommentSchema: z.ZodType<InquiryCommentContract> = z.lazy(()
 
 export const inquiryItemSchema = z.object({
   id: z.string(),
+  revision: z.number().int().positive().optional(),
   kind: contentKindSchema,
   room: postRoomSchema,
   title: z.string(),
@@ -426,8 +430,10 @@ export const markNotificationInputSchema = z.object({
 export const profileFollowSchema = z.object({
   followerHandle: z.string(),
   followingHandle: z.string(),
-  status: followStatusSchema,
-  createdAt: z.string().optional()
+  status: z.union([followStatusSchema, z.literal("none")]),
+  revision: z.number().int().positive().optional(),
+  createdAt: z.string().optional(),
+  updatedAt: z.string().optional()
 });
 
 export const communityCallSchema = z.object({

@@ -1,19 +1,23 @@
 import assert from "node:assert/strict";
 import { buildApp } from "@/apps/api/src/server";
 import { latestMigrationId, migrationIds } from "@/apps/api/src/db/migrate";
-import { events, posts } from "@/apps/api/src/db/schema";
+import { comments, events, posts, profileFollows, profiles } from "@/apps/api/src/db/schema";
 import { parseEventCursor } from "@/apps/api/src/services/events";
 import { clerkSecretMode } from "@/apps/api/src/config/preflight";
 
 const main = async () => {
-  assert.equal(latestMigrationId, "0012_operational_integrity");
+  assert.equal(latestMigrationId, "0013_authoritative_entity_revisions");
   assert.equal(clerkSecretMode("sk_test_example"), "development");
   assert.equal(clerkSecretMode("sk_live_example"), "production");
   assert.equal(clerkSecretMode(undefined), "missing");
   assert.equal(migrationIds.at(-1), latestMigrationId);
-  assert.ok(migrationIds.length >= 12);
+  assert.ok(migrationIds.length >= 13);
   assert.ok("audienceHandles" in events);
   assert.equal("audienceHandles" in posts, false);
+  assert.ok("revision" in posts);
+  assert.ok("revision" in comments);
+  assert.ok("revision" in profiles);
+  assert.ok("revision" in profileFollows);
 
   const validCursor = "2026-07-10T12:00:00.000Z::00000000-0000-4000-8000-000000000001";
   assert.deepEqual(parseEventCursor(validCursor), {
@@ -66,6 +70,7 @@ const main = async () => {
           "migration manifest visibility",
           "Clerk provider mode visibility",
           "event audience schema placement",
+          "authoritative entity revision schema",
           "strict event cursor parsing",
           "request correlation headers",
           "no-store API policy",

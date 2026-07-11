@@ -61,20 +61,11 @@ import {
   reconcileCanonicalActivityRefresh
 } from "@/lib/profileActivity";
 import {
-  beginItemMutation,
-  captureItemMutationSnapshot,
-  completeItemMutation,
-  createItemMutationGuard,
-  itemChangedSinceSnapshot,
-  itemMutationIsPending,
-  reconcileItemsAgainstMutations,
-  touchItemMutation
-} from "@/features/live-sync/itemMutationGuard";
-import {
-  createCrossTabItemSync,
   isCrossTabItemMessage,
   type CrossTabItemMessage
 } from "@/features/live-sync/crossTabItemSync";
+import { createItemMutationCoordinator } from "@/features/mutations/itemMutationCoordinator";
+import { compareEntityRevisions, incomingEntityIsStale } from "@/features/live-sync/entityRevision";
 import {
   createInquiryActionReconciler,
   type ProtectedActionMetricState
@@ -174,6 +165,8 @@ type ProfileFollowRecord = {
   followerHandle?: string;
   followingHandle?: string;
   status?: string;
+  revision?: number;
+  updatedAt?: string;
 };
 
 type ProfileFollowResponse = {
@@ -596,8 +589,8 @@ function SymposiumExperience({
   const pendingActivityRecencyRef = useRef<Record<string, number>>({});
   const liveEventCursorRef = useRef("");
   const liveRefreshTimerRef = useRef<number | null>(null);
-  const itemMutationGuardRef = useRef(createItemMutationGuard());
-  const crossTabItemSyncRef = useRef(createCrossTabItemSync<InquiryItem>());
+  const itemMutationCoordinatorRef = useRef(createItemMutationCoordinator<InquiryItem>());
+  const followRevisionRef = useRef<Record<string, number>>({});
   const crossTabChannelRef = useRef<BroadcastChannel | null>(null);
   const lastPersistedItemsRef = useRef<InquiryItem[]>(inquiryItems);
   const authenticatedProfileHandleRef = useRef<string | null>(null);
@@ -608,6 +601,20 @@ function SymposiumExperience({
   const [noteText, setNoteText] = useState(
     "First note: make the thing feel alive without pretending the whole world is built yet."
   );
+
+  const reconcileCommittedItem = (
+    incoming: InquiryItem,
+    current: InquiryItem | undefined,
+    actorHandle = currentProfileRef.current.handle
+  ) =>
+    preservePublishedPosition(
+      protectItemFromStaleActionState(
+        itemMutationCoordinatorRef.current.protectIncomingItem(incoming, current),
+        current,
+        actorHandle
+      ),
+      current
+    );
 
   const activeRoomData = getRoom(activeRoom);
   const themedRoomRenders = roomRenders[theme];
@@ -807,17 +814,14 @@ function SymposiumExperience({
       nextProfile.handle
     );
 
-    const previousById = new Map(lastPersistedItemsRef.current.map((item) => [item.id, item]));
-    const explicitIds = new Set(options?.broadcastItemIds ?? []);
-    const changedItems = nextItems.filter((item) => {
-      if (explicitIds.has(item.id)) return true;
-      if (!itemMutationIsPending(itemMutationGuardRef.current, item.id)) return false;
-      return previousById.get(item.id) !== item;
-    });
+    const messages = itemMutationCoordinatorRef.current.publishChanges(
+      nextItems,
+      lastPersistedItemsRef.current,
+      options?.broadcastItemIds
+    );
     lastPersistedItemsRef.current = nextItems;
 
-    for (const item of changedItems) {
-      const message = crossTabItemSyncRef.current.publish(item);
+    for (const message of messages) {
       crossTabChannelRef.current?.postMessage(message);
       window.localStorage.setItem("symposium-cross-tab-item", JSON.stringify(message));
     }
@@ -827,15 +831,9 @@ function SymposiumExperience({
     const receive = (value: unknown) => {
       if (!isCrossTabItemMessage<InquiryItem>(value)) return;
       const message = value as CrossTabItemMessage<InquiryItem>;
-      if (!crossTabItemSyncRef.current.accept(message)) return;
-
-      const currentItems = itemsRef.current;
-      const existingIndex = currentItems.findIndex((item) => item.id === message.item.id);
-      const nextItems =
-        existingIndex >= 0
-          ? currentItems.map((item) => (item.id === message.item.id ? message.item : item))
-          : sortByPublishedRecency([message.item, ...currentItems]);
-      touchItemMutation(itemMutationGuardRef.current, message.item.id);
+      const received = itemMutationCoordinatorRef.current.receive(message, itemsRef.current);
+      if (!received.accepted) return;
+      const nextItems = sortByPublishedRecency(received.items);
       replaceItems(nextItems);
       lastPersistedItemsRef.current = nextItems;
       persistCachedBootstrap(
@@ -872,10 +870,20 @@ function SymposiumExperience({
         const protectedAt = Number(
           window.localStorage.getItem(`symposium-profile-protected:${currentHandle}`) ?? 0
         );
+        const revisionSafeProfiles = Object.fromEntries(
+          Object.entries(snapshot.profiles).map(([handle, incoming]) => [
+            handle,
+            incomingEntityIsStale(incoming, profilesRef.current[handle])
+              ? profilesRef.current[handle]
+              : incoming
+          ])
+        );
+        const currentCanonicalIsNewer =
+          (compareEntityRevisions(revisionSafeProfiles[currentHandle], currentProfileRef.current) ?? 0) > 0;
         const nextProfiles =
-          Date.now() - protectedAt < 8_000
-            ? { ...snapshot.profiles, [currentHandle]: currentProfileRef.current }
-            : snapshot.profiles;
+          Date.now() - protectedAt < 8_000 && !currentCanonicalIsNewer
+            ? { ...revisionSafeProfiles, [currentHandle]: currentProfileRef.current }
+            : revisionSafeProfiles;
         profilesRef.current = nextProfiles;
         setProfiles(nextProfiles);
         const current = nextProfiles[currentHandle];
@@ -946,12 +954,35 @@ function SymposiumExperience({
     }));
   };
 
+  const followRevisionKey = (record: ProfileFollowRecord) =>
+    `${cleanHandle(String(record.followerHandle ?? ""))}:${cleanHandle(String(record.followingHandle ?? ""))}`;
+
+  const captureFollowRevisions = (data: ProfileFollowResponse) => {
+    for (const record of [...(data.following ?? []), ...(data.followers ?? [])]) {
+      const key = followRevisionKey(record);
+      const revision = Number(record.revision ?? 0);
+      if (key !== ":" && Number.isInteger(revision) && revision > (followRevisionRef.current[key] ?? 0)) {
+        followRevisionRef.current[key] = revision;
+      }
+    }
+  };
+
   const socialListsFromResponse = (data: ProfileFollowResponse): ProfileSocialLists => ({
     following: Array.from(
-      new Set((data.following ?? []).map((follow) => cleanHandle(String(follow.followingHandle ?? ""))).filter(Boolean))
+      new Set(
+        (data.following ?? [])
+          .filter((follow) => follow.status === "active")
+          .map((follow) => cleanHandle(String(follow.followingHandle ?? "")))
+          .filter(Boolean)
+      )
     ),
     followers: Array.from(
-      new Set((data.followers ?? []).map((follow) => cleanHandle(String(follow.followerHandle ?? ""))).filter(Boolean))
+      new Set(
+        (data.followers ?? [])
+          .filter((follow) => follow.status === "active")
+          .map((follow) => cleanHandle(String(follow.followerHandle ?? "")))
+          .filter(Boolean)
+      )
     )
   });
 
@@ -977,7 +1008,7 @@ function SymposiumExperience({
   };
 
   const refreshData = async (preferredHandle = currentProfile.handle) => {
-    const mutationSnapshot = captureItemMutationSnapshot(itemMutationGuardRef.current);
+    const mutationSnapshot = itemMutationCoordinatorRef.current.capture();
     const response = await fetch("/api/bootstrap", { cache: "no-store" });
     if (!response.ok) throw new Error("Could not load Symposium data.");
     const data = (await response.json()) as {
@@ -988,11 +1019,19 @@ function SymposiumExperience({
     let loadedProfiles = Object.keys(data.profiles).length
       ? data.profiles
       : { [data.defaultProfile.handle]: data.defaultProfile };
+    loadedProfiles = Object.fromEntries(
+      Object.entries(loadedProfiles).map(([handle, incoming]) => [
+        handle,
+        incomingEntityIsStale(incoming, profilesRef.current[handle]) ? profilesRef.current[handle] : incoming
+      ])
+    );
     const protectedProfileHandle = currentProfileRef.current.handle;
     const profileProtectedAt = Number(
       window.localStorage.getItem(`symposium-profile-protected:${protectedProfileHandle}`) ?? 0
     );
-    if (Date.now() - profileProtectedAt < 8_000) {
+    const canonicalProfileIsNewer =
+      (compareEntityRevisions(loadedProfiles[protectedProfileHandle], currentProfileRef.current) ?? 0) > 0;
+    if (Date.now() - profileProtectedAt < 8_000 && !canonicalProfileIsNewer) {
       loadedProfiles = { ...loadedProfiles, [protectedProfileHandle]: currentProfileRef.current };
     }
     const nextProfile = selectActiveProfile({
@@ -1005,21 +1044,16 @@ function SymposiumExperience({
 
     const normalizedItems = sortByPublishedRecency(normalizeClientSeedTimes(data.items));
     for (const incoming of normalizedItems) {
-      if (!itemChangedSinceSnapshot(itemMutationGuardRef.current, mutationSnapshot, incoming.id)) {
+      if (!itemMutationCoordinatorRef.current.changedSince(mutationSnapshot, incoming.id)) {
         settleFreshItemActionState(incoming, nextProfile.handle);
       }
     }
-    const mutationSafeItems = sortByPublishedRecency(
-      reconcileItemsAgainstMutations(
+    const crossTabSafeItems = sortByPublishedRecency(
+      itemMutationCoordinatorRef.current.reconcileRefresh(
         normalizedItems,
         itemsRef.current,
-        itemMutationGuardRef.current,
         mutationSnapshot
       )
-    );
-    const crossTabSafeItems = crossTabItemSyncRef.current.protectIncomingItems(
-      mutationSafeItems,
-      itemsRef.current
     );
     const loadedItems = protectItemsFromStaleActionState(
       crossTabSafeItems,
@@ -1043,6 +1077,7 @@ function SymposiumExperience({
     if (!response.ok) return;
 
     const data = (await response.json()) as ProfileFollowResponse;
+    captureFollowRevisions(data);
     const lists = socialListsFromResponse(data);
     const remoteHandles = lists.following;
     const protectedAt = Number(window.localStorage.getItem(`symposium-following-lease:${actorHandle}`) ?? 0);
@@ -1065,6 +1100,7 @@ function SymposiumExperience({
     if (!response.ok) return;
 
     const data = (await response.json()) as ProfileFollowResponse;
+    captureFollowRevisions(data);
     applySocialLists(normalizedHandle, socialListsFromResponse(data));
   };
 
@@ -1072,11 +1108,12 @@ function SymposiumExperience({
     const currentItems = itemsRef.current;
     const existingIndex = currentItems.findIndex((item) => item.id === incoming.id);
     const currentItem = existingIndex >= 0 ? currentItems[existingIndex] : undefined;
-    if (currentItem && itemMutationIsPending(itemMutationGuardRef.current, incoming.id)) {
+    const canonicalIncomingIsNewer = (compareEntityRevisions(incoming, currentItem) ?? 0) > 0;
+    if (currentItem && itemMutationCoordinatorRef.current.isPending(incoming.id) && !canonicalIncomingIsNewer) {
       scheduleLiveRefresh();
       return false;
     }
-    const crossTabProtected = crossTabItemSyncRef.current.protectIncomingItem(incoming, currentItem);
+    const crossTabProtected = itemMutationCoordinatorRef.current.protectIncomingItem(incoming, currentItem);
     const protectedIncoming = protectItemFromStaleActionState(
       crossTabProtected,
       currentItem,
@@ -1097,6 +1134,12 @@ function SymposiumExperience({
     const followerHandle = cleanHandle(String(record?.followerHandle ?? ""));
     const followingHandle = cleanHandle(String(record?.followingHandle ?? ""));
     if (!followerHandle || !followingHandle || followerHandle === "@" || followingHandle === "@") return;
+    const revisionKey = followRevisionKey(record ?? {});
+    const revision = Number(record?.revision ?? 0);
+    if (Number.isInteger(revision) && revision > 0) {
+      if (revision < (followRevisionRef.current[revisionKey] ?? 0)) return;
+      followRevisionRef.current[revisionKey] = revision;
+    }
 
     setProfileSocialLists((current) => {
       const followerLists = current[followerHandle] ?? { following: [], followers: [] };
@@ -2116,7 +2159,11 @@ function SymposiumExperience({
 
     const data = (await response.json()) as { item: InquiryItem };
     clearRetryMutationKey(mutation.fingerprintKey);
-    const committedItem = { ...data.item, createdAt: data.item.createdAt ?? createdAt };
+    const existingCommittedItem = itemsRef.current.find((item) => item.id === data.item.id);
+    const committedItem = reconcileCommittedItem(
+      { ...data.item, createdAt: data.item.createdAt ?? createdAt },
+      existingCommittedItem
+    );
     const nextItems = sortByPublishedRecency([committedItem, ...items.filter((item) => item.id !== committedItem.id)]);
     touchActivity(committedItem.id);
     replaceItems(nextItems);
@@ -2170,7 +2217,7 @@ function SymposiumExperience({
       return;
     }
 
-    beginItemMutation(itemMutationGuardRef.current, itemId);
+    itemMutationCoordinatorRef.current.begin(itemId);
     const nextCritiques = incrementMetric(existing.metrics.critiques, 1);
     const optimisticItem: InquiryItem = {
       ...existing,
@@ -2222,10 +2269,7 @@ function SymposiumExperience({
       clearRetryMutationKey(mutation.fingerprintKey);
       if (data.item) {
         const currentItem = itemsRef.current.find((item) => item.id === itemId);
-        const committedItem = preservePublishedPosition(
-          protectItemFromStaleActionState(data.item, currentItem, currentProfile.handle),
-          currentItem
-        );
+        const committedItem = reconcileCommittedItem(data.item, currentItem, currentProfile.handle);
         const committedItems = itemsRef.current.map((item) => (item.id === itemId ? committedItem : item));
         replaceItems(committedItems);
         persistLocalSnapshot(committedItems, profilesRef.current);
@@ -2242,7 +2286,7 @@ function SymposiumExperience({
         parentId ? "Reply could not reach the live service" : "Comment could not reach the live service"
       );
     } finally {
-      completeItemMutation(itemMutationGuardRef.current, itemId);
+      itemMutationCoordinatorRef.current.complete(itemId);
     }
   };
 
@@ -2434,6 +2478,10 @@ function SymposiumExperience({
       });
 
       if (!response.ok) throw new Error("Follow action failed.");
+      const data = (await response.json()) as { follow?: ProfileFollowRecord };
+      if (data.follow) {
+        captureFollowRevisions({ following: [data.follow] });
+      }
       setSyncStatus(wasFollowing ? "Profile unfollowed" : "Following profile");
     } catch {
       setFollowingHandles(previousHandles);
@@ -2487,7 +2535,7 @@ function SymposiumExperience({
       if (isViewAction) releaseClientViewClaim("post", itemId);
       return;
     }
-    beginItemMutation(itemMutationGuardRef.current, itemId);
+    itemMutationCoordinatorRef.current.begin(itemId);
     setProtectedDesiredActionState(actionKey, desiredActive, protectedMetricState);
     if (!isViewAction && desiredActive !== undefined) {
       previousCanonicalActivity = stageOptimisticCanonicalActivity(
@@ -2540,7 +2588,7 @@ function SymposiumExperience({
 
       const committedItems = itemsRef.current.map((item) =>
         item.id === itemId
-          ? preservePublishedPosition(protectItemFromStaleActionState(data.item, item, actorHandle), item)
+          ? reconcileCommittedItem(data.item, item, actorHandle)
           : item
       );
       replaceItems(committedItems);
@@ -2592,7 +2640,7 @@ function SymposiumExperience({
       persistLocalSnapshot(previousItems, profilesRef.current);
       setSyncStatus("Action could not sync");
     } finally {
-      completeItemMutation(itemMutationGuardRef.current, itemId);
+      itemMutationCoordinatorRef.current.complete(itemId);
     }
   };
 
@@ -2637,7 +2685,7 @@ function SymposiumExperience({
       if (isViewAction) releaseClientViewClaim("comment", commentId);
       return;
     }
-    beginItemMutation(itemMutationGuardRef.current, itemId);
+    itemMutationCoordinatorRef.current.begin(itemId);
     setProtectedDesiredActionState(actionKey, desiredActive, protectedMetricState);
     if (!isViewAction && desiredActive !== undefined) {
       previousCanonicalActivity = stageOptimisticCanonicalActivity(
@@ -2682,7 +2730,7 @@ function SymposiumExperience({
 
       const committedItems = itemsRef.current.map((item) =>
         item.id === itemId
-          ? preservePublishedPosition(protectItemFromStaleActionState(data.item, item, actorHandle), item)
+          ? reconcileCommittedItem(data.item, item, actorHandle)
           : item
       );
       replaceItems(committedItems);
@@ -2734,7 +2782,7 @@ function SymposiumExperience({
       persistLocalSnapshot(previousItems, profilesRef.current);
       setSyncStatus("Comment action could not sync");
     } finally {
-      completeItemMutation(itemMutationGuardRef.current, itemId);
+      itemMutationCoordinatorRef.current.complete(itemId);
     }
   };
 
@@ -2746,7 +2794,7 @@ function SymposiumExperience({
     const previousItems = itemsRef.current;
     const existing = previousItems.find((item) => item.id === itemId);
     if (!existing || isDeletedPost(existing)) return;
-    beginItemMutation(itemMutationGuardRef.current, itemId);
+    itemMutationCoordinatorRef.current.begin(itemId);
     const editedAt = new Date().toISOString();
     const optimisticItems = previousItems.map((item) =>
       item.id === itemId
@@ -2762,7 +2810,10 @@ function SymposiumExperience({
     try {
       const response = await fetch(`/api/posts/${itemId}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": clientMutationId("post-update")
+        },
         body: JSON.stringify({ title: cleanTitle, body: cleanBody, actorHandle: currentProfile.handle })
       });
 
@@ -2770,7 +2821,7 @@ function SymposiumExperience({
 
       const data = (await response.json()) as { item: InquiryItem };
       const committedItems = itemsRef.current.map((item) =>
-        item.id === itemId ? preservePublishedPosition(data.item, item) : item
+        item.id === itemId ? reconcileCommittedItem(data.item, item) : item
       );
       replaceItems(committedItems);
       persistLocalSnapshot(committedItems, profilesRef.current);
@@ -2780,7 +2831,7 @@ function SymposiumExperience({
       persistLocalSnapshot(previousItems, profilesRef.current);
       setSyncStatus("Post edit could not sync");
     } finally {
-      completeItemMutation(itemMutationGuardRef.current, itemId);
+      itemMutationCoordinatorRef.current.complete(itemId);
     }
   };
 
@@ -2789,7 +2840,7 @@ function SymposiumExperience({
     if (!item || isDeletedPost(item) || cleanHandle(item.authorHandle ?? item.author) !== currentProfile.handle) return;
     if (!window.confirm(`Delete "${item.title}"?`)) return;
 
-    beginItemMutation(itemMutationGuardRef.current, itemId);
+    itemMutationCoordinatorRef.current.begin(itemId);
     const previousItems = itemsRef.current;
     const deleted = tombstonePost(item);
     const nextItems = previousItems.map((current) => (current.id === itemId ? deleted : current));
@@ -2801,7 +2852,10 @@ function SymposiumExperience({
     try {
       const response = await fetch(`/api/posts/${itemId}`, {
         method: "DELETE",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": clientMutationId("post-delete")
+        },
         body: JSON.stringify({ actorHandle: currentProfile.handle })
       });
 
@@ -2809,7 +2863,7 @@ function SymposiumExperience({
       const data = (await response.json()) as { item?: InquiryItem };
       if (data.item) {
         const committedItems = itemsRef.current.map((current) =>
-          current.id === itemId ? preservePublishedPosition(data.item!, current) : current
+          current.id === itemId ? reconcileCommittedItem(data.item!, current) : current
         );
         replaceItems(committedItems);
         persistLocalSnapshot(committedItems, profilesRef.current);
@@ -2820,7 +2874,7 @@ function SymposiumExperience({
       persistLocalSnapshot(previousItems, profilesRef.current);
       setSyncStatus("Post delete could not sync");
     } finally {
-      completeItemMutation(itemMutationGuardRef.current, itemId);
+      itemMutationCoordinatorRef.current.complete(itemId);
     }
   };
 
@@ -2840,7 +2894,7 @@ function SymposiumExperience({
       return;
     }
 
-    beginItemMutation(itemMutationGuardRef.current, itemId);
+    itemMutationCoordinatorRef.current.begin(itemId);
     const editedAt = new Date().toISOString();
     const optimisticItems = previousItems.map((item) => {
       if (item.id !== itemId) return item;
@@ -2860,7 +2914,10 @@ function SymposiumExperience({
     try {
       const response = await fetch(`/api/posts/${itemId}/comments/${commentId}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": clientMutationId("comment-update")
+        },
         body: JSON.stringify({ body: cleanBody, actorHandle: currentProfile.handle })
       });
 
@@ -2868,7 +2925,7 @@ function SymposiumExperience({
 
       const data = (await response.json()) as { item: InquiryItem };
       const committedItems = itemsRef.current.map((item) =>
-        item.id === itemId ? preservePublishedPosition(data.item, item) : item
+        item.id === itemId ? reconcileCommittedItem(data.item, item) : item
       );
       replaceItems(committedItems);
       persistLocalSnapshot(committedItems, profilesRef.current);
@@ -2878,7 +2935,7 @@ function SymposiumExperience({
       persistLocalSnapshot(previousItems, profilesRef.current);
       setSyncStatus("Comment edit could not sync");
     } finally {
-      completeItemMutation(itemMutationGuardRef.current, itemId);
+      itemMutationCoordinatorRef.current.complete(itemId);
     }
   };
 
@@ -2895,7 +2952,7 @@ function SymposiumExperience({
     }
     if (!window.confirm("Delete this comment?")) return;
 
-    beginItemMutation(itemMutationGuardRef.current, itemId);
+    itemMutationCoordinatorRef.current.begin(itemId);
     const previousItems = itemsRef.current;
     const nextItems = previousItems.map((current) => {
       if (current.id !== itemId) return current;
@@ -2911,7 +2968,10 @@ function SymposiumExperience({
     try {
       const response = await fetch(`/api/posts/${itemId}/comments/${commentId}`, {
         method: "DELETE",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": clientMutationId("comment-delete")
+        },
         body: JSON.stringify({ actorHandle: currentProfile.handle })
       });
 
@@ -2919,7 +2979,7 @@ function SymposiumExperience({
       const data = (await response.json()) as { item?: InquiryItem };
       if (data.item) {
         const committedItems = itemsRef.current.map((current) =>
-          current.id === itemId ? preservePublishedPosition(data.item!, current) : current
+          current.id === itemId ? reconcileCommittedItem(data.item!, current) : current
         );
         replaceItems(committedItems);
         persistLocalSnapshot(committedItems, profilesRef.current);
@@ -2930,7 +2990,7 @@ function SymposiumExperience({
       persistLocalSnapshot(previousItems, profilesRef.current);
       setSyncStatus("Comment delete could not sync");
     } finally {
-      completeItemMutation(itemMutationGuardRef.current, itemId);
+      itemMutationCoordinatorRef.current.complete(itemId);
     }
   };
 

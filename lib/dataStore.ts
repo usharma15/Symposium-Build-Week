@@ -959,20 +959,37 @@ export const upsertProfile = async (input: CreateProfileInput) => {
   }
 
   const data = await readLocal();
-  data.profiles[person.handle] = person;
+  const previousPerson = data.profiles[person.handle];
+  const revisionedPerson = { ...person, revision: (previousPerson?.revision ?? 0) + 1 };
+  data.profiles[person.handle] = revisionedPerson;
   const updateCommentAuthors = (comments: InquiryComment[]): InquiryComment[] =>
-    comments.map((comment) => ({
-      ...comment,
-      author: !isDeletedComment(comment) && comment.authorHandle === person.handle ? person.name : comment.author,
-      replies: updateCommentAuthors(comment.replies ?? [])
-    }));
-  data.items = data.items.map((item) => ({
-    ...item,
-    author: item.authorHandle === person.handle ? person.name : item.author,
-    comments: updateCommentAuthors(item.comments)
-  }));
+    comments.map((comment) => {
+      const replies = updateCommentAuthors(comment.replies ?? []);
+      const authorChanged =
+        !isDeletedComment(comment) &&
+        comment.authorHandle === revisionedPerson.handle &&
+        comment.author !== revisionedPerson.name;
+      if (!authorChanged && replies.every((reply, index) => reply === comment.replies?.[index])) return comment;
+      return {
+        ...comment,
+        author: authorChanged ? revisionedPerson.name : comment.author,
+        revision: authorChanged ? (comment.revision ?? 1) + 1 : comment.revision,
+        replies
+      };
+    });
+  data.items = data.items.map((item) => {
+    const comments = updateCommentAuthors(item.comments);
+    const authorChanged = item.authorHandle === revisionedPerson.handle && item.author !== revisionedPerson.name;
+    const commentsChanged = comments.some((comment, index) => comment !== item.comments[index]);
+    return {
+      ...item,
+      author: item.authorHandle === revisionedPerson.handle ? revisionedPerson.name : item.author,
+      revision: authorChanged || commentsChanged ? (item.revision ?? 1) + 1 : item.revision,
+      comments
+    };
+  });
   await writeLocal(data);
-  return person;
+  return revisionedPerson;
 };
 
 export const createPost = async (input: CreatePostInput, authorHandle: string) => {
@@ -981,6 +998,7 @@ export const createPost = async (input: CreatePostInput, authorHandle: string) =
   const isPaper = input.kind === "paper";
   const item: InquiryItem = {
     id: newId("post"),
+    revision: 1,
     kind: input.kind,
     room: input.room,
     title: input.title.trim(),
@@ -1103,6 +1121,7 @@ export const addComment = async (itemId: string, input: CreateCommentInput, auth
   const author = data.profiles[authorHandle] ?? defaultProfile;
   const comment: InquiryComment = {
     id: newId("comment"),
+    revision: 1,
     parentId: input.parentId ?? null,
     author: author.name,
     authorHandle: author.handle,
@@ -1121,6 +1140,7 @@ export const addComment = async (itemId: string, input: CreateCommentInput, auth
   if (!appended.inserted) return null;
   const updatedItem: InquiryItem = {
     ...existing,
+    revision: (existing.revision ?? 1) + 1,
     metrics: { ...existing.metrics, critiques: nextCritiques },
     signals: nextSignals,
     comments: appended.comments
@@ -1172,6 +1192,7 @@ export const addComment = async (itemId: string, input: CreateCommentInput, auth
     const localNextCritiques = incrementMetric(item.metrics.critiques, 1);
     localUpdatedItem = {
       ...item,
+      revision: (item.revision ?? 1) + 1,
       metrics: { ...item.metrics, critiques: localNextCritiques },
       signals: updateSignalValue(item.signals, "Critiques", localNextCritiques),
       comments: localAppended.comments
@@ -1227,13 +1248,16 @@ export const applyPostAction = async (
         defaultProfile.handle
       );
     }
-    const updated = mutateItemForActor(
+    const updated = {
+      ...mutateItemForActor(
       base,
       action,
       actorHandle,
       defaultProfile.handle,
       activity?.active ?? active
-    );
+      ),
+      revision: (existing.revision ?? 1) + 1
+    };
     await getPool().query(
       `UPDATE items
        SET metrics = $2,
@@ -1270,7 +1294,10 @@ export const applyPostAction = async (
         return item;
       }
       if (action === "read") {
-        const updated = mutateItemForActor(item, action, actorHandle, defaultProfile.handle, active);
+        const updated = {
+          ...mutateItemForActor(item, action, actorHandle, defaultProfile.handle, active),
+          revision: (item.revision ?? 1) + 1
+        };
         result = { item: updated };
         return updated;
       }
@@ -1298,13 +1325,16 @@ export const applyPostAction = async (
         transition.previousActive,
         defaultProfile.handle
       );
-      const updated = mutateItemForActor(
+      const updated = {
+        ...mutateItemForActor(
         base,
         action,
         actorHandle,
         defaultProfile.handle,
         transition.activity.active
-      );
+        ),
+        revision: (item.revision ?? 1) + 1
+      };
       result = { item: updated, activity: transition.activity };
       return updated;
     });
@@ -1318,6 +1348,7 @@ const canManagePost = (item: InquiryItem, actorHandle: string) =>
 
 const updatePostShape = (item: InquiryItem, input: UpdatePostInput, editedAt = new Date().toISOString()): InquiryItem => ({
   ...item,
+  revision: (item.revision ?? 1) + 1,
   title: input.title.trim(),
   body: input.body.trim(),
   excerpt: input.body.trim(),
@@ -1369,7 +1400,7 @@ export const deletePost = async (itemId: string, actorHandle = defaultProfile.ha
     const existing = data.items.find((item) => item.id === itemId);
     if (!existing || isDeletedPost(existing) || !canManagePost(existing, actorHandle)) return null;
 
-    const deleted = tombstonePost(existing);
+    const deleted = { ...tombstonePost(existing), revision: (existing.revision ?? 1) + 1 };
     await getPool().query(
       `UPDATE items
        SET title = $2,
@@ -1425,7 +1456,7 @@ export const deletePost = async (itemId: string, actorHandle = defaultProfile.ha
   const local = await readLocal();
   const existing = local.items.find((item) => item.id === itemId);
   if (!existing || isDeletedPost(existing) || !canManagePost(existing, actorHandle)) return null;
-  const deleted = tombstonePost(existing);
+  const deleted = { ...tombstonePost(existing), revision: (existing.revision ?? 1) + 1 };
   local.items = local.items.map((item) => (item.id === itemId ? deleted : item));
   deactivateLedgerEntries(local.actionLedger, (activity) => activity.postId === itemId);
   await writeLocal(local);
@@ -1438,6 +1469,7 @@ const updateCommentShape = (
   editedAt = new Date().toISOString()
 ): InquiryComment => ({
   ...comment,
+  revision: (comment.revision ?? 1) + 1,
   body: input.body.trim(),
   editedAt
 });
@@ -1471,7 +1503,7 @@ export const updateComment = async (
        WHERE item_id = $1 AND id = $2`,
       [itemId, commentId, mapped.updated.body, mapped.updated.editedAt]
     );
-    return { ...existing, comments: mapped.comments };
+    return { ...existing, comments: mapped.comments, revision: (existing.revision ?? 1) + 1 };
   }
 
   const local = await readLocal();
@@ -1485,7 +1517,7 @@ export const updateComment = async (
     if (!mapped.updated || isDeletedComment(mapped.updated) || !canManageComment(mapped.updated, actorHandle)) {
       return item;
     }
-    updated = { ...item, comments: mapped.comments };
+    updated = { ...item, comments: mapped.comments, revision: (item.revision ?? 1) + 1 };
     return updated;
   });
   if (!updated) return null;
@@ -1553,7 +1585,7 @@ export const deleteComment = async (
       [itemId, JSON.stringify(deletion.item.metrics), JSON.stringify(deletion.item.signals)]
     );
 
-    return deletion.item;
+    return { ...deletion.item, revision: (existing.revision ?? 1) + 1 };
   }
 
   const local = await readLocal();
@@ -1564,7 +1596,7 @@ export const deleteComment = async (
     if (!original || isDeletedComment(original) || !canManageComment(original, actorHandle)) return item;
     const deletion = tombstoneCommentInItem(item, commentId);
     if (!deletion.deletedComment) return item;
-    deleted = deletion.item;
+    deleted = { ...deletion.item, revision: (item.revision ?? 1) + 1 };
     return deleted;
   });
   if (!deleted) return null;
@@ -1618,7 +1650,10 @@ export const applyCommentAction = async (
       const base = action === "read"
         ? comment
         : setCommentActionMembership(comment, action, actorHandle, previousActive);
-      return mutateCommentForActor(base, action, actorHandle, activity?.active ?? active);
+      return {
+        ...mutateCommentForActor(base, action, actorHandle, activity?.active ?? active),
+        revision: (comment.revision ?? 1) + 1
+      };
     });
     if (!mapped.updated) return null;
 
@@ -1640,7 +1675,10 @@ export const applyCommentAction = async (
       ]
     );
 
-    return { item: { ...existing, comments: mapped.comments }, activity };
+    return {
+      item: { ...existing, comments: mapped.comments, revision: (existing.revision ?? 1) + 1 },
+      activity
+    };
   }
 
   return withLocalActionLock(async () => {
@@ -1678,10 +1716,13 @@ export const applyCommentAction = async (
         const base = action === "read"
           ? comment
           : setCommentActionMembership(comment, action, actorHandle, previousActive);
-        return mutateCommentForActor(base, action, actorHandle, activity?.active ?? active);
+        return {
+          ...mutateCommentForActor(base, action, actorHandle, activity?.active ?? active),
+          revision: (comment.revision ?? 1) + 1
+        };
       });
       if (!mapped.updated) return item;
-      const updated = { ...item, comments: mapped.comments };
+      const updated = { ...item, comments: mapped.comments, revision: (item.revision ?? 1) + 1 };
       result = { item: updated, activity };
       return updated;
     });

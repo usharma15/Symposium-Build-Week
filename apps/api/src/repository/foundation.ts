@@ -38,6 +38,7 @@ export type SnapshotRow = Omit<InquiryItemContract, "author" | "date" | "comment
 
 export type CommentRow = {
   id: string;
+  revision?: number;
   postId: string;
   parentId: string | null;
   authorHandle: string | null;
@@ -301,7 +302,7 @@ export const insertProfile = async (
   person: ResearchProfileContract,
   userId?: string | null
 ) => {
-  await client.query(
+  const result = await client.query<{ revision: number }>(
     `INSERT INTO profiles (
       handle, user_id, email, name, avatar_url, likes_public, reshares_public, role, location, bio, fields
     )
@@ -317,7 +318,31 @@ export const insertProfile = async (
       location = EXCLUDED.location,
       bio = EXCLUDED.bio,
       fields = EXCLUDED.fields,
-      updated_at = now()`,
+      revision = CASE WHEN (
+        profiles.user_id,
+        profiles.email,
+        profiles.name,
+        profiles.avatar_url,
+        profiles.likes_public,
+        profiles.reshares_public,
+        profiles.role,
+        profiles.location,
+        profiles.bio,
+        profiles.fields
+      ) IS DISTINCT FROM (
+        COALESCE(EXCLUDED.user_id, profiles.user_id),
+        EXCLUDED.email,
+        EXCLUDED.name,
+        EXCLUDED.avatar_url,
+        EXCLUDED.likes_public,
+        EXCLUDED.reshares_public,
+        EXCLUDED.role,
+        EXCLUDED.location,
+        EXCLUDED.bio,
+        EXCLUDED.fields
+      ) THEN profiles.revision + 1 ELSE profiles.revision END,
+      updated_at = now()
+    RETURNING revision`,
     [
       person.handle,
       userId ?? null,
@@ -332,6 +357,7 @@ export const insertProfile = async (
       JSON.stringify(person.fields)
     ]
   );
+  return { ...person, revision: result.rows[0].revision };
 };
 
 const insertCommentTree = async (
@@ -512,6 +538,7 @@ export const commentTreesFromRows = (rows: CommentRow[]) => {
       createdAt: new Date(row.createdAt).toISOString(),
       editedAt: row.editedAt ? new Date(row.editedAt).toISOString() : undefined,
       deletedAt: row.deletedAt ? new Date(row.deletedAt).toISOString() : undefined,
+      revision: row.revision,
       metrics: json(row.metrics, { signal: "0", forks: "0", saves: "0", reads: "0" }),
       savedBy: json(row.savedBy, []),
       signaledBy: json(row.signaledBy, []),
@@ -594,6 +621,7 @@ export const rowToItem = (
   const postAttachments = attachments ?? row.attachments ?? [];
   return {
     id: row.id,
+    revision: row.revision,
     kind: row.kind,
     room: row.room,
     title: row.title,
@@ -657,13 +685,15 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
           role,
           location,
           bio,
-          fields
+          fields,
+          revision
          FROM profiles
          ORDER BY created_at ASC`
       ),
       client.query<SnapshotRow>(
         `SELECT
           id,
+          revision,
           kind,
           room,
           title,
@@ -696,6 +726,7 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
       client.query<CommentRow>(
         `SELECT
           id,
+          revision,
           post_id AS "postId",
           parent_id AS "parentId",
           author_handle AS "authorHandle",

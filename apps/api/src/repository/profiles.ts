@@ -80,21 +80,35 @@ export const followProfile = async (rawInput: unknown, actor: Actor) => {
   }
 
   if (!hasDatabase()) {
-    return { followerHandle: follower, followingHandle: following, status: input.status };
+    return { followerHandle: follower, followingHandle: following, status: input.status, revision: 1 };
   }
   await ensureLiveData();
   return runAtomic(async (client) => {
-    const result = await client.query(
+    const result = await client.query<{ revision: number; updatedAt: Date | string }>(
       `INSERT INTO profile_follows (follower_handle, following_handle, status)
        VALUES ($1, $2, $3)
        ON CONFLICT (follower_handle, following_handle)
-       DO UPDATE SET status = EXCLUDED.status, updated_at = now()
-       WHERE profile_follows.status IS DISTINCT FROM EXCLUDED.status
-       RETURNING follower_handle`,
+       DO UPDATE SET
+         status = EXCLUDED.status,
+         revision = CASE
+           WHEN profile_follows.status IS DISTINCT FROM EXCLUDED.status
+             THEN profile_follows.revision + 1
+           ELSE profile_follows.revision
+         END,
+         updated_at = CASE
+           WHEN profile_follows.status IS DISTINCT FROM EXCLUDED.status THEN now()
+           ELSE profile_follows.updated_at
+         END
+       RETURNING revision, updated_at AS "updatedAt"`,
       [follower, following, input.status]
     );
-    const value = { followerHandle: follower, followingHandle: following, status: input.status };
-    if (!result.rowCount) return { value };
+    const value = {
+      followerHandle: follower,
+      followingHandle: following,
+      status: input.status,
+      revision: result.rows[0].revision,
+      updatedAt: new Date(result.rows[0].updatedAt).toISOString()
+    };
     await stageAuditLog(client, {
       actorHandle: follower,
       action: "profile.follow",
@@ -122,12 +136,37 @@ export const unfollowProfile = async (rawInput: unknown, actor: Actor) => {
   if (hasDatabase()) {
     await ensureLiveData();
     return runAtomic(async (client) => {
-      const result = await client.query<{ status: string }>(
-        "DELETE FROM profile_follows WHERE follower_handle = $1 AND following_handle = $2 RETURNING status",
+      const result = await client.query<{ previousStatus: string; revision: number; updatedAt: Date | string }>(
+        `WITH previous AS (
+           SELECT status FROM profile_follows WHERE follower_handle = $1 AND following_handle = $2
+         ), changed AS (
+           INSERT INTO profile_follows (follower_handle, following_handle, status)
+           VALUES ($1, $2, 'none')
+           ON CONFLICT (follower_handle, following_handle)
+           DO UPDATE SET
+             status = 'none',
+             revision = CASE
+               WHEN profile_follows.status IS DISTINCT FROM 'none'
+                 THEN profile_follows.revision + 1
+               ELSE profile_follows.revision
+             END,
+             updated_at = CASE
+               WHEN profile_follows.status IS DISTINCT FROM 'none' THEN now()
+               ELSE profile_follows.updated_at
+             END
+           RETURNING revision, updated_at
+         )
+         SELECT previous.status AS "previousStatus", changed.revision, changed.updated_at AS "updatedAt"
+         FROM changed LEFT JOIN previous ON true`,
         [follower, following]
       );
-      const value = { followerHandle: follower, followingHandle: following, status: "none" as const };
-      if (!result.rowCount) return { value };
+      const value = {
+        followerHandle: follower,
+        followingHandle: following,
+        status: "none" as const,
+        revision: result.rows[0].revision,
+        updatedAt: new Date(result.rows[0].updatedAt).toISOString()
+      };
       await stageAuditLog(client, {
         actorHandle: follower,
         action: "profile.unfollow",
@@ -139,14 +178,14 @@ export const unfollowProfile = async (rawInput: unknown, actor: Actor) => {
         actorHandle: follower,
         subjectType: "profile",
         subjectId: following,
-        visibility: result.rows[0]?.status === "active" ? "public" : "private",
+        visibility: result.rows[0]?.previousStatus === "active" ? "public" : "private",
         payload: { follow: value }
       });
       return { value, events: [event] };
     });
   }
 
-  return { followerHandle: follower, followingHandle: following, status: "none" };
+  return { followerHandle: follower, followingHandle: following, status: "none", revision: 1 };
 };
 
 export const listFollowing = async (actor: Actor) => {
@@ -161,14 +200,16 @@ export const listProfileFollows = async (profileHandle: string, includePrivateSt
 
   const [following, followers] = await Promise.all([
     getPool().query(
-      `SELECT follower_handle AS "followerHandle", following_handle AS "followingHandle", status, created_at AS "createdAt"
+      `SELECT follower_handle AS "followerHandle", following_handle AS "followingHandle", status, revision,
+        created_at AS "createdAt", updated_at AS "updatedAt"
        FROM profile_follows
        WHERE follower_handle = $1 AND ($2::boolean OR status = 'active')
        ORDER BY created_at DESC`,
       [handle, includePrivateStatuses]
     ),
     getPool().query(
-      `SELECT follower_handle AS "followerHandle", following_handle AS "followingHandle", status, created_at AS "createdAt"
+      `SELECT follower_handle AS "followerHandle", following_handle AS "followingHandle", status, revision,
+        created_at AS "createdAt", updated_at AS "updatedAt"
        FROM profile_follows
        WHERE following_handle = $1 AND ($2::boolean OR status = 'active')
        ORDER BY created_at DESC`,

@@ -1,3 +1,5 @@
+import { compareEntityRevisions, incomingEntityIsStale, type RevisionedEntity } from "./entityRevision";
+
 export type CrossTabRevision = {
   issuedAt: number;
   sequence: number;
@@ -39,7 +41,7 @@ export const isCrossTabItemMessage = <T extends { id: string }>(value: unknown):
   );
 };
 
-export const createCrossTabItemSync = <T extends { id: string }>(options?: {
+export const createCrossTabItemSync = <T extends { id: string } & RevisionedEntity>(options?: {
   now?: () => number;
   protectionWindowMs?: number;
   sourceId?: string;
@@ -78,6 +80,8 @@ export const createCrossTabItemSync = <T extends { id: string }>(options?: {
   };
 
   const accept = (message: CrossTabItemMessage<T>) => {
+    const protectedItem = protectedItems.get(message.item.id)?.item;
+    if (incomingEntityIsStale(message.item, protectedItem)) return false;
     const latest = latestRevisions.get(message.item.id);
     if (latest && compareRevisions(message.revision, latest) <= 0) return false;
     lastIssuedAt = Math.max(lastIssuedAt, message.revision.issuedAt);
@@ -87,6 +91,12 @@ export const createCrossTabItemSync = <T extends { id: string }>(options?: {
   };
 
   const protectIncomingItem = (incoming: T, current: T | undefined) => {
+    const authoritativeComparison = compareEntityRevisions(incoming, current);
+    if (authoritativeComparison !== null && authoritativeComparison < 0) return current ?? incoming;
+    if (authoritativeComparison !== null && authoritativeComparison > 0) {
+      protectedItems.delete(incoming.id);
+      return incoming;
+    }
     const protection = protectedItems.get(incoming.id);
     if (!protection) return incoming;
     if (sameValue(incoming, protection.item)) {

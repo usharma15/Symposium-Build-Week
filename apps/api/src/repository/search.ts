@@ -52,7 +52,7 @@ export const search = async (rawInput: unknown) => {
   const [postsResult, profilesResult, communitiesResult] = await Promise.all([
     getPool().query<SnapshotRow>(
       `SELECT
-        id, kind, room, title, author_handle AS "authorHandle", author_name AS "authorName",
+        id, revision, kind, room, title, author_handle AS "authorHandle", author_name AS "authorName",
         affiliation, date_label AS "dateLabel", status, metrics, gathering_reason AS "gatheringReason",
         created_at AS "createdAt", edited_at AS "editedAt", deleted_at AS "deletedAt",
         excerpt, body, tags, signals, claims, objections, evidence, tests, forks, saved,
@@ -68,7 +68,7 @@ export const search = async (rawInput: unknown) => {
     ),
     getPool().query<ResearchProfileContract>(
       `SELECT handle, name, avatar_url AS "avatarUrl", likes_public AS "likesPublic",
-        reshares_public AS "resharesPublic", role, location, bio, fields
+        reshares_public AS "resharesPublic", role, location, bio, fields, revision
        FROM profiles
        WHERE name ILIKE $1 OR handle ILIKE $1 OR role ILIKE $1 OR location ILIKE $1 OR bio ILIKE $1
        ORDER BY created_at DESC

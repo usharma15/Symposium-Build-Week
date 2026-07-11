@@ -60,6 +60,7 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
   }
   const item: InquiryItemContract = {
     id: newId("post"),
+    revision: 1,
     kind: input.kind,
     room: input.room,
     title: input.title,
@@ -221,7 +222,10 @@ export const applyPostAction = async (
       return { item: existing };
     }
     return {
-      item: mutateItemForActor(existing, input.action, handle, defaultProfile.handle, input.active)
+      item: {
+        ...mutateItemForActor(existing, input.action, handle, defaultProfile.handle, input.active),
+        revision: (existing.revision ?? 1) + 1
+      }
     };
   }
 
@@ -242,6 +246,7 @@ export const applyPostAction = async (
     const postResult = await client.query<SnapshotRow>(
       `SELECT
         id,
+        revision,
         kind,
         room,
         title,
@@ -280,6 +285,7 @@ export const applyPostAction = async (
     const commentsResult = await client.query<CommentRow>(
       `SELECT
         id,
+        revision,
         post_id AS "postId",
         parent_id AS "parentId",
         author_handle AS "authorHandle",
@@ -361,7 +367,7 @@ export const applyPostAction = async (
       );
     }
 
-    await client.query(
+    const revisionResult = await client.query<{ revision: number }>(
       `UPDATE posts
        SET metrics = $2,
            saved = $3,
@@ -369,8 +375,10 @@ export const applyPostAction = async (
            signaled_by = $5,
            forked_by = $6,
            signals = $7,
+           revision = revision + 1,
            updated_at = now()
-       WHERE id = $1`,
+       WHERE id = $1
+       RETURNING revision`,
       [
         postId,
         JSON.stringify(updated.metrics),
@@ -381,6 +389,7 @@ export const applyPostAction = async (
         JSON.stringify(updated.signals)
       ]
     );
+    updated = { ...updated, revision: revisionResult.rows[0].revision };
 
     if (input.action !== "read") {
       await stageAuditLog(client, {
@@ -426,7 +435,12 @@ export const applyPostAction = async (
   return { item: updated, activity };
 };
 
-export const updatePost = async (postId: string, rawInput: unknown, actor: Actor) => {
+export const updatePost = async (
+  postId: string,
+  rawInput: unknown,
+  actor: Actor,
+  mutation?: MutationContext
+) => {
   const input = updatePostInputSchema.parse(rawInput);
   const handle = actorHandle(actor, input.actorHandle);
   const editedAt = new Date().toISOString();
@@ -447,7 +461,15 @@ export const updatePost = async (postId: string, rawInput: unknown, actor: Actor
     if (existing.authorHandle && cleanHandle(existing.authorHandle) !== handle) {
       throw new TRPCError({ code: "FORBIDDEN", message: "Only the author can edit this post." });
     }
-    return { ...existing, title: input.title, body: input.body, excerpt: input.body, claims: [input.body], editedAt };
+    return {
+      ...existing,
+      title: input.title,
+      body: input.body,
+      excerpt: input.body,
+      claims: [input.body],
+      editedAt,
+      revision: (existing.revision ?? 1) + 1
+    };
   }
 
   await ensureLiveData();
@@ -457,9 +479,14 @@ export const updatePost = async (postId: string, rawInput: unknown, actor: Actor
 
   try {
     await client.query("BEGIN");
+    const claim = await claimMutation<InquiryItemContract>(client, handle, mutation);
+    if (claim.replayed) {
+      await client.query("COMMIT");
+      return claim.response;
+    }
     const postResult = await client.query<SnapshotRow>(
       `SELECT
-        id, kind, room, title, author_handle AS "authorHandle", author_name AS "authorName",
+        id, revision, kind, room, title, author_handle AS "authorHandle", author_name AS "authorName",
         affiliation, date_label AS "dateLabel", created_at AS "createdAt", edited_at AS "editedAt",
         deleted_at AS "deletedAt",
         status, metrics, gathering_reason AS "gatheringReason", excerpt, body, tags, signals,
@@ -485,7 +512,7 @@ export const updatePost = async (postId: string, rawInput: unknown, actor: Actor
       throw new TRPCError({ code: "FORBIDDEN", message: "Only the author can edit this post." });
     }
 
-    await client.query(
+    const revisionResult = await client.query<{ revision: number }>(
       `UPDATE posts
        SET title = $2,
            body = $3,
@@ -493,8 +520,10 @@ export const updatePost = async (postId: string, rawInput: unknown, actor: Actor
            claims = $4,
            search_text = $5,
            edited_at = $6,
+           revision = revision + 1,
            updated_at = now()
-       WHERE id = $1`,
+       WHERE id = $1
+       RETURNING revision`,
       [
         postId,
         input.title,
@@ -506,7 +535,7 @@ export const updatePost = async (postId: string, rawInput: unknown, actor: Actor
     );
 
     const commentsResult = await client.query<CommentRow>(
-      `SELECT id, post_id AS "postId", parent_id AS "parentId", author_handle AS "authorHandle",
+      `SELECT id, revision, post_id AS "postId", parent_id AS "parentId", author_handle AS "authorHandle",
         author_name AS "authorName", stance, body, metrics, saved_by AS "savedBy",
         signaled_by AS "signaledBy", forked_by AS "forkedBy", edited_at AS "editedAt",
         deleted_at AS "deletedAt", created_at AS "createdAt"
@@ -517,7 +546,15 @@ export const updatePost = async (postId: string, rawInput: unknown, actor: Actor
     );
     const commentsByPost = commentTreesFromRows(commentsResult.rows);
     updated = rowToItem(
-      { ...row, title: input.title, body: input.body, excerpt: input.body, claims: [input.body], editedAt },
+      {
+        ...row,
+        title: input.title,
+        body: input.body,
+        excerpt: input.body,
+        claims: [input.body],
+        editedAt,
+        revision: revisionResult.rows[0].revision
+      },
       commentsByPost.get(postId) ?? []
     );
 
@@ -528,6 +565,7 @@ export const updatePost = async (postId: string, rawInput: unknown, actor: Actor
       subjectId: postId,
       metadata: { editedAt }
     });
+    await completeMutation(client, handle, mutation, updated);
     stagedEvent = await stageEvent(client, {
       kind: "post.updated",
       actorHandle: handle,
@@ -552,7 +590,7 @@ export const updatePost = async (postId: string, rawInput: unknown, actor: Actor
   return updated;
 };
 
-export const deletePost = async (postId: string, actor: Actor) => {
+export const deletePost = async (postId: string, actor: Actor, mutation?: MutationContext) => {
   const handle = actorHandle(actor);
 
   if (!hasDatabase()) {
@@ -563,7 +601,7 @@ export const deletePost = async (postId: string, actor: Actor) => {
     if (existing.authorHandle && cleanHandle(existing.authorHandle) !== handle) {
       throw new TRPCError({ code: "FORBIDDEN", message: "Only the author can delete this post." });
     }
-    return tombstonePost(existing);
+    return { ...tombstonePost(existing), revision: (existing.revision ?? 1) + 1 };
   }
 
   await ensureLiveData();
@@ -574,9 +612,14 @@ export const deletePost = async (postId: string, actor: Actor) => {
 
   try {
     await client.query("BEGIN");
+    const claim = await claimMutation<InquiryItemContract>(client, handle, mutation);
+    if (claim.replayed) {
+      await client.query("COMMIT");
+      return claim.response;
+    }
     const postResult = await client.query<SnapshotRow>(
       `SELECT
-        id, kind, room, title, author_handle AS "authorHandle", author_name AS "authorName",
+        id, revision, kind, room, title, author_handle AS "authorHandle", author_name AS "authorName",
         affiliation, date_label AS "dateLabel", created_at AS "createdAt", edited_at AS "editedAt",
         deleted_at AS "deletedAt",
         status, metrics, gathering_reason AS "gatheringReason", excerpt, body, tags, signals,
@@ -597,7 +640,7 @@ export const deletePost = async (postId: string, actor: Actor) => {
     }
 
     const commentsResult = await client.query<CommentRow>(
-      `SELECT id, post_id AS "postId", parent_id AS "parentId", author_handle AS "authorHandle",
+      `SELECT id, revision, post_id AS "postId", parent_id AS "parentId", author_handle AS "authorHandle",
         author_name AS "authorName", stance, body, metrics, saved_by AS "savedBy",
         signaled_by AS "signaledBy", forked_by AS "forkedBy", edited_at AS "editedAt",
         deleted_at AS "deletedAt", created_at AS "createdAt"
@@ -611,6 +654,7 @@ export const deletePost = async (postId: string, actor: Actor) => {
 
     if (isDeletedPost(existing)) {
       deleted = existing;
+      await completeMutation(client, handle, mutation, deleted);
       await client.query("COMMIT");
     } else {
       if (row.authorHandle && cleanHandle(row.authorHandle) !== handle) {
@@ -623,8 +667,7 @@ export const deletePost = async (postId: string, actor: Actor) => {
         signaledBy: [],
         forkedBy: []
       };
-      deleted = deletedPost;
-      await client.query(
+      const revisionResult = await client.query<{ revision: number }>(
         `UPDATE posts
          SET title = $2,
              author_handle = NULL,
@@ -648,8 +691,10 @@ export const deletePost = async (postId: string, actor: Actor) => {
              search_text = $16,
              edited_at = NULL,
              deleted_at = $17,
+             revision = revision + 1,
              updated_at = now()
-         WHERE id = $1`,
+         WHERE id = $1
+         RETURNING revision`,
         [
           postId,
           deletedPost.title,
@@ -675,6 +720,7 @@ export const deletePost = async (postId: string, actor: Actor) => {
           deletedPost.deletedAt
         ]
       );
+      deleted = { ...deletedPost, revision: revisionResult.rows[0].revision };
       await client.query(
         `UPDATE post_actions
          SET active = false, count = 0, revision = revision + 1, updated_at = now()
@@ -706,6 +752,7 @@ export const deletePost = async (postId: string, actor: Actor) => {
             ? { itemId: postId, item: deleted }
             : { itemId: postId }
       });
+      await completeMutation(client, handle, mutation, deleted);
       await client.query("COMMIT");
     }
   } catch (error) {

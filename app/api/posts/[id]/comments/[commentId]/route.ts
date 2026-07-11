@@ -26,10 +26,12 @@ export async function PATCH(request: Request, context: Context) {
   }
 
   const actorHandle = body.actorHandle ? String(body.actorHandle) : undefined;
+  const idempotencyKey = request.headers.get("Idempotency-Key") ?? undefined;
   const live = await proxyLiveBackend(`/v1/posts/${id}/comments/${commentId}`, {
     method: "PATCH",
     body: { ...input, actorHandle },
-    actorHandle
+    actorHandle,
+    idempotencyKey
   });
   if (live) return live;
 
@@ -45,11 +47,13 @@ export async function DELETE(request: Request, context: Context) {
   const { id, commentId } = await context.params;
   const body = await readJson<{ actorHandle?: string }>(request);
   const actorHandle = body?.actorHandle ? String(body.actorHandle) : undefined;
+  const idempotencyKey = request.headers.get("Idempotency-Key") ?? undefined;
 
   const live = await proxyLiveBackend(`/v1/posts/${id}/comments/${commentId}`, {
     method: "DELETE",
     body: { actorHandle },
-    actorHandle
+    actorHandle,
+    idempotencyKey
   });
   if (live) return live;
 

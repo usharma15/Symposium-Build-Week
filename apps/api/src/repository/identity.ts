@@ -74,22 +74,34 @@ export const upsertProfile = async (rawInput: unknown, actor: Actor) => {
     throw new TRPCError({ code: "FORBIDDEN", message: "Profiles can only be updated by their owner." });
   }
 
-  if (!hasDatabase()) return person;
+  if (!hasDatabase()) return { ...person, revision: (person.revision ?? 1) + 1 };
   await ensureLiveData();
 
   const client = await getPool().connect();
   let stagedEvent: StoredLiveEvent | undefined;
   try {
     await client.query("BEGIN");
-    await insertProfile(client, person);
+    const storedPerson = await insertProfile(client, person);
     await client.query(
-      "UPDATE posts SET author_name = $2, updated_at = now() WHERE author_handle = $1",
+      `UPDATE posts
+       SET author_name = $2, revision = revision + 1, updated_at = now()
+       WHERE author_handle = $1 AND author_name IS DISTINCT FROM $2`,
       [person.handle, person.name]
     );
-    await client.query(
-      "UPDATE comments SET author_name = $2, updated_at = now() WHERE author_handle = $1",
+    const changedComments = await client.query<{ postId: string }>(
+      `UPDATE comments
+       SET author_name = $2, revision = revision + 1, updated_at = now()
+       WHERE author_handle = $1 AND author_name IS DISTINCT FROM $2
+       RETURNING post_id AS "postId"`,
       [person.handle, person.name]
     );
+    const changedPostIds = Array.from(new Set(changedComments.rows.map((row) => row.postId)));
+    if (changedPostIds.length) {
+      await client.query(
+        `UPDATE posts SET revision = revision + 1, updated_at = now() WHERE id = ANY($1::text[])`,
+        [changedPostIds]
+      );
+    }
     await stageAuditLog(client, {
       actorHandle: writerHandle,
       action: "profile.upsert",
@@ -102,7 +114,7 @@ export const upsertProfile = async (rawInput: unknown, actor: Actor) => {
       actorHandle: writerHandle,
       subjectType: "profile",
       subjectId: person.handle,
-      payload: { profile: publicProfile(person) }
+      payload: { profile: publicProfile(storedPerson) }
     });
     await client.query("COMMIT");
   } catch (error) {
@@ -114,7 +126,13 @@ export const upsertProfile = async (rawInput: unknown, actor: Actor) => {
 
   if (stagedEvent) await publishStoredEvent(stagedEvent);
 
-  return person;
+  const stored = await getPool().query<ResearchProfileContract>(
+    `SELECT handle, email, name, avatar_url AS "avatarUrl", likes_public AS "likesPublic",
+      reshares_public AS "resharesPublic", role, location, bio, fields, revision
+     FROM profiles WHERE handle = $1 LIMIT 1`,
+    [person.handle]
+  );
+  return stored.rows[0] ?? person;
 };
 
 export const syncUser = async (rawInput: unknown, actor: Actor) => {
@@ -173,7 +191,8 @@ export const syncUser = async (rawInput: unknown, actor: Actor) => {
         role,
         location,
         bio,
-        fields
+        fields,
+        revision
        FROM profiles
        WHERE handle = $1
        LIMIT 1`,
@@ -192,14 +211,14 @@ export const syncUser = async (rawInput: unknown, actor: Actor) => {
       bio: existing?.bio ?? "A participant in the current inquiry thread.",
       fields: existing?.fields ?? ["Inquiry"]
     });
-    await insertProfile(client, person, user.rows[0]?.id);
+    const storedPerson = await insertProfile(client, person, user.rows[0]?.id);
     await client.query(
       `INSERT INTO workspaces (owner_handle, name)
        VALUES ($1, 'Notebook')
        ON CONFLICT (owner_handle, name) DO NOTHING`,
       [handle]
     );
-    syncedProfile = person;
+    syncedProfile = storedPerson;
     await stageAuditLog(client, {
       actorHandle: handle,
       action: "auth.sync",
@@ -212,7 +231,7 @@ export const syncUser = async (rawInput: unknown, actor: Actor) => {
       actorHandle: handle,
       subjectType: "profile",
       subjectId: handle,
-      payload: { profile: publicProfile(person) }
+      payload: { profile: publicProfile(storedPerson) }
     });
     await client.query("COMMIT");
   } catch (error) {

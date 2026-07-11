@@ -38,7 +38,11 @@ export const registerPostRoutes = (app: FastifyInstance) => {
   app.patch<{ Params: RouteParams }>("/v1/posts/:id", async (request, reply) => {
     try {
       const actor = await withWriteActor(request);
-      const item = await updatePost(request.params.id, request.body, actor);
+      const mutation = mutationContextFromRequest(request, "post.update", {
+        postId: request.params.id,
+        body: request.body
+      });
+      const item = await updatePost(request.params.id, request.body, actor, mutation);
       return reply.send({ item });
     } catch (error) {
       return sendError(app, reply, error);
@@ -48,7 +52,8 @@ export const registerPostRoutes = (app: FastifyInstance) => {
   app.delete<{ Params: RouteParams }>("/v1/posts/:id", async (request, reply) => {
     try {
       const actor = await withWriteActor(request);
-      const item = await deletePost(request.params.id, actor);
+      const mutation = mutationContextFromRequest(request, "post.delete", { postId: request.params.id });
+      const item = await deletePost(request.params.id, actor, mutation);
       return reply.send({ item, deleted: { id: item.id } });
     } catch (error) {
       return sendError(app, reply, error);
@@ -72,7 +77,18 @@ export const registerPostRoutes = (app: FastifyInstance) => {
   app.patch<{ Params: RouteParams & { commentId: string } }>("/v1/posts/:id/comments/:commentId", async (request, reply) => {
     try {
       const actor = await withWriteActor(request);
-      const item = await updateComment(request.params.id, request.params.commentId, request.body, actor);
+      const mutation = mutationContextFromRequest(request, "comment.update", {
+        postId: request.params.id,
+        commentId: request.params.commentId,
+        body: request.body
+      });
+      const item = await updateComment(
+        request.params.id,
+        request.params.commentId,
+        request.body,
+        actor,
+        mutation
+      );
       return reply.send({ item });
     } catch (error) {
       return sendError(app, reply, error);
@@ -82,7 +98,17 @@ export const registerPostRoutes = (app: FastifyInstance) => {
   app.delete<{ Params: RouteParams & { commentId: string } }>("/v1/posts/:id/comments/:commentId", async (request, reply) => {
     try {
       const actor = await withWriteActor(request);
-      const item = await deleteComment(request.params.id, request.params.commentId, request.body, actor);
+      const mutation = mutationContextFromRequest(request, "comment.delete", {
+        postId: request.params.id,
+        commentId: request.params.commentId
+      });
+      const item = await deleteComment(
+        request.params.id,
+        request.params.commentId,
+        request.body,
+        actor,
+        mutation
+      );
       return reply.send({ item, deleted: { id: request.params.commentId } });
     } catch (error) {
       return sendError(app, reply, error);
