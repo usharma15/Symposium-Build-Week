@@ -18,10 +18,10 @@ export class ContentQuoteError extends Error {
 }
 
 export const quotedContentExcerpt = (body: string, limit = quoteExcerptLength) => {
-  const normalized = body.trim().replace(/\s+/g, " ");
+  const normalized = body.trim().replace(/\r\n?/g, "\n");
   if (normalized.length <= limit) return normalized;
   const candidate = normalized.slice(0, limit + 1);
-  const boundary = candidate.lastIndexOf(" ");
+  const boundary = Math.max(candidate.lastIndexOf(" "), candidate.lastIndexOf("\n"), candidate.lastIndexOf("\t"));
   return `${candidate.slice(0, boundary >= 300 ? boundary : limit).trimEnd()}…`;
 };
 
@@ -85,6 +85,7 @@ export const resolveLocalContentQuote = (
       available: true,
       author: comment.author,
       authorHandle: comment.authorHandle,
+      kind: item.kind,
       body: comment.body,
       createdAt: comment.createdAt,
       attachmentCount: Math.min(comment.attachments?.length ?? 0, 10)

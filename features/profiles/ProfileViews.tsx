@@ -668,6 +668,7 @@ function ProfileCommentCard({
       {activity.comment.quote ? (
         <ContentQuoteCard
           quote={activity.comment.quote}
+          profiles={profiles}
           onOpen={activity.comment.quote.available ? () => onOpenQuote({
             sourceType: activity.comment.quote!.sourceType,
             sourceId: activity.comment.quote!.sourceId,

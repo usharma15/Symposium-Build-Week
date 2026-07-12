@@ -180,6 +180,7 @@ The current guarantees are:
 - Migration `0015_durable_r2_deletion` adds a leased, retry-safe object-deletion queue and backfills attachments belonging to existing post tombstones. Post deletion keeps its database tombstone and live event, but atomically removes the attachment from read projections and queues both canonical and staging R2 keys before commit. Removal is attempted before the delete request returns and retried every minute after transient provider failures.
 - Migration `0016_comment_attachment_ownership` extends the attachment-owner constraint to comments. Comment and reply creation claims verified staged objects in the comment transaction; post/comment edits replace a content-version-guarded desired attachment set; comment deletion and parent-post deletion queue every canonical and staging object durably.
 - Migration `0017_content_quotes` adds the shared post/comment quote snapshot columns. Quote resolution rejects private, deleted, or self-referential sources; source deletion sanitizes dependent snapshots, and live deletion events converge the unavailable state across active tabs.
+- Migration `0018_comment_quote_kind` backfills the source post kind into existing comment quote snapshots so paper/thought presentation remains consistent without exposing parent-post content.
 
 `npm run verify` is the local release gate. It runs security, infrastructure, domain, attachment, mutation, profile, TypeScript, and production-build checks. `npm audit --audit-level=high` is the dependency vulnerability gate.
 

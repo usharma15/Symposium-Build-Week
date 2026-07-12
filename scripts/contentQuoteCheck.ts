@@ -15,6 +15,7 @@ import {
   quotedContentExcerpt,
   resolveLocalContentQuote
 } from "@/lib/contentQuotes";
+import { resolveQuoteLink } from "@/features/quotes/quoteLinks";
 
 const main = async () => {
   const post = inquiryItems.find(
@@ -27,12 +28,26 @@ const main = async () => {
   assert.equal(contentQuoteSchema.safeParse(commentQuote).success, true);
   assert.equal(postQuote?.sourcePostId, post.id);
   assert.equal(commentQuote?.sourcePostId, post.id);
+  assert.equal(commentQuote?.kind, post.kind);
 
   const longSource = Array.from({ length: 100 }, (_, index) => `word${index}`).join(" ");
   const excerpt = quotedContentExcerpt(longSource);
   assert.ok(excerpt.length >= 300 && excerpt.length <= quoteExcerptLength + 1);
   assert.equal(excerpt.endsWith("…"), true);
   assert.equal(excerpt.slice(0, -1).endsWith(" "), false);
+  const formattedExcerpt = quotedContentExcerpt(
+    `Opening paragraph.\n\n${Array.from({ length: 80 }, (_, index) => `formatted-${index}`).join(" ")}`
+  );
+  assert.equal(formattedExcerpt.includes("\n\n"), true);
+
+  const postLinkQuote = resolveQuoteLink(inquiryItems, `/posts/${encodeURIComponent(post.id)}`);
+  assert.equal(postLinkQuote.selection.sourceType, "post");
+  const commentLinkQuote = resolveQuoteLink(
+    inquiryItems,
+    `https://symposium-flax.vercel.app/posts/${encodeURIComponent(post.id)}?comment=${encodeURIComponent(comment.id as string)}`
+  );
+  assert.equal(commentLinkQuote.selection.sourceType, "comment");
+  assert.equal(commentLinkQuote.selection.sourcePostId, post.id);
 
   assert.throws(
     () => resolveLocalContentQuote(
@@ -101,11 +116,13 @@ const main = async () => {
   }).success, true);
 
   const root = process.cwd();
-  const [service, migration, foundation, quoteViews, controller] = await Promise.all([
+  const [service, migration, foundation, quoteViews, postViews, commentViews, controller] = await Promise.all([
     readFile(path.join(root, "apps/api/src/services/contentQuotes.ts"), "utf8"),
     readFile(path.join(root, "apps/api/src/db/migrate.ts"), "utf8"),
     readFile(path.join(root, "apps/api/src/repository/foundation.ts"), "utf8"),
     readFile(path.join(root, "features/quotes/QuoteViews.tsx"), "utf8"),
+    readFile(path.join(root, "features/posts/PostViews.tsx"), "utf8"),
+    readFile(path.join(root, "features/comments/CommentThread.tsx"), "utf8"),
     readFile(path.join(root, "components/SymposiumV0.tsx"), "utf8")
   ]);
   assert.match(service, /post\.visibility = 'public'/);
@@ -115,11 +132,17 @@ const main = async () => {
   assert.match(service, /revision = revision \+ 1/);
   assert.match(service, /quote->>'available' = 'true'/);
   assert.match(migration, /0017_content_quotes/);
+  assert.match(migration, /0018_comment_quote_kind/);
   assert.match(migration, /posts_quote_source_post_idx/);
   assert.match(migration, /comments_quote_comment_source_idx/);
   assert.match(foundation, /quote: row\.quote \?\? undefined/);
   assert.match(quoteViews, /QuoteActionButton/);
   assert.match(quoteViews, /ContentQuoteCard/);
+  assert.match(quoteViews, /QuoteLinkField/);
+  assert.match(quoteViews, /quote-card-author/);
+  assert.match(postViews, /title="Open post link"/);
+  assert.match(commentViews, /title="Open comment link"/);
+  assert.doesNotMatch(commentViews, />Comment link</);
   assert.match(controller, /invalidateLiveQuotedSource/);
   assert.match(controller, /selection\.sourceType === "comment" \? selection\.sourceId : null/);
 
@@ -128,6 +151,9 @@ const main = async () => {
     checked: [
       "post and comment quote snapshots",
       "320-character exact-source excerpt",
+      "preserved source whitespace",
+      "internal post and comment link resolution",
+      "source post kind metadata",
       "self-quote rejection",
       "permission-safe source resolution",
       "post and comment source invalidation",

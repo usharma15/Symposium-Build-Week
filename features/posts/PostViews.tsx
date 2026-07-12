@@ -12,6 +12,7 @@ import {
   ArrowLeft,
   Bookmark,
   Eye,
+  Link2,
   MessageCircle,
   Pencil,
   Repeat2,
@@ -56,9 +57,15 @@ import {
 import {
   ContentQuoteCard,
   QuoteActionButton,
+  QuoteLinkField,
   type QuoteActionHandler,
   type QuoteSelection
 } from "@/features/quotes/QuoteViews";
+import {
+  attachedQuoteFromSnapshot,
+  type AttachedQuote,
+  type QuoteLinkResolver
+} from "@/features/quotes/quoteLinks";
 import {
   CommentComposer,
   CommentThread,
@@ -70,6 +77,7 @@ import { ExpandableBodyText } from "@/features/content/ExpandableBodyText";
 import { profileForHandle, profileInitials } from "@/features/identity/profilePresentation";
 import { useQualifiedView } from "@/features/live-sync/useQualifiedView";
 import { CanonicalLink } from "@/features/navigation/CanonicalLink";
+import { canonicalRouteHref } from "@/features/navigation/canonicalRoute";
 
 export type PostDraft = {
   title: string;
@@ -96,11 +104,15 @@ const postKindOptions: PostDraft["kind"][] = ["thought", "paper"];
 export function PostComposerModal({
   onClose,
   onCreatePost,
-  onUploadAttachment
+  onUploadAttachment,
+  onResolveQuoteLink,
+  profiles
 }: {
   onClose: () => void;
   onCreatePost: (draft: PostDraft) => Promise<PostCreationResult>;
   onUploadAttachment: AttachmentUploadHandler;
+  onResolveQuoteLink: QuoteLinkResolver;
+  profiles: Record<string, ResearchProfile>;
 }) {
   const [kind, setKind] = useState<PostDraft["kind"]>("thought");
   const [title, setTitle] = useState("");
@@ -109,6 +121,7 @@ export function PostComposerModal({
   const [attachmentStatus, setAttachmentStatus] = useState("");
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [attachedQuote, setAttachedQuote] = useState<AttachedQuote | null>(null);
 
   const submitPost = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -118,7 +131,15 @@ export function PostComposerModal({
 
     setSubmitting(true);
     setAttachmentStatus(attachments.length ? "Publishing post with attachments" : "Publishing post");
-    const result = await onCreatePost({ title: cleanTitle, body: cleanBody, kind, attachments });
+    const result = await onCreatePost({
+      title: cleanTitle,
+      body: cleanBody,
+      kind,
+      attachments,
+      quoteSource: attachedQuote
+        ? { sourceType: attachedQuote.selection.sourceType, sourceId: attachedQuote.selection.sourceId }
+        : undefined
+    });
     setSubmitting(false);
     if (!result.ok) {
       setAttachmentStatus(result.error);
@@ -128,6 +149,7 @@ export function PostComposerModal({
     setBody("");
     setKind("thought");
     setAttachments([]);
+    setAttachedQuote(null);
     setAttachmentStatus("");
   };
 
@@ -163,6 +185,13 @@ export function PostComposerModal({
           onChange={(event) => setBody(event.target.value)}
           placeholder="Write the thing itself"
         />
+        <QuoteLinkField
+          attached={attachedQuote}
+          profiles={profiles}
+          disabled={submitting}
+          onChange={setAttachedQuote}
+          onResolve={onResolveQuoteLink}
+        />
         <AttachmentComposerField
           attachments={attachments}
           disabled={submitting}
@@ -181,7 +210,9 @@ export function PostEditModal({
   onClose,
   onSave,
   onDelete,
-  onUploadAttachment
+  onUploadAttachment,
+  onResolveQuoteLink,
+  profiles
 }: {
   item: InquiryItem;
   onClose: () => void;
@@ -193,11 +224,15 @@ export function PostEditModal({
   }) => Promise<void>;
   onDelete: (itemId: string) => void;
   onUploadAttachment: AttachmentUploadHandler;
+  onResolveQuoteLink: QuoteLinkResolver;
+  profiles: Record<string, ResearchProfile>;
 }) {
   const [title, setTitle] = useState(item.title);
   const [body, setBody] = useState(item.body);
   const [attachments, setAttachments] = useState<InquiryAttachment[]>(item.attachments ?? []);
-  const [quote, setQuote] = useState(item.quote ?? null);
+  const [attachedQuote, setAttachedQuote] = useState<AttachedQuote | null>(
+    item.quote ? attachedQuoteFromSnapshot(item.quote) : null
+  );
   const [busy, setBusy] = useState(false);
 
   const submitEdit = async (event: FormEvent<HTMLFormElement>) => {
@@ -205,7 +240,7 @@ export function PostEditModal({
     if (busy || !title.trim() || !body.trim()) return;
     setBusy(true);
     try {
-      await onSave(item.id, { title, body, attachments, quote });
+      await onSave(item.id, { title, body, attachments, quote: attachedQuote?.quote ?? null });
     } finally {
       setBusy(false);
     }
@@ -240,6 +275,14 @@ export function PostEditModal({
           onChange={(event) => setBody(event.target.value)}
           placeholder="Write the thing itself"
         />
+        <QuoteLinkField
+          attached={attachedQuote}
+          owner={{ ownerId: item.id, ownerType: "post" }}
+          profiles={profiles}
+          disabled={busy}
+          onChange={setAttachedQuote}
+          onResolve={onResolveQuoteLink}
+        />
         <AttachmentComposerField
           attachments={attachments}
           disabled={busy}
@@ -247,7 +290,6 @@ export function PostEditModal({
           onBusyChange={setBusy}
           onUploadAttachment={onUploadAttachment}
         />
-        {quote ? <ContentQuoteCard quote={quote} onRemove={() => setQuote(null)} /> : null}
       </form>
     </div>
   );
@@ -259,7 +301,9 @@ export function CommentEditModal({
   onClose,
   onSave,
   onDelete,
-  onUploadAttachment
+  onUploadAttachment,
+  onResolveQuoteLink,
+  profiles
 }: {
   item: InquiryItem;
   comment: InquiryComment;
@@ -273,10 +317,14 @@ export function CommentEditModal({
   ) => Promise<void>;
   onDelete: (itemId: string, commentId: string) => void;
   onUploadAttachment: AttachmentUploadHandler;
+  onResolveQuoteLink: QuoteLinkResolver;
+  profiles: Record<string, ResearchProfile>;
 }) {
   const [body, setBody] = useState(comment.body);
   const [attachments, setAttachments] = useState<InquiryAttachment[]>(comment.attachments ?? []);
-  const [quote, setQuote] = useState(comment.quote ?? null);
+  const [attachedQuote, setAttachedQuote] = useState<AttachedQuote | null>(
+    comment.quote ? attachedQuoteFromSnapshot(comment.quote) : null
+  );
   const [busy, setBusy] = useState(false);
 
   const submitEdit = async (event: FormEvent<HTMLFormElement>) => {
@@ -284,7 +332,7 @@ export function CommentEditModal({
     if (!comment.id || busy || !body.trim()) return;
     setBusy(true);
     try {
-      await onSave(item.id, comment.id, body, attachments, quote);
+      await onSave(item.id, comment.id, body, attachments, attachedQuote?.quote ?? null);
     } finally {
       setBusy(false);
     }
@@ -314,6 +362,14 @@ export function CommentEditModal({
           onChange={(event) => setBody(event.target.value)}
           placeholder="Write the comment"
         />
+        <QuoteLinkField
+          attached={attachedQuote}
+          owner={{ ownerId: comment.id ?? "", ownerType: "comment" }}
+          profiles={profiles}
+          disabled={busy}
+          onChange={setAttachedQuote}
+          onResolve={onResolveQuoteLink}
+        />
         <AttachmentComposerField
           attachments={attachments}
           disabled={busy}
@@ -321,7 +377,6 @@ export function CommentEditModal({
           onBusyChange={setBusy}
           onUploadAttachment={onUploadAttachment}
         />
-        {quote ? <ContentQuoteCard quote={quote} onRemove={() => setQuote(null)} /> : null}
       </form>
     </div>
   );
@@ -459,6 +514,7 @@ export function FeedPost({
         {item.quote ? (
           <ContentQuoteCard
             quote={item.quote}
+            profiles={profiles}
             onOpen={item.quote.available ? () => onOpenQuote({
               sourceType: item.quote!.sourceType,
               sourceId: item.quote!.sourceId,
@@ -594,6 +650,15 @@ function SocialActions({
         );
       })}
       <QuoteActionButton disabled={postDeleted} label="post" onQuote={onQuote} />
+      <a
+        className="content-link-action"
+        href={canonicalRouteHref({ kind: "post", postId: item.id })}
+        title="Open post link"
+        aria-label="Open post link"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <Link2 size={16} aria-hidden="true" />
+      </a>
     </div>
   );
 }
@@ -605,6 +670,7 @@ export function DetailView({
   onOpenProfile,
   onAddComment,
   onUploadCommentAttachment,
+  onResolveQuoteLink,
   onOpenCommentAttachmentPreview,
   onAction,
   onQuote,
@@ -630,6 +696,7 @@ export function DetailView({
   onOpenProfile: (name: string) => void;
   onAddComment: AddCommentHandler;
   onUploadCommentAttachment: AttachmentUploadHandler;
+  onResolveQuoteLink: QuoteLinkResolver;
   onOpenCommentAttachmentPreview: CommentAttachmentPreviewHandler;
   onAction: PostActionHandler;
   onQuote: QuoteActionHandler;
@@ -730,6 +797,7 @@ export function DetailView({
         {item.quote ? (
           <ContentQuoteCard
             quote={item.quote}
+            profiles={profiles}
             onOpen={item.quote.available ? () => onOpenQuote({
               sourceType: item.quote!.sourceType,
               sourceId: item.quote!.sourceId,
@@ -755,8 +823,10 @@ export function DetailView({
           {postDeleted ? null : (
             <CommentComposer
               itemId={item.id}
+              profiles={profiles}
               onAddComment={onAddComment}
               onUploadAttachment={onUploadCommentAttachment}
+              onResolveQuoteLink={onResolveQuoteLink}
             />
           )}
           <CommentThread
@@ -767,6 +837,7 @@ export function DetailView({
             onOpenProfile={onOpenProfile}
             onAddComment={onAddComment}
             onUploadAttachment={onUploadCommentAttachment}
+            onResolveQuoteLink={onResolveQuoteLink}
             onOpenAttachmentPreview={onOpenCommentAttachmentPreview}
             onCommentAction={onCommentAction}
             onQuote={onQuote}

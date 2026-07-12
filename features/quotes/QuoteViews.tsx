@@ -1,20 +1,23 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { Paperclip, Quote as QuoteIcon, X } from "lucide-react";
+import { Link2, Paperclip, Quote as QuoteIcon, X } from "lucide-react";
 import type {
   ContentQuote,
   ContentQuoteSource,
   InquiryAttachment,
-  InquiryItem
+  InquiryItem,
+  ResearchProfile
 } from "@/lib/mockData";
 import { quotedContentExcerpt } from "@/lib/contentQuotes";
+import { profileForHandle, profileInitials } from "@/features/identity/profilePresentation";
+import type { AttachedQuote, QuoteLinkResolver, QuoteOwner, QuoteSelection } from "@/features/quotes/quoteTypes";
 import {
   AttachmentComposerField,
   type AttachmentUploadHandler
 } from "@/features/attachments/AttachmentViews";
 
-export type QuoteSelection = ContentQuoteSource & { sourcePostId: string };
+export type { QuoteSelection } from "@/features/quotes/quoteTypes";
 export type QuoteActionHandler = (selection: QuoteSelection) => void;
 export type QuotePostDraft = {
   title: string;
@@ -25,8 +28,11 @@ export type QuotePostDraft = {
 };
 export type QuoteCreationResult = { ok: true } | { ok: false; error: string };
 
-const quoteKindLabel = (quote: ContentQuote) =>
-  quote.sourceType === "comment" ? "Comment" : quote.kind === "paper" ? "Paper" : "Thought";
+const quotePostKind = (quote: ContentQuote) => quote.kind === "paper" ? "paper" : "thought";
+const quoteKindLabel = (quote: ContentQuote) => {
+  const postKind = quotePostKind(quote) === "paper" ? "Paper" : "Thought";
+  return quote.sourceType === "comment" ? `Comment · ${postKind}` : postKind;
+};
 
 export function QuoteActionButton({
   disabled = false,
@@ -56,19 +62,34 @@ export function QuoteActionButton({
 
 export function ContentQuoteCard({
   quote,
+  profiles,
   onOpen,
   onRemove
 }: {
   quote: ContentQuote;
+  profiles?: Record<string, ResearchProfile>;
   onOpen?: () => void;
   onRemove?: () => void;
 }) {
   const content = quote.body ? quotedContentExcerpt(quote.body) : "";
+  const authorProfile = quote.author
+    ? profileForHandle(profiles ?? {}, quote.authorHandle ?? quote.author)
+    : undefined;
+  const authorName = authorProfile?.name ?? quote.author;
+  const postKind = quotePostKind(quote);
+  const cardClassName = `quote-card quote-card-${postKind}`;
   const cardBody = (
     <>
       <div className="quote-card-head">
-        <span className="quote-card-kind"><QuoteIcon size={14} />{quoteKindLabel(quote)}</span>
-        {quote.available && quote.author ? <strong>{quote.author}</strong> : null}
+        {quote.available && authorName ? (
+          <span className="quote-card-author">
+            <span className="avatar small">
+              {authorProfile?.avatarUrl ? <img src={authorProfile.avatarUrl} alt="" /> : profileInitials(authorName)}
+            </span>
+            <strong>{authorName}</strong>
+          </span>
+        ) : <span />}
+        <span className={`quote-card-kind quote-kind-${postKind}`}><QuoteIcon size={14} />{quoteKindLabel(quote)}</span>
       </div>
       {quote.available ? (
         <>
@@ -90,11 +111,11 @@ export function ContentQuoteCard({
   return (
     <div className={`quote-card-shell${onRemove ? " removable" : ""}`} data-testid={`quote-card-${quote.sourceType}-${quote.sourceId}`}>
       {quote.available && onOpen ? (
-        <button type="button" className="quote-card" onClick={(event) => { event.stopPropagation(); onOpen(); }}>
+        <button type="button" className={cardClassName} onClick={(event) => { event.stopPropagation(); onOpen(); }}>
           {cardBody}
         </button>
       ) : (
-        <div className="quote-card">{cardBody}</div>
+        <div className={cardClassName}>{cardBody}</div>
       )}
       {onRemove ? (
         <button type="button" className="quote-card-remove" title="Remove quote" onClick={onRemove}>
@@ -105,9 +126,92 @@ export function ContentQuoteCard({
   );
 }
 
+export function QuoteLinkField({
+  attached,
+  disabled = false,
+  owner,
+  profiles,
+  onChange,
+  onResolve
+}: {
+  attached: AttachedQuote | null;
+  disabled?: boolean;
+  owner?: QuoteOwner;
+  profiles: Record<string, ResearchProfile>;
+  onChange: (attached: AttachedQuote | null) => void;
+  onResolve: QuoteLinkResolver;
+}) {
+  const [open, setOpen] = useState(false);
+  const [link, setLink] = useState("");
+  const [status, setStatus] = useState("");
+
+  const attach = () => {
+    try {
+      const resolved = onResolve(link, owner);
+      onChange(resolved);
+      setLink("");
+      setStatus("");
+      setOpen(false);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "That quote could not be attached.");
+    }
+  };
+
+  if (attached) {
+    return (
+      <div className="composer-quote-field">
+        <ContentQuoteCard
+          quote={attached.quote}
+          profiles={profiles}
+          onRemove={() => {
+            onChange(null);
+            setStatus("");
+          }}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="composer-quote-field">
+      <button
+        type="button"
+        className="quote-link-toggle"
+        disabled={disabled}
+        onClick={() => {
+          setOpen((current) => !current);
+          setStatus("");
+        }}
+      >
+        <QuoteIcon size={16} />
+        Quote
+      </button>
+      {open ? (
+        <div className="quote-link-input-row">
+          <Link2 size={16} aria-hidden="true" />
+          <input
+            value={link}
+            onChange={(event) => setLink(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter") return;
+              event.preventDefault();
+              attach();
+            }}
+            placeholder="Paste a Symposium post or comment link"
+            aria-label="Post or comment link to quote"
+          />
+          <button type="button" disabled={!link.trim() || disabled} onClick={attach}>Attach</button>
+        </div>
+      ) : null}
+      {status ? <small className="composer-submit-status">{status}</small> : null}
+    </div>
+  );
+}
+
 export function QuoteComposerModal({
   quote,
   selection,
+  profiles,
   onClose,
   onCreatePost,
   onAddComment,
@@ -116,6 +220,7 @@ export function QuoteComposerModal({
 }: {
   quote: ContentQuote;
   selection: QuoteSelection;
+  profiles: Record<string, ResearchProfile>;
   onClose: () => void;
   onCreatePost: (draft: QuotePostDraft) => Promise<QuoteCreationResult>;
   onAddComment: (
@@ -185,12 +290,12 @@ export function QuoteComposerModal({
     <div className="composer-modal-backdrop" role="presentation" onClick={onClose}>
       <form className="post-composer post-composer-modal quote-composer-modal" onSubmit={submit} onClick={(event) => event.stopPropagation()}>
         <div className="composer-modal-head">
-          <div><span>Quote</span><strong>{destination === "post" ? "New post" : "Comment here"}</strong></div>
+          <div><span>Quote</span><strong>{destination === "post" ? "New post" : "Comment on source"}</strong></div>
           <button type="button" title="Close" onClick={onClose}><X size={17} /></button>
         </div>
         <div className="quote-destination-switch" aria-label="Quote destination">
           <button type="button" className={destination === "post" ? "active" : ""} onClick={() => setDestination("post")}>New post</button>
-          <button type="button" className={destination === "comment" ? "active" : ""} onClick={() => setDestination("comment")}>Comment here</button>
+          <button type="button" className={destination === "comment" ? "active" : ""} onClick={() => setDestination("comment")}>Comment on source</button>
         </div>
         {destination === "post" ? (
           <div className="composer-topline">
@@ -208,7 +313,7 @@ export function QuoteComposerModal({
         )}
         {destination === "post" ? <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Title" /> : null}
         <textarea value={body} onChange={(event) => setBody(event.target.value)} placeholder="Add your own framing" />
-        <ContentQuoteCard quote={quote} />
+        <ContentQuoteCard quote={quote} profiles={profiles} />
         <AttachmentComposerField
           attachments={attachments}
           disabled={busy}

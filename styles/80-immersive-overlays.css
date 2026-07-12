@@ -817,3 +817,23 @@
   border-color: rgba(157, 238, 243, 0.28);
   background: rgba(157, 238, 243, 0.09);
 }
+
+.symposium-shell.night .quote-card-paper,
+.symposium-shell.night .comment button.quote-card-paper {
+  border-color: rgba(231, 189, 124, 0.34);
+  background: color-mix(in srgb, #8a5428 18%, var(--panel-strong));
+}
+
+.symposium-shell.night .quote-card-thought,
+.symposium-shell.night .comment button.quote-card-thought {
+  border-color: rgba(114, 201, 213, 0.34);
+  background: color-mix(in srgb, #176f7b 18%, var(--panel-strong));
+}
+
+.symposium-shell.night .quote-kind-paper {
+  color: #f2c98d;
+}
+
+.symposium-shell.night .quote-kind-thought {
+  color: #9de4ec;
+}

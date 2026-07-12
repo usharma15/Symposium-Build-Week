@@ -24,6 +24,7 @@ type CommentQuoteSourceRow = {
   id: string;
   revision: number;
   postId: string;
+  kind: ContentKindContract;
   authorHandle: string | null;
   authorName: string;
   body: string;
@@ -97,6 +98,7 @@ export const resolveContentQuote = async (
        comment.id,
        comment.revision,
        comment.post_id AS "postId",
+       post.kind,
        comment.author_handle AS "authorHandle",
        comment.author_name AS "authorName",
        comment.body,
@@ -127,6 +129,7 @@ export const resolveContentQuote = async (
     available: true,
     author: row.authorName,
     authorHandle: row.authorHandle ?? undefined,
+    kind: row.kind,
     body: row.body,
     createdAt: new Date(row.createdAt).toISOString(),
     attachmentCount: attachmentCount(row.attachmentCount)

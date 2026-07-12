@@ -1,5 +1,195 @@
 /* Immersive content actions, profiles and fixed launch controls. */
 
+.quote-card-shell {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.quote-card {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  border: 1px solid color-mix(in srgb, var(--aqua) 24%, var(--line));
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  background: color-mix(in srgb, var(--panel-strong) 82%, transparent);
+  color: var(--ink);
+  text-align: left;
+  box-shadow: none;
+}
+
+.quote-card-paper {
+  border-color: color-mix(in srgb, #a86732 28%, var(--line));
+  background: color-mix(in srgb, #f7eed6 64%, var(--panel-strong));
+}
+
+.quote-card-thought {
+  border-color: color-mix(in srgb, #227986 26%, var(--line));
+  background: color-mix(in srgb, #d9f0f5 62%, var(--panel-strong));
+}
+
+button.quote-card {
+  cursor: pointer;
+}
+
+button.quote-card:hover {
+  transform: none;
+  border-color: color-mix(in srgb, var(--aqua) 52%, var(--line));
+  background: color-mix(in srgb, var(--aqua) 7%, var(--panel-strong));
+}
+
+button.quote-card-paper:hover {
+  border-color: color-mix(in srgb, #a86732 48%, var(--line));
+  background: color-mix(in srgb, #f7eed6 76%, var(--panel-strong));
+}
+
+button.quote-card-thought:hover {
+  border-color: color-mix(in srgb, #227986 48%, var(--line));
+  background: color-mix(in srgb, #d9f0f5 74%, var(--panel-strong));
+}
+
+.quote-card-head,
+.quote-card-author {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.quote-card-head {
+  justify-content: space-between;
+  gap: 6px 10px;
+}
+
+.quote-card-author {
+  gap: 8px;
+}
+
+.quote-card-author .avatar.small {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  font-size: 0.66rem;
+}
+
+.quote-card-author strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quote-card-kind,
+.quote-card-attachments {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: fit-content;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 790;
+}
+
+.quote-card-kind {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+
+.quote-kind-paper {
+  color: #8a5428;
+  background: color-mix(in srgb, #e7bd7c 18%, transparent);
+}
+
+.quote-kind-thought {
+  color: #176f7b;
+  background: color-mix(in srgb, #72c9d5 16%, transparent);
+}
+
+.quote-card h3,
+.quote-card p {
+  margin: 0;
+}
+
+.quote-card h3 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.96rem;
+}
+
+.quote-card p {
+  color: var(--muted);
+  line-height: 1.48;
+  white-space: pre-wrap;
+}
+
+.quote-card-unavailable {
+  font-style: italic;
+}
+
+.quote-card-remove {
+  position: absolute;
+  z-index: 2;
+  top: 8px;
+  right: 8px;
+  display: inline-grid;
+  place-items: center;
+  min-height: 30px;
+  padding: 0 8px;
+}
+
+.quote-card-shell.removable .quote-card {
+  padding-right: 54px;
+}
+
+.composer-quote-field {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.quote-link-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: fit-content;
+  min-height: 38px;
+  border: 1px solid var(--line);
+  background: var(--panel-strong);
+  color: var(--ink);
+  padding: 0 11px;
+}
+
+.quote-link-input-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--panel-strong) 84%, transparent);
+}
+
+.quote-link-input-row > svg {
+  color: var(--muted);
+}
+
+.quote-link-input-row input {
+  min-width: 0;
+}
+
 .feed-post h2 {
   font-size: 1.02rem;
   overflow-wrap: anywhere;
@@ -109,13 +299,15 @@
 
 .social-actions {
   display: grid;
-  grid-template-columns: repeat(5, minmax(78px, 1fr)) minmax(42px, 0.5fr);
+  grid-template-columns: repeat(5, minmax(78px, 1fr)) repeat(2, minmax(38px, 0.45fr));
   gap: clamp(4px, 0.8vw, 10px);
   width: 100%;
 }
 
 .social-actions .quote-action-button,
-.comment-actions .quote-action-button {
+.comment-actions .quote-action-button,
+.social-actions .content-link-action,
+.comment-actions .content-link-action {
   min-width: 38px;
   padding-inline: 8px;
 }

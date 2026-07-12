@@ -1172,6 +1172,37 @@ const migrations: Migration[] = [
         ON comments ((quote->>'sourceId'))
         WHERE quote->>'sourceType' = 'comment';
     `
+  },
+  {
+    id: "0018_comment_quote_kind",
+    sql: `
+      UPDATE posts owner
+      SET quote = jsonb_set(owner.quote, '{kind}', to_jsonb(source.kind), true),
+          revision = owner.revision + 1,
+          updated_at = now()
+      FROM posts source
+      WHERE owner.quote->>'sourceType' = 'comment'
+        AND owner.quote->>'available' = 'true'
+        AND owner.quote->>'sourcePostId' = source.id
+        AND owner.quote->>'kind' IS NULL;
+
+      WITH updated_comment_quotes AS (
+        UPDATE comments owner
+        SET quote = jsonb_set(owner.quote, '{kind}', to_jsonb(source.kind), true),
+            revision = owner.revision + 1,
+            updated_at = now()
+        FROM posts source
+        WHERE owner.quote->>'sourceType' = 'comment'
+          AND owner.quote->>'available' = 'true'
+          AND owner.quote->>'sourcePostId' = source.id
+          AND owner.quote->>'kind' IS NULL
+        RETURNING owner.post_id
+      )
+      UPDATE posts
+      SET revision = posts.revision + 1,
+          updated_at = now()
+      WHERE posts.id IN (SELECT DISTINCT post_id FROM updated_comment_quotes);
+    `
   }
 ];
 

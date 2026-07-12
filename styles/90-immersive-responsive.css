@@ -136,6 +136,23 @@
 }
 
 @media (max-width: 640px) {
+  .quote-card-head {
+    align-items: flex-start;
+  }
+
+  .quote-card-kind {
+    font-size: 0.68rem;
+  }
+
+  .quote-link-input-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .quote-link-input-row > button {
+    grid-column: 2;
+    justify-self: start;
+  }
+
   .topbar {
     --brand-nav-slot: 112px;
     align-items: center;

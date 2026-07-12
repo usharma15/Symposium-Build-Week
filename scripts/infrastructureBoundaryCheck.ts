@@ -15,12 +15,12 @@ import { parseEventCursor } from "@/apps/api/src/services/events";
 import { clerkSecretMode } from "@/apps/api/src/config/preflight";
 
 const main = async () => {
-  assert.equal(latestMigrationId, "0017_content_quotes");
+  assert.equal(latestMigrationId, "0018_comment_quote_kind");
   assert.equal(clerkSecretMode("sk_test_example"), "development");
   assert.equal(clerkSecretMode("sk_live_example"), "production");
   assert.equal(clerkSecretMode(undefined), "missing");
   assert.equal(migrationIds.at(-1), latestMigrationId);
-  assert.ok(migrationIds.length >= 17);
+  assert.ok(migrationIds.length >= 18);
   assert.ok("audienceHandles" in events);
   assert.equal("audienceHandles" in posts, false);
   assert.ok("revision" in posts);

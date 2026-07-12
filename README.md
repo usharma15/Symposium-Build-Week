@@ -53,7 +53,7 @@ The v0 app uses API routes for profiles, posts, comments, and post actions.
 - Room shell for Office, Symposium, Library, and Amphitheater.
 - Seeded feeds for papers, thoughts, drafts, code, and saved work.
 - Lightweight account/profile creation and switching.
-- Persisted post creation, comments, nested replies, saves, signals, forks, reads, attachment-capable editing, and public post/comment quoting in every source/destination combination.
+- Persisted post creation, comments, nested replies, saves, signals, forks, reads, attachment-capable editing, and public post/comment quoting in every source/destination combination, including link-attached quotes while drafting.
 - Backend surfaces for follows, DMs, community joins/calls, opportunities, workspace notes, note publishing, and AI tablet conversations.
 - Paper/thought detail views with claims, objections, evidence, tests, forks, comments, and signal panels.
 - Notebook and AI tablet concepts.

@@ -120,10 +120,37 @@
   margin: 10px 0 4px 39px;
 }
 
-.comment > .quote-card-shell {
+.comment-card > .quote-card-shell {
   width: calc(100% - 39px);
-  max-width: 620px;
+  max-width: calc(100% - 39px);
   margin: 10px 0 6px 39px;
+}
+
+.comment button.quote-card {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  padding: 12px 14px;
+  border-color: color-mix(in srgb, var(--aqua) 24%, var(--line));
+  text-align: left;
+}
+
+.comment button.quote-card-paper {
+  border-color: color-mix(in srgb, #a86732 28%, var(--line));
+  background: color-mix(in srgb, #f7eed6 64%, var(--panel-strong));
+}
+
+.comment button.quote-card-thought {
+  border-color: color-mix(in srgb, #227986 26%, var(--line));
+  background: color-mix(in srgb, #d9f0f5 62%, var(--panel-strong));
+}
+
+.comment .quote-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.48;
+  white-space: pre-wrap;
 }
 
 .comment-attachments .attachment-frame {
@@ -158,23 +185,6 @@
   font-weight: 720;
 }
 
-.comment-permalink {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  width: fit-content;
-  margin-top: 6px;
-  color: var(--muted);
-  font-size: 0.72rem;
-  font-weight: 760;
-  text-decoration: none;
-}
-
-.comment-permalink:hover,
-.comment-permalink:focus-visible {
-  color: var(--accent);
-}
-
 .comment-actions {
   display: flex;
   flex-wrap: wrap;
@@ -182,7 +192,8 @@
   margin: 10px 0 0 39px;
 }
 
-.comment-actions button {
+.comment-actions button,
+.comment-actions a {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -195,6 +206,7 @@
   padding: 0 8px;
   font-size: 0.76rem;
   font-weight: 780;
+  text-decoration: none;
 }
 
 .comment-actions button.active {
@@ -261,6 +273,10 @@
   min-width: 142px;
   border-color: color-mix(in srgb, var(--aqua) 50%, var(--line));
   background: color-mix(in srgb, var(--aqua) 17%, var(--panel-strong));
+}
+
+.comment-composer.compact .quote-link-toggle {
+  min-width: 0;
 }
 
 .detail-side {

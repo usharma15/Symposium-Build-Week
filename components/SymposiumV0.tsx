@@ -137,6 +137,7 @@ import {
   QuoteComposerModal,
   type QuoteSelection
 } from "@/features/quotes/QuoteViews";
+import { resolveQuoteLink, type QuoteLinkResolver } from "@/features/quotes/quoteLinks";
 import { invalidateQuotedSource, resolveLocalContentQuote } from "@/lib/contentQuotes";
 import {
   ProfileSettingsModal,
@@ -528,6 +529,8 @@ function SymposiumExperience({
         }
       })()
     : undefined;
+  const resolveComposerQuoteLink: QuoteLinkResolver = (link, owner) =>
+    resolveQuoteLink(itemsRef.current, link, owner);
   const selectedCommunity =
     selectedCommunityId ? researchCommunities.find((community) => community.id === selectedCommunityId) ?? null : null;
   const profileList = useMemo(() => Object.values(profiles), [profiles]);
@@ -2835,7 +2838,13 @@ function SymposiumExperience({
           actorHandle: currentProfile.handle,
           expectedEditedAt: existing.editedAt ?? null,
           attachmentIds: draft.attachments.map((attachment) => attachment.id),
-          quoteSource: existing.quote && !draft.quote ? null : undefined
+          quoteSource: !draft.quote
+            ? existing.quote ? null : undefined
+            : !existing.quote ||
+                existing.quote.sourceType !== draft.quote.sourceType ||
+                existing.quote.sourceId !== draft.quote.sourceId
+              ? { sourceType: draft.quote.sourceType, sourceId: draft.quote.sourceId }
+              : undefined
         }
       });
       const committedItems = itemsRef.current.map((item) =>
@@ -2948,7 +2957,13 @@ function SymposiumExperience({
           actorHandle: currentProfile.handle,
           expectedEditedAt: existingComment.editedAt ?? null,
           attachmentIds: attachments.map((attachment) => attachment.id),
-          quoteSource: existingComment.quote && !quote ? null : undefined
+          quoteSource: !quote
+            ? existingComment.quote ? null : undefined
+            : !existingComment.quote ||
+                existingComment.quote.sourceType !== quote.sourceType ||
+                existingComment.quote.sourceId !== quote.sourceId
+              ? { sourceType: quote.sourceType, sourceId: quote.sourceId }
+              : undefined
         }
         }
       );
@@ -3226,6 +3241,7 @@ function SymposiumExperience({
             onOpenProfile={openProfile}
             onAddComment={addComment}
             onUploadCommentAttachment={uploadCommentAttachment}
+            onResolveQuoteLink={resolveComposerQuoteLink}
             onOpenCommentAttachmentPreview={openCommentAttachmentPreview}
             onAction={applyAction}
             onQuote={beginQuote}
@@ -3386,6 +3402,8 @@ function SymposiumExperience({
           onClose={() => setComposerOpen(false)}
           onCreatePost={createPost}
           onUploadAttachment={uploadPostAttachment}
+          onResolveQuoteLink={resolveComposerQuoteLink}
+          profiles={profiles}
         />
       ) : null}
 
@@ -3394,6 +3412,7 @@ function SymposiumExperience({
           key={`${quoteSelection.sourceType}:${quoteSelection.sourceId}`}
           quote={quotePreview}
           selection={quoteSelection}
+          profiles={profiles}
           onClose={() => setQuoteSelection(null)}
           onCreatePost={createPost}
           onAddComment={addComment}
@@ -3410,6 +3429,8 @@ function SymposiumExperience({
           onSave={savePostEdit}
           onDelete={deletePost}
           onUploadAttachment={uploadPostAttachment}
+          onResolveQuoteLink={resolveComposerQuoteLink}
+          profiles={profiles}
         />
       ) : null}
 
@@ -3422,6 +3443,8 @@ function SymposiumExperience({
           onSave={saveCommentEdit}
           onDelete={deleteComment}
           onUploadAttachment={uploadCommentAttachment}
+          onResolveQuoteLink={resolveComposerQuoteLink}
+          profiles={profiles}
         />
       ) : null}
 

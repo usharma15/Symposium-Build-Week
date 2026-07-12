@@ -46,8 +46,11 @@ import {
 import {
   ContentQuoteCard,
   QuoteActionButton,
+  QuoteLinkField,
   type QuoteActionHandler
 } from "@/features/quotes/QuoteViews";
+import type { AttachedQuote, QuoteLinkResolver } from "@/features/quotes/quoteLinks";
+import { canonicalRouteHref } from "@/features/navigation/canonicalRoute";
 
 export type CommentSegmentStacks = Record<string, string[]>;
 export type AddCommentHandler = (
@@ -138,12 +141,16 @@ export function CommentComposer({
   itemId,
   onAddComment,
   onUploadAttachment,
+  onResolveQuoteLink,
+  profiles,
   parentId,
   compact = false
 }: {
   itemId: string;
   onAddComment: AddCommentHandler;
   onUploadAttachment: AttachmentUploadHandler;
+  onResolveQuoteLink: QuoteLinkResolver;
+  profiles: Record<string, ResearchProfile>;
   parentId?: string | null;
   compact?: boolean;
 }) {
@@ -151,6 +158,7 @@ export function CommentComposer({
   const [attachments, setAttachments] = useState<InquiryAttachment[]>([]);
   const [busy, setBusy] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [attachedQuote, setAttachedQuote] = useState<AttachedQuote | null>(null);
 
   const submitComment = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -158,11 +166,21 @@ export function CommentComposer({
     if (!cleanBody || busy || submitting) return;
 
     setSubmitting(true);
-    const saved = await onAddComment(itemId, cleanBody, "Comment", parentId ?? null, attachments);
+    const saved = await onAddComment(
+      itemId,
+      cleanBody,
+      "Comment",
+      parentId ?? null,
+      attachments,
+      attachedQuote
+        ? { sourceType: attachedQuote.selection.sourceType, sourceId: attachedQuote.selection.sourceId }
+        : undefined
+    );
     setSubmitting(false);
     if (saved) {
       setBody("");
       setAttachments([]);
+      setAttachedQuote(null);
     }
   };
 
@@ -175,6 +193,13 @@ export function CommentComposer({
         value={body}
         onChange={(event) => setBody(event.target.value)}
         placeholder={compact ? "Write a reply" : "Add a critique, question, test, or reasoned response"}
+      />
+      <QuoteLinkField
+        attached={attachedQuote}
+        profiles={profiles}
+        disabled={submitting}
+        onChange={setAttachedQuote}
+        onResolve={onResolveQuoteLink}
       />
       <AttachmentComposerField
         attachments={attachments}
@@ -195,6 +220,7 @@ export function CommentThread({
   onOpenProfile,
   onAddComment,
   onUploadAttachment,
+  onResolveQuoteLink,
   onOpenAttachmentPreview,
   onCommentAction,
   onQuote,
@@ -216,6 +242,7 @@ export function CommentThread({
   onOpenProfile: (name: string) => void;
   onAddComment: AddCommentHandler;
   onUploadAttachment: AttachmentUploadHandler;
+  onResolveQuoteLink: QuoteLinkResolver;
   onOpenAttachmentPreview: CommentAttachmentPreviewHandler;
   onCommentAction: CommentActionHandler;
   onQuote: QuoteActionHandler;
@@ -245,6 +272,7 @@ export function CommentThread({
             onOpenProfile={onOpenProfile}
             onAddComment={onAddComment}
             onUploadAttachment={onUploadAttachment}
+            onResolveQuoteLink={onResolveQuoteLink}
             onOpenAttachmentPreview={onOpenAttachmentPreview}
             onCommentAction={onCommentAction}
             onQuote={onQuote}
@@ -291,6 +319,7 @@ function CommentRootSegment({
   onOpenProfile,
   onAddComment,
   onUploadAttachment,
+  onResolveQuoteLink,
   onOpenAttachmentPreview,
   onCommentAction,
   onQuote,
@@ -313,6 +342,7 @@ function CommentRootSegment({
   onOpenProfile: (name: string) => void;
   onAddComment: AddCommentHandler;
   onUploadAttachment: AttachmentUploadHandler;
+  onResolveQuoteLink: QuoteLinkResolver;
   onOpenAttachmentPreview: CommentAttachmentPreviewHandler;
   onCommentAction: CommentActionHandler;
   onQuote: QuoteActionHandler;
@@ -387,6 +417,7 @@ function CommentRootSegment({
         onOpenProfile={onOpenProfile}
         onAddComment={onAddComment}
         onUploadAttachment={onUploadAttachment}
+        onResolveQuoteLink={onResolveQuoteLink}
         onOpenAttachmentPreview={onOpenAttachmentPreview}
         onCommentAction={onCommentAction}
         onQuote={onQuote}
@@ -423,6 +454,7 @@ function CommentNode({
   onOpenProfile,
   onAddComment,
   onUploadAttachment,
+  onResolveQuoteLink,
   onOpenAttachmentPreview,
   onCommentAction,
   onQuote,
@@ -444,6 +476,7 @@ function CommentNode({
   onOpenProfile: (name: string) => void;
   onAddComment: AddCommentHandler;
   onUploadAttachment: AttachmentUploadHandler;
+  onResolveQuoteLink: QuoteLinkResolver;
   onOpenAttachmentPreview: CommentAttachmentPreviewHandler;
   onCommentAction: CommentActionHandler;
   onQuote: QuoteActionHandler;
@@ -541,6 +574,7 @@ function CommentNode({
         {comment.quote ? (
           <ContentQuoteCard
             quote={comment.quote}
+            profiles={profiles}
             onOpen={comment.quote.available ? () => onOpenQuote({
               sourceType: comment.quote!.sourceType,
               sourceId: comment.quote!.sourceId,
@@ -549,17 +583,6 @@ function CommentNode({
           />
         ) : null}
         <CommentTimeFooter comment={comment} />
-        {comment.id && !commentDeleted ? (
-          <CanonicalLink
-            className="comment-permalink"
-            route={{ kind: "post", postId: itemId, commentId: comment.id }}
-            onNavigate={() => onSelectComment(comment.id as string)}
-            title="Open this comment"
-          >
-            <Link2 size={13} />
-            <span>Comment link</span>
-          </CanonicalLink>
-        ) : null}
         <CommentActions
           comment={comment}
           itemId={itemId}
@@ -577,7 +600,9 @@ function CommentNode({
                 itemId={itemId}
                 parentId={comment.id ?? null}
                 compact
+                profiles={profiles}
                 onUploadAttachment={onUploadAttachment}
+                onResolveQuoteLink={onResolveQuoteLink}
                 onAddComment={async (id, body, stance, parentId, attachments, quoteSource) => {
                   const saved = await onAddComment(id, body, stance, parentId, attachments, quoteSource);
                   if (saved) setReplyOpen(false);
@@ -613,6 +638,7 @@ function CommentNode({
                 onOpenProfile={onOpenProfile}
                 onAddComment={onAddComment}
                 onUploadAttachment={onUploadAttachment}
+                onResolveQuoteLink={onResolveQuoteLink}
                 onOpenAttachmentPreview={onOpenAttachmentPreview}
                 onCommentAction={onCommentAction}
                 onQuote={onQuote}
@@ -698,6 +724,15 @@ export function CommentActions({
         );
       })}
       <QuoteActionButton disabled={deleted} label="comment" onQuote={onQuote} />
+      <a
+        className="content-link-action"
+        href={canonicalRouteHref({ kind: "post", postId: itemId, commentId: comment.id })}
+        title="Open comment link"
+        aria-label="Open comment link"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <Link2 size={15} aria-hidden="true" />
+      </a>
     </div>
   );
 }

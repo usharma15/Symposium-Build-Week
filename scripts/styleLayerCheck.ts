@@ -51,7 +51,11 @@ const main = async () => {
   ].join("\n");
   assert.match(quoteStyles, /\.quote-card-shell/);
   assert.match(quoteStyles, /\.quote-card[\s\S]*overflow-wrap:\s*anywhere/);
+  assert.match(quoteStyles, /\.quote-card-author/);
+  assert.match(quoteStyles, /\.quote-kind-paper/);
+  assert.match(quoteStyles, /\.comment-card > \.quote-card-shell/);
   assert.match(quoteStyles, /\.quote-destination-switch/);
+  assert.match(quoteStyles, /\.quote-link-input-row/);
 
   console.log(
     JSON.stringify(
