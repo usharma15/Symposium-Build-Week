@@ -18,7 +18,8 @@ import type {
   ContentKindContract,
   InquiryItemContract,
   ResearchCommunityContract,
-  ResearchProfileContract
+  ResearchProfileContract,
+  VersionedDocumentContract
 } from "../../../../packages/contracts/src";
 
 const createdAtColumn = () => timestamp("created_at", { withTimezone: true }).defaultNow().notNull();
@@ -221,6 +222,7 @@ export const posts = pgTable(
     gatheringReason: text("gathering_reason").notNull(),
     excerpt: text("excerpt").notNull(),
     body: text("body").notNull(),
+    document: jsonb("content_document").$type<VersionedDocumentContract>(),
     tags: jsonb("tags").$type<string[]>().default(jsonArray).notNull(),
     signals: jsonb("signals").$type<InquiryItemContract["signals"]>().default(jsonArray).notNull(),
     claims: jsonb("claims").$type<string[]>().default(jsonArray).notNull(),
@@ -257,6 +259,7 @@ export const opportunityPosts = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     title: text("title").notNull(),
     body: text("body").notNull(),
+    document: jsonb("content_document").$type<VersionedDocumentContract>(),
     kind: text("kind").default("job").notNull(),
     status: text("status").default("open").notNull(),
     creatorHandle: text("creator_handle").references(() => profiles.handle, { onDelete: "set null" }),

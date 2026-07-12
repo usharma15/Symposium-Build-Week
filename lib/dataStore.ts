@@ -4,7 +4,8 @@ import { Pool } from "pg";
 import type {
   CanonicalActionActivityContract,
   ContentQuoteContract,
-  ToggleActionContract
+  ToggleActionContract,
+  VersionedDocumentContract
 } from "@/packages/contracts/src";
 import {
   getProfileForName,
@@ -72,6 +73,7 @@ export type CreateProfileInput = {
 export type CreatePostInput = {
   title: string;
   body: string;
+  document?: VersionedDocumentContract;
   kind: ContentKind;
   room: Exclude<RoomId, "hall">;
   attachments?: InquiryAttachment[];
@@ -81,6 +83,7 @@ export type CreatePostInput = {
 export type CreateCommentInput = {
   id?: string;
   body: string;
+  document?: VersionedDocumentContract;
   stance: string;
   parentId?: string | null;
   attachments?: InquiryAttachment[];
@@ -98,12 +101,14 @@ export type ActionMutationResult = {
 export type UpdatePostInput = {
   title: string;
   body: string;
+  document?: VersionedDocumentContract;
   attachments?: InquiryAttachment[];
   quote?: ContentQuoteContract | null;
 };
 
 export type UpdateCommentInput = {
   body: string;
+  document?: VersionedDocumentContract;
   attachments?: InquiryAttachment[];
   quote?: ContentQuoteContract | null;
 };
@@ -478,6 +483,7 @@ const ensureSchema = async () => {
           gathering_reason TEXT NOT NULL,
           excerpt TEXT NOT NULL,
           body TEXT NOT NULL,
+          content_document JSONB,
           tags JSONB NOT NULL,
           signals JSONB NOT NULL,
           claims JSONB NOT NULL,
@@ -504,6 +510,7 @@ const ensureSchema = async () => {
           author_name TEXT NOT NULL,
           stance TEXT NOT NULL,
           body TEXT NOT NULL,
+          content_document JSONB,
           metrics JSONB NOT NULL DEFAULT '{"signal":"0","forks":"0","saves":"0","reads":"0"}'::jsonb,
           saved_by JSONB NOT NULL DEFAULT '[]'::jsonb,
           signaled_by JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -555,6 +562,7 @@ const ensureSchema = async () => {
         ALTER TABLE items ADD COLUMN IF NOT EXISTS signaled_by JSONB DEFAULT '[]'::jsonb;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS forked_by JSONB DEFAULT '[]'::jsonb;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS attachments JSONB DEFAULT '[]'::jsonb;
+        ALTER TABLE items ADD COLUMN IF NOT EXISTS content_document JSONB;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS quote JSONB;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
@@ -563,6 +571,7 @@ const ensureSchema = async () => {
         ALTER TABLE comments ADD COLUMN IF NOT EXISTS signaled_by JSONB NOT NULL DEFAULT '[]'::jsonb;
         ALTER TABLE comments ADD COLUMN IF NOT EXISTS forked_by JSONB NOT NULL DEFAULT '[]'::jsonb;
         ALTER TABLE comments ADD COLUMN IF NOT EXISTS quote JSONB;
+        ALTER TABLE comments ADD COLUMN IF NOT EXISTS content_document JSONB;
         ALTER TABLE comments ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
         ALTER TABLE comments ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
         ALTER TABLE comments ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();
@@ -751,6 +760,7 @@ type CommentRow = {
   author_name: string;
   stance: string;
   body: string;
+  content_document: VersionedDocumentContract | null;
   metrics: Pick<InquiryItem["metrics"], "signal" | "forks" | "saves" | "reads"> | null;
   saved_by: string[] | null;
   signaled_by: string[] | null;
@@ -791,6 +801,7 @@ const commentTreesFromRows = (rows: CommentRow[]) => {
       authorHandle: row.author_handle,
       stance: row.stance,
       body: row.body,
+      document: row.content_document ?? undefined,
       metrics: { ...commentMetricsFallback, ...(row.metrics ?? {}) },
       savedBy: row.saved_by ?? [],
       signaledBy: row.signaled_by ?? [],
@@ -855,6 +866,7 @@ const loadPostgres = async (): Promise<AppData> => {
       gathering_reason: string;
       excerpt: string;
       body: string;
+      content_document: VersionedDocumentContract | null;
       tags: string[];
       signals: InquiryItem["signals"];
       claims: string[];
@@ -912,6 +924,7 @@ const loadPostgres = async (): Promise<AppData> => {
     gatheringReason: item.gathering_reason,
     excerpt: item.excerpt,
     body: item.body,
+    document: item.content_document ?? undefined,
     tags: item.tags,
     signals: item.signals,
     claims: item.claims,
@@ -1043,6 +1056,7 @@ export const createPost = async (input: CreatePostInput, authorHandle: string) =
     gatheringReason: "A new working post added to the live v0.",
     excerpt: input.body.trim(),
     body: input.body.trim(),
+    document: input.document,
     tags: [input.room, input.kind, ...author.fields.slice(0, 2).map((field) => field.toLowerCase())],
     signals: [
       { label: "Status", value: isPaper ? "Draft" : "New" },
@@ -1107,6 +1121,9 @@ export const createPost = async (input: CreatePostInput, authorHandle: string) =
         item.quote ? JSON.stringify(item.quote) : null
       ]
     );
+    if (item.document) {
+      await getPool().query("UPDATE items SET content_document = $2 WHERE id = $1", [item.id, JSON.stringify(item.document)]);
+    }
     if (item.savedBy?.includes(author.handle)) {
       await persistPostgresActivity({
         ...createLocalCanonicalActivity({
@@ -1161,6 +1178,7 @@ export const addComment = async (itemId: string, input: CreateCommentInput, auth
     authorHandle: author.handle,
     stance: input.stance.trim() || "Comment",
     body: input.body.trim(),
+    document: input.document,
     createdAt: new Date().toISOString(),
     metrics: { ...commentMetricsFallback },
     savedBy: [],
@@ -1213,6 +1231,9 @@ export const addComment = async (itemId: string, input: CreateCommentInput, auth
        WHERE id = $1`,
       [itemId, nextCritiques, JSON.stringify(nextSignals)]
     );
+    if (comment.document) {
+      await getPool().query("UPDATE comments SET content_document = $2 WHERE id = $1", [comment.id, JSON.stringify(comment.document)]);
+    }
     return { comment, item: updatedItem };
   }
 
@@ -1411,6 +1432,7 @@ const updatePostShape = (item: InquiryItem, input: UpdatePostInput, editedAt = n
   revision: (item.revision ?? 1) + 1,
   title: input.title.trim(),
   body: input.body.trim(),
+  document: input.document ?? item.document,
   excerpt: input.body.trim(),
   claims: [input.body.trim()],
   attachments: input.attachments ?? item.attachments,
@@ -1422,6 +1444,7 @@ export const updatePost = async (itemId: string, input: UpdatePostInput, actorHa
   const cleanInput = {
     title: input.title.trim(),
     body: input.body.trim(),
+    document: input.document,
     attachments: input.attachments,
     quote: input.quote
   };
@@ -1438,6 +1461,7 @@ export const updatePost = async (itemId: string, input: UpdatePostInput, actorHa
       `UPDATE items
        SET title = $2,
            body = $3,
+           content_document = $7,
            excerpt = $3,
            claims = $4,
            edited_at = $5,
@@ -1449,7 +1473,8 @@ export const updatePost = async (itemId: string, input: UpdatePostInput, actorHa
         updated.body,
         JSON.stringify(updated.claims),
         updated.editedAt,
-        updated.quote ? JSON.stringify(updated.quote) : null
+        updated.quote ? JSON.stringify(updated.quote) : null,
+        updated.document ? JSON.stringify(updated.document) : null
       ]
     );
     return updated;
@@ -1552,6 +1577,7 @@ const updateCommentShape = (
   ...comment,
   revision: (comment.revision ?? 1) + 1,
   body: input.body.trim(),
+  document: input.document ?? comment.document,
   attachments: input.attachments ?? comment.attachments,
   quote: input.quote === undefined ? comment.quote : input.quote ?? undefined,
   editedAt
@@ -1563,7 +1589,7 @@ export const updateComment = async (
   input: UpdateCommentInput,
   actorHandle = defaultProfile.handle
 ) => {
-  const cleanInput = { body: input.body.trim(), attachments: input.attachments, quote: input.quote };
+  const cleanInput = { body: input.body.trim(), document: input.document, attachments: input.attachments, quote: input.quote };
   if (!cleanInput.body) return null;
 
   if (usePostgres) {
@@ -1582,6 +1608,7 @@ export const updateComment = async (
     await getPool().query(
       `UPDATE comments
        SET body = $3,
+           content_document = $6,
            edited_at = $4,
            quote = $5,
            updated_at = now()
@@ -1591,7 +1618,8 @@ export const updateComment = async (
         commentId,
         mapped.updated.body,
         mapped.updated.editedAt,
-        mapped.updated.quote ? JSON.stringify(mapped.updated.quote) : null
+        mapped.updated.quote ? JSON.stringify(mapped.updated.quote) : null,
+        mapped.updated.document ? JSON.stringify(mapped.updated.document) : null
       ]
     );
     return { ...existing, comments: mapped.comments, revision: (existing.revision ?? 1) + 1 };

@@ -76,32 +76,96 @@ export const resourceReferenceSchema = z.object({
   label: z.string().trim().min(1).max(300).optional()
 });
 
-const textMarksSchema = z.array(z.enum(["bold", "italic", "code", "strikethrough"])).max(4).default([]);
+export const documentMarkSchema = z.enum(["bold", "italic", "underline", "code", "strikethrough"]);
+export const documentFontSchema = z.enum(["system", "serif", "humanist", "mono"]);
+export const documentTextSizeSchema = z.enum(["small", "normal", "large", "lead"]);
+export const documentTextColorSchema = z.enum(["default", "muted", "blue", "crimson", "forest", "gold"]);
+const textMarksSchema = z.array(documentMarkSchema).max(5).default([]);
 export const documentTextSchema = z.object({
-  text: z.string(),
+  text: z.string().max(100000),
   marks: textMarksSchema.optional(),
-  link: safeExternalUrlSchema.optional()
+  link: safeExternalUrlSchema.optional(),
+  mentionHandle: z.string().trim().min(2).max(80).optional(),
+  font: documentFontSchema.optional(),
+  size: documentTextSizeSchema.optional(),
+  color: documentTextColorSchema.optional()
 });
 
+const documentNodeIdSchema = z.string().trim().min(1).max(120);
+const documentTextContentSchema = z.array(documentTextSchema).max(5000).default([]);
 export const documentNodeSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("paragraph"), content: z.array(documentTextSchema).default([]) }),
   z.object({
+    id: documentNodeIdSchema,
+    type: z.literal("paragraph"),
+    content: documentTextContentSchema,
+    align: z.enum(["left", "center", "right"]).default("left"),
+    indent: z.number().int().min(0).max(8).default(0)
+  }),
+  z.object({
+    id: documentNodeIdSchema,
     type: z.literal("heading"),
     level: z.number().int().min(1).max(4),
-    content: z.array(documentTextSchema).default([])
+    content: documentTextContentSchema,
+    align: z.enum(["left", "center", "right"]).default("left")
   }),
-  z.object({ type: z.literal("list"), ordered: z.boolean().default(false), items: z.array(z.string()).max(200) }),
-  z.object({ type: z.literal("code"), language: z.string().max(80).optional(), code: z.string().max(100000) }),
-  z.object({ type: z.literal("attachment"), attachmentId: z.string().min(1), caption: z.string().max(1000).optional() }),
-  z.object({ type: z.literal("quote"), content: z.array(documentTextSchema).default([]), source: resourceReferenceSchema.optional() }),
-  z.object({ type: z.literal("reference"), resource: resourceReferenceSchema }),
-  z.object({ type: z.literal("citation"), label: z.string().max(120), href: safeExternalUrlSchema.optional() })
+  z.object({
+    id: documentNodeIdSchema,
+    type: z.literal("list"),
+    style: z.enum(["bullet", "dash", "decimal", "lower-alpha", "upper-alpha"]).default("bullet"),
+    depth: z.number().int().min(0).max(8).default(0),
+    items: z.array(documentTextContentSchema).min(1).max(200)
+  }),
+  z.object({ id: documentNodeIdSchema, type: z.literal("code"), language: z.string().max(80).optional(), code: z.string().max(100000) }),
+  z.object({
+    id: documentNodeIdSchema,
+    type: z.literal("equation"),
+    source: z.string().trim().min(1).max(10000),
+    display: z.boolean().default(true),
+    label: z.string().trim().max(120).optional()
+  }),
+  z.object({
+    id: documentNodeIdSchema,
+    type: z.literal("attachment"),
+    attachmentId: z.string().min(1),
+    placement: z.literal("inline").default("inline"),
+    caption: z.string().max(1000).optional()
+  }),
+  z.object({ id: documentNodeIdSchema, type: z.literal("quote"), content: documentTextContentSchema, source: resourceReferenceSchema.optional() }),
+  z.object({ id: documentNodeIdSchema, type: z.literal("reference"), resource: resourceReferenceSchema }),
+  z.object({ id: documentNodeIdSchema, type: z.literal("citation"), label: z.string().max(120), href: safeExternalUrlSchema.optional() })
 ]);
 
 export const versionedDocumentSchema = z.object({
   version: z.literal(1),
-  nodes: z.array(documentNodeSchema).max(2000)
+  nodes: z.array(documentNodeSchema).min(1).max(2000),
+  settings: z.object({
+    width: z.enum(["standard", "wide"]).default("standard"),
+    margin: z.enum(["compact", "normal", "generous"]).default("normal")
+  }).optional()
 });
+
+export const documentFitsReducedEditor = (document: z.infer<typeof versionedDocumentSchema>) =>
+  document.nodes.every((node) => {
+    if (!["paragraph", "equation", "attachment", "quote", "reference", "citation"].includes(node.type)) return false;
+    if (node.type !== "paragraph" && node.type !== "quote") return true;
+    return node.content.every((run) => !run.font && !run.size && !run.color && !run.marks?.includes("code") && !run.marks?.includes("strikethrough"));
+  });
+
+const validateDocumentAttachmentReferences = (
+  document: z.infer<typeof versionedDocumentSchema> | undefined,
+  attachmentIds: string[] | undefined,
+  context: z.core.$RefinementCtx<unknown>
+) => {
+  if (!document) return;
+  const inlineIds = document.nodes.filter((node) => node.type === "attachment").map((node) => node.attachmentId);
+  if (new Set(inlineIds).size !== inlineIds.length) {
+    context.addIssue({ code: "custom", path: ["document"], message: "Each inline attachment may appear only once." });
+  }
+  const available = new Set(attachmentIds ?? []);
+  if (inlineIds.some((attachmentId) => !available.has(attachmentId))) {
+    context.addIssue({ code: "custom", path: ["document"], message: "Inline attachments must be included in the content attachment set." });
+  }
+};
 
 export const researchProfileSchema = z.object({
   name: z.string().min(1),
@@ -218,6 +282,7 @@ export type InquiryCommentContract = {
   author: string;
   authorHandle?: string;
   body: string;
+  document?: VersionedDocumentContract;
   stance: string;
   createdAt?: string;
   editedAt?: string;
@@ -248,7 +313,8 @@ export const inquiryCommentSchema: z.ZodType<InquiryCommentContract> = z.lazy(()
     savedBy: z.array(z.string()).optional(),
     signaledBy: z.array(z.string()).optional(),
     forkedBy: z.array(z.string()).optional(),
-    attachments: z.array(inquiryAttachmentSchema).max(10).optional(),
+    document: versionedDocumentSchema.optional(),
+    attachments: z.array(inquiryAttachmentSchema).max(100).optional(),
     quote: contentQuoteSchema.optional(),
     replies: z.array(inquiryCommentSchema).optional()
   })
@@ -272,6 +338,7 @@ export const inquiryItemSchema = z.object({
   gatheringReason: z.string(),
   excerpt: z.string(),
   body: z.string(),
+  document: versionedDocumentSchema.optional(),
   tags: z.array(z.string()),
   signals: z.array(inquirySignalSchema),
   claims: z.array(z.string()),
@@ -280,7 +347,7 @@ export const inquiryItemSchema = z.object({
   tests: z.array(z.string()),
   forks: z.array(z.string()),
   comments: z.array(inquiryCommentSchema),
-  attachments: z.array(inquiryAttachmentSchema).optional(),
+  attachments: z.array(inquiryAttachmentSchema).max(100).optional(),
   quote: contentQuoteSchema.optional(),
   saved: z.boolean().optional(),
   savedBy: z.array(z.string()).optional(),
@@ -316,13 +383,18 @@ export const authSyncInputSchema = z.object({
 export const createPostInputSchema = z.object({
   title: z.string().trim().min(1).max(240),
   body: z.string().trim().min(1).max(20000),
+  document: versionedDocumentSchema.optional(),
   kind: contentKindSchema,
   room: postRoomSchema,
   authorHandle: z.string().optional(),
-  attachmentIds: z.array(postAttachmentIdSchema).max(10).optional(),
+  attachmentIds: z.array(postAttachmentIdSchema).max(100).optional(),
   quoteSource: contentQuoteSourceSchema.optional(),
   attachments: z.array(postAttachmentInputSchema).max(10).default([])
 }).superRefine((input, context) => {
+  validateDocumentAttachmentReferences(input.document, input.attachmentIds, context);
+  if (input.kind !== "paper" && input.document && !documentFitsReducedEditor(input.document)) {
+    context.addIssue({ code: "custom", path: ["document"], message: "Thoughts use the reduced editor formatting set." });
+  }
   if (!input.attachmentIds?.length || !input.attachments.length) return;
   const legacyIds = input.attachments.map((attachment) => attachment.id);
   if (
@@ -340,12 +412,14 @@ export const createPostInputSchema = z.object({
 export const updatePostInputSchema = z.object({
   title: z.string().trim().min(1).max(240),
   body: z.string().trim().min(1).max(20000),
+  document: versionedDocumentSchema.optional(),
   expectedEditedAt: z.string().datetime().nullable().optional(),
-  attachmentIds: z.array(postAttachmentIdSchema).max(10).optional(),
+  attachmentIds: z.array(postAttachmentIdSchema).max(100).optional(),
   quoteSource: contentQuoteSourceSchema.nullable().optional(),
   actorHandle: z.string().optional()
 }).superRefine((input, context) => {
-  if ((input.attachmentIds !== undefined || input.quoteSource !== undefined) && input.expectedEditedAt === undefined) {
+  validateDocumentAttachmentReferences(input.document, input.attachmentIds, context);
+  if ((input.attachmentIds !== undefined || input.quoteSource !== undefined || input.document !== undefined) && input.expectedEditedAt === undefined) {
     context.addIssue({
       code: "custom",
       path: ["expectedEditedAt"],
@@ -356,21 +430,32 @@ export const updatePostInputSchema = z.object({
 
 export const createCommentInputSchema = z.object({
   body: z.string().trim().min(1).max(8000),
+  document: versionedDocumentSchema.optional(),
   stance: z.string().trim().min(1).default("Comment"),
   parentId: z.string().nullable().optional(),
-  attachmentIds: z.array(postAttachmentIdSchema).max(10).optional(),
+  attachmentIds: z.array(postAttachmentIdSchema).max(100).optional(),
   quoteSource: contentQuoteSourceSchema.optional(),
   authorHandle: z.string().optional()
+}).superRefine((input, context) => {
+  validateDocumentAttachmentReferences(input.document, input.attachmentIds, context);
+  if (input.document && !documentFitsReducedEditor(input.document)) {
+    context.addIssue({ code: "custom", path: ["document"], message: "Comments use the reduced editor formatting set." });
+  }
 });
 
 export const updateCommentInputSchema = z.object({
   body: z.string().trim().min(1).max(8000),
+  document: versionedDocumentSchema.optional(),
   expectedEditedAt: z.string().datetime().nullable().optional(),
-  attachmentIds: z.array(postAttachmentIdSchema).max(10).optional(),
+  attachmentIds: z.array(postAttachmentIdSchema).max(100).optional(),
   quoteSource: contentQuoteSourceSchema.nullable().optional(),
   actorHandle: z.string().optional()
 }).superRefine((input, context) => {
-  if ((input.attachmentIds !== undefined || input.quoteSource !== undefined) && input.expectedEditedAt === undefined) {
+  validateDocumentAttachmentReferences(input.document, input.attachmentIds, context);
+  if (input.document && !documentFitsReducedEditor(input.document)) {
+    context.addIssue({ code: "custom", path: ["document"], message: "Comments use the reduced editor formatting set." });
+  }
+  if ((input.attachmentIds !== undefined || input.quoteSource !== undefined || input.document !== undefined) && input.expectedEditedAt === undefined) {
     context.addIssue({
       code: "custom",
       path: ["expectedEditedAt"],

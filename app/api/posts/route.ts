@@ -4,7 +4,7 @@ import { jsonError, readJson } from "@/lib/api";
 import { proxyLiveBackend } from "@/lib/liveBackendClient";
 import { contentKinds, postRooms } from "@/lib/symposiumCore";
 import { ContentQuoteError, resolveLocalContentQuote } from "@/lib/contentQuotes";
-import { contentQuoteSourceSchema } from "@/packages/contracts/src";
+import { contentQuoteSourceSchema, versionedDocumentSchema } from "@/packages/contracts/src";
 import {
   LocalAttachmentStoreError,
   replaceLocalOwnerAttachments,
@@ -44,6 +44,7 @@ export async function POST(request: Request) {
   const input: CreatePostInput = {
     title: String(body.title ?? "").trim(),
     body: String(body.body ?? "").trim(),
+    document: body.document === undefined ? undefined : versionedDocumentSchema.safeParse(body.document).data,
     kind: contentKinds.includes(kind as ContentKind) ? (kind as ContentKind) : "thought",
     room: postRooms.includes(room as Exclude<RoomId, "hall">)
       ? (room as Exclude<RoomId, "hall">)
@@ -54,6 +55,9 @@ export async function POST(request: Request) {
   if (!input.title || !input.body) {
     return jsonError("Title and body are required.", 400);
   }
+  if (body.document !== undefined && !versionedDocumentSchema.safeParse(body.document).success) {
+    return jsonError("The post document is invalid or unsupported.", 400);
+  }
   const quoteSource = body.quoteSource === undefined ? undefined : contentQuoteSourceSchema.safeParse(body.quoteSource);
   if (quoteSource && !quoteSource.success) return jsonError("Choose an available post or comment to quote.", 400);
 
@@ -62,6 +66,7 @@ export async function POST(request: Request) {
     body: {
       title: input.title,
       body: input.body,
+      document: input.document,
       kind: input.kind,
       room: input.room,
       authorHandle: body.authorHandle,

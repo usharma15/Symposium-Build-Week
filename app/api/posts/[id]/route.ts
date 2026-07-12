@@ -8,7 +8,7 @@ import {
 } from "@/lib/localAttachmentStore";
 import { cleanHandle, isDeletedPost } from "@/lib/symposiumCore";
 import { ContentQuoteError, resolveLocalContentQuote } from "@/lib/contentQuotes";
-import { contentQuoteSourceSchema } from "@/packages/contracts/src";
+import { contentQuoteSourceSchema, versionedDocumentSchema } from "@/packages/contracts/src";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,11 +32,15 @@ export async function PATCH(request: Request, context: Context) {
 
   const input: UpdatePostInput = {
     title: String(body.title ?? "").trim(),
-    body: String(body.body ?? "").trim()
+    body: String(body.body ?? "").trim(),
+    document: body.document === undefined ? undefined : versionedDocumentSchema.safeParse(body.document).data
   };
 
   if (!input.title || !input.body) {
     return jsonError("Title and body are required.", 400);
+  }
+  if (body.document !== undefined && !versionedDocumentSchema.safeParse(body.document).success) {
+    return jsonError("The post document is invalid or unsupported.", 400);
   }
 
   const actorHandle = body.actorHandle ? String(body.actorHandle) : undefined;
@@ -72,7 +76,7 @@ export async function PATCH(request: Request, context: Context) {
     if (attachmentIds?.length && (existing.room === "office" || existing.kind === "draft")) {
       return jsonError("Private post attachments require protected delivery before they can be published.", 412);
     }
-    if ((attachmentIds || body.quoteSource !== undefined) && body.expectedEditedAt === undefined) {
+    if ((attachmentIds || body.quoteSource !== undefined || body.document !== undefined) && body.expectedEditedAt === undefined) {
       return jsonError("The current post edit version is required when changing attachments or quotes.", 400);
     }
     if (body.expectedEditedAt !== undefined && (existing.editedAt ?? null) !== body.expectedEditedAt) {

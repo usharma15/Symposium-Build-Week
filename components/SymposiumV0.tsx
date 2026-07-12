@@ -31,7 +31,8 @@ import type { CommentAction, PostAction } from "@/lib/dataStore";
 import type {
   CanonicalActionActivityContract,
   ProfileActivityResponseContract,
-  ToggleActionContract
+  ToggleActionContract,
+  VersionedDocumentContract
 } from "@/packages/contracts/src";
 import {
   appendCommentToTree,
@@ -110,6 +111,7 @@ import {
   type AttachmentConfirmResponse,
   type AttachmentUploadResponse
 } from "@/features/attachments/attachmentUploadClient";
+import { useDedicatedAttachmentViewer } from "@/features/attachments/useDedicatedAttachmentViewer";
 import {
   EntrySequence,
   HallView,
@@ -196,7 +198,6 @@ type EditingCommentTarget = {
 };
 
 type ProfileFollowRecord = RevisionedFollowRecord;
-
 type ProfileFollowResponse = {
   following?: ProfileFollowRecord[];
   followers?: ProfileFollowRecord[];
@@ -209,7 +210,6 @@ type AttachmentPreviewTarget = {
 };
 
 type ProfileSyncEntity = ResearchProfile & { id: string };
-
 type LiveEventPayload = {
   item?: unknown;
   profile?: unknown;
@@ -427,6 +427,7 @@ function SymposiumExperience({
   const [editingPost, setEditingPost] = useState<InquiryItem | null>(null);
   const [editingComment, setEditingComment] = useState<EditingCommentTarget | null>(null);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreviewTarget | null>(null);
+  const closeAttachmentPreview = useDedicatedAttachmentViewer(items, setAttachmentPreview);
   const [activityRecency, setActivityRecency] = useState<Record<string, number>>({});
   const [syncStatus, setSyncStatus] = useState<string>(liveStatus.loading);
   const [authError, setAuthError] = useState("");
@@ -513,6 +514,7 @@ function SymposiumExperience({
           : null;
       })()
     : attachmentPreviewBaseItem;
+
   const activeItems = useMemo(() => items.filter((item) => !isDeletedPost(item)), [items]);
   const editingPostItem = editingPost ? items.find((item) => item.id === editingPost.id) ?? editingPost : null;
   const editingCommentItem = editingComment ? items.find((item) => item.id === editingComment.itemId) ?? null : null;
@@ -2070,12 +2072,13 @@ function SymposiumExperience({
     retryMutationRegistryRef.current.clear(fingerprintKey);
   };
 
-  const createPost = async ({ title, body, kind, attachments, quoteSource }: PostDraft) => {
+  const createPost = async ({ title, body, document, kind, attachments, quoteSource }: PostDraft) => {
     const routedRoom = routePostRoom(kind);
     const createdAt = new Date().toISOString();
     const postPayload = {
       title,
       body,
+      document,
       kind,
       room: routedRoom,
       authorHandle: currentProfile.handle,
@@ -2130,6 +2133,7 @@ function SymposiumExperience({
   const addComment = async (
     itemId: string,
     body: string,
+    document: VersionedDocumentContract,
     stance: string,
     parentId: string | null,
     attachments: InquiryAttachment[],
@@ -2165,6 +2169,7 @@ function SymposiumExperience({
       authorHandle: currentProfile.handle,
       stance: stance.trim() || "Comment",
       body,
+      document,
       createdAt: new Date().toISOString(),
       metrics: { ...commentMetricsFallback },
       savedBy: [],
@@ -2206,6 +2211,7 @@ function SymposiumExperience({
 
     const commentPayload = {
       body,
+      document,
       stance,
       parentId: parentId ?? null,
       authorHandle: currentProfile.handle,
@@ -2796,6 +2802,7 @@ function SymposiumExperience({
     draft: {
       title: string;
       body: string;
+      document: VersionedDocumentContract;
       attachments: InquiryAttachment[];
       quote: InquiryItem["quote"] | null;
     }
@@ -2815,6 +2822,7 @@ function SymposiumExperience({
             ...item,
             title: cleanTitle,
             body: cleanBody,
+            document: draft.document,
             excerpt: cleanBody,
             claims: [cleanBody],
             attachments: draft.attachments,
@@ -2835,6 +2843,7 @@ function SymposiumExperience({
         body: {
           title: cleanTitle,
           body: cleanBody,
+          document: draft.document,
           actorHandle: currentProfile.handle,
           expectedEditedAt: existing.editedAt ?? null,
           attachmentIds: draft.attachments.map((attachment) => attachment.id),
@@ -2910,6 +2919,7 @@ function SymposiumExperience({
     itemId: string,
     commentId: string,
     body: string,
+    document: VersionedDocumentContract,
     attachments: InquiryAttachment[],
     quote: InquiryComment["quote"] | null
   ) => {
@@ -2935,6 +2945,7 @@ function SymposiumExperience({
       const mapped = mapCommentTree(item.comments, commentId, (comment) => ({
         ...comment,
         body: cleanBody,
+        document,
         attachments,
         quote: quote ?? undefined,
         editedAt
@@ -2954,6 +2965,7 @@ function SymposiumExperience({
         idempotencyKey: createClientMutationId("comment-update"),
         body: {
           body: cleanBody,
+          document,
           actorHandle: currentProfile.handle,
           expectedEditedAt: existingComment.editedAt ?? null,
           attachmentIds: attachments.map((attachment) => attachment.id),
@@ -3452,7 +3464,7 @@ function SymposiumExperience({
         <AttachmentPreviewModal
           item={attachmentPreviewItem}
           attachmentId={attachmentPreview.attachmentId}
-          onClose={() => setAttachmentPreview(null)}
+          onClose={closeAttachmentPreview}
         />
       ) : null}
 

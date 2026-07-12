@@ -49,7 +49,6 @@ import type {
   ViewSurface
 } from "@/features/actions/actionTypes";
 import {
-  AttachmentComposerField,
   PostAttachmentCarousel,
   type AttachmentPreviewHandler,
   type AttachmentUploadHandler
@@ -74,6 +73,9 @@ import {
   type CommentSegmentStacks
 } from "@/features/comments/CommentThread";
 import { ExpandableBodyText } from "@/features/content/ExpandableBodyText";
+import { SymposiumDocumentEditor, SymposiumDocumentRenderer } from "@/features/content/SymposiumDocument";
+import { appendedContentAttachments, documentForContent, emptySymposiumDocument, editorCapabilityForKind } from "@/lib/documentModel";
+import type { VersionedDocumentContract } from "@/packages/contracts/src";
 import { profileForHandle, profileInitials } from "@/features/identity/profilePresentation";
 import { useQualifiedView } from "@/features/live-sync/useQualifiedView";
 import { CanonicalLink } from "@/features/navigation/CanonicalLink";
@@ -82,6 +84,7 @@ import { canonicalRouteHref } from "@/features/navigation/canonicalRoute";
 export type PostDraft = {
   title: string;
   body: string;
+  document: VersionedDocumentContract;
   kind: Extract<InquiryItem["kind"], "paper" | "thought">;
   attachments: InquiryAttachment[];
   quoteSource?: ContentQuoteSource;
@@ -117,6 +120,7 @@ export function PostComposerModal({
   const [kind, setKind] = useState<PostDraft["kind"]>("thought");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
+  const [documentValue, setDocumentValue] = useState<VersionedDocumentContract>(() => emptySymposiumDocument());
   const [attachments, setAttachments] = useState<InquiryAttachment[]>([]);
   const [attachmentStatus, setAttachmentStatus] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -134,6 +138,7 @@ export function PostComposerModal({
     const result = await onCreatePost({
       title: cleanTitle,
       body: cleanBody,
+      document: documentValue,
       kind,
       attachments,
       quoteSource: attachedQuote
@@ -147,6 +152,7 @@ export function PostComposerModal({
     }
     setTitle("");
     setBody("");
+    setDocumentValue(emptySymposiumDocument());
     setKind("thought");
     setAttachments([]);
     setAttachedQuote(null);
@@ -180,10 +186,17 @@ export function PostComposerModal({
           onChange={(event) => setTitle(event.target.value)}
           placeholder="Title"
         />
-        <textarea
-          value={body}
-          onChange={(event) => setBody(event.target.value)}
+        <SymposiumDocumentEditor
+          value={documentValue}
+          capability={editorCapabilityForKind(kind)}
+          attachments={attachments}
+          profiles={profiles}
+          disabled={submitting}
           placeholder={`Write your ${kind} here`}
+          onChange={(document, plainText) => { setDocumentValue(document); setBody(plainText); }}
+          onAttachmentsChange={setAttachments}
+          onBusyChange={setUploading}
+          onUploadAttachment={onUploadAttachment}
         />
         <QuoteLinkField
           attached={attachedQuote}
@@ -191,13 +204,6 @@ export function PostComposerModal({
           disabled={submitting}
           onChange={setAttachedQuote}
           onResolve={onResolveQuoteLink}
-        />
-        <AttachmentComposerField
-          attachments={attachments}
-          disabled={submitting}
-          onAttachmentsChange={setAttachments}
-          onBusyChange={setUploading}
-          onUploadAttachment={onUploadAttachment}
         />
         {attachmentStatus ? <small className="composer-submit-status">{attachmentStatus}</small> : null}
       </form>
@@ -219,6 +225,7 @@ export function PostEditModal({
   onSave: (itemId: string, draft: {
     title: string;
     body: string;
+    document: VersionedDocumentContract;
     attachments: InquiryAttachment[];
     quote: InquiryItem["quote"] | null;
   }) => Promise<void>;
@@ -229,6 +236,7 @@ export function PostEditModal({
 }) {
   const [title, setTitle] = useState(item.title);
   const [body, setBody] = useState(item.body);
+  const [documentValue, setDocumentValue] = useState<VersionedDocumentContract>(() => documentForContent(item.document, item.body));
   const [attachments, setAttachments] = useState<InquiryAttachment[]>(item.attachments ?? []);
   const [attachedQuote, setAttachedQuote] = useState<AttachedQuote | null>(
     item.quote ? attachedQuoteFromSnapshot(item.quote) : null
@@ -240,7 +248,7 @@ export function PostEditModal({
     if (busy || !title.trim() || !body.trim()) return;
     setBusy(true);
     try {
-      await onSave(item.id, { title, body, attachments, quote: attachedQuote?.quote ?? null });
+      await onSave(item.id, { title, body, document: documentValue, attachments, quote: attachedQuote?.quote ?? null });
     } finally {
       setBusy(false);
     }
@@ -270,10 +278,17 @@ export function PostEditModal({
           onChange={(event) => setTitle(event.target.value)}
           placeholder="Title"
         />
-        <textarea
-          value={body}
-          onChange={(event) => setBody(event.target.value)}
+        <SymposiumDocumentEditor
+          value={documentValue}
+          capability={editorCapabilityForKind(item.kind)}
+          attachments={attachments}
+          profiles={profiles}
+          disabled={busy}
           placeholder={`Write your ${item.kind === "paper" ? "paper" : "thought"} here`}
+          onChange={(document, plainText) => { setDocumentValue(document); setBody(plainText); }}
+          onAttachmentsChange={setAttachments}
+          onBusyChange={setBusy}
+          onUploadAttachment={onUploadAttachment}
         />
         <QuoteLinkField
           attached={attachedQuote}
@@ -282,13 +297,6 @@ export function PostEditModal({
           disabled={busy}
           onChange={setAttachedQuote}
           onResolve={onResolveQuoteLink}
-        />
-        <AttachmentComposerField
-          attachments={attachments}
-          disabled={busy}
-          onAttachmentsChange={setAttachments}
-          onBusyChange={setBusy}
-          onUploadAttachment={onUploadAttachment}
         />
       </form>
     </div>
@@ -312,6 +320,7 @@ export function CommentEditModal({
     itemId: string,
     commentId: string,
     body: string,
+    document: VersionedDocumentContract,
     attachments: InquiryAttachment[]
     , quote: InquiryComment["quote"] | null
   ) => Promise<void>;
@@ -321,6 +330,7 @@ export function CommentEditModal({
   profiles: Record<string, ResearchProfile>;
 }) {
   const [body, setBody] = useState(comment.body);
+  const [documentValue, setDocumentValue] = useState<VersionedDocumentContract>(() => documentForContent(comment.document, comment.body));
   const [attachments, setAttachments] = useState<InquiryAttachment[]>(comment.attachments ?? []);
   const [attachedQuote, setAttachedQuote] = useState<AttachedQuote | null>(
     comment.quote ? attachedQuoteFromSnapshot(comment.quote) : null
@@ -332,7 +342,7 @@ export function CommentEditModal({
     if (!comment.id || busy || !body.trim()) return;
     setBusy(true);
     try {
-      await onSave(item.id, comment.id, body, attachments, attachedQuote?.quote ?? null);
+      await onSave(item.id, comment.id, body, documentValue, attachments, attachedQuote?.quote ?? null);
     } finally {
       setBusy(false);
     }
@@ -357,10 +367,17 @@ export function CommentEditModal({
           </button>
           <button type="submit" disabled={busy}>{busy ? "Saving…" : "Save"}</button>
         </div>
-        <textarea
-          value={body}
-          onChange={(event) => setBody(event.target.value)}
+        <SymposiumDocumentEditor
+          value={documentValue}
+          capability="reduced"
+          attachments={attachments}
+          profiles={profiles}
+          disabled={busy}
           placeholder="Write your comment here"
+          onChange={(document, plainText) => { setDocumentValue(document); setBody(plainText); }}
+          onAttachmentsChange={setAttachments}
+          onBusyChange={setBusy}
+          onUploadAttachment={onUploadAttachment}
         />
         <QuoteLinkField
           attached={attachedQuote}
@@ -369,13 +386,6 @@ export function CommentEditModal({
           disabled={busy}
           onChange={setAttachedQuote}
           onResolve={onResolveQuoteLink}
-        />
-        <AttachmentComposerField
-          attachments={attachments}
-          disabled={busy}
-          onAttachmentsChange={setAttachments}
-          onBusyChange={setBusy}
-          onUploadAttachment={onUploadAttachment}
         />
       </form>
     </div>
@@ -505,9 +515,12 @@ export function FeedPost({
             {deletedPostContextTitle(item)}
           </CanonicalLink>
         </h2>
-        <ExpandableBodyText
-          text={item.body}
-          className="feed-post-text"
+        <SymposiumDocumentRenderer
+          document={item.document}
+          body={item.body}
+          attachments={item.attachments}
+          profiles={profiles}
+          mode="feed"
           onExpand={() => onAction(item.id, "read", { trigger: "expand", surface })}
         />
         <PostAttachmentCarousel item={item} onOpenPreview={onOpenAttachmentPreview} />
@@ -792,8 +805,17 @@ export function DetailView({
             </span>
           </CanonicalLink>
         )}
-        <p className="detail-body">{item.body}</p>
-        <PostAttachmentCarousel item={item} onOpenPreview={onOpenAttachmentPreview} variant="detail" />
+        <SymposiumDocumentRenderer
+          document={item.document}
+          body={item.body}
+          attachments={item.attachments}
+          profiles={profiles}
+          mode="detail"
+          onOpenAttachment={(attachmentId) => onOpenAttachmentPreview(item, attachmentId)}
+        />
+        {appendedContentAttachments(item.document, item.attachments ?? []).length ? (
+          <PostAttachmentCarousel item={{ ...item, attachments: appendedContentAttachments(item.document, item.attachments ?? []) }} onOpenPreview={onOpenAttachmentPreview} variant="detail" />
+        ) : null}
         {item.quote ? (
           <ContentQuoteCard
             quote={item.quote}

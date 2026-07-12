@@ -9,7 +9,8 @@ import type {
   InquiryItemContract,
   OpportunityContract,
   ResearchCommunityContract,
-  ResearchProfileContract
+  ResearchProfileContract,
+  VersionedDocumentContract
 } from "../../../../packages/contracts/src";
 import {
   getProfileForName,
@@ -45,6 +46,7 @@ export type CommentRow = {
   authorName: string;
   stance: string;
   body: string;
+  document?: VersionedDocumentContract | null;
   metrics?: unknown;
   savedBy?: unknown;
   signaledBy?: unknown;
@@ -540,6 +542,7 @@ export const commentTreesFromRows = (
       authorHandle: row.authorHandle ?? undefined,
       stance: row.stance,
       body: row.body,
+      document: row.document ?? undefined,
       createdAt: new Date(row.createdAt).toISOString(),
       editedAt: row.editedAt ? new Date(row.editedAt).toISOString() : undefined,
       deletedAt: row.deletedAt ? new Date(row.deletedAt).toISOString() : undefined,
@@ -681,6 +684,7 @@ export const rowToItem = (
     gatheringReason: row.gatheringReason,
     excerpt: row.excerpt,
     body: row.body,
+    document: row.document ?? undefined,
     tags: json(row.tags, []),
     signals: json(row.signals, []),
     claims: json(row.claims, []),
@@ -754,6 +758,7 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
           gathering_reason AS "gatheringReason",
           excerpt,
           body,
+          content_document AS "document",
           tags,
           signals,
           claims,
@@ -779,6 +784,7 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
           author_name AS "authorName",
           stance,
           body,
+          content_document AS "document",
           metrics,
           saved_by AS "savedBy",
           signaled_by AS "signaledBy",

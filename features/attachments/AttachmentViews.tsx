@@ -14,6 +14,7 @@ import {
   ChevronRight,
   FileText,
   Film,
+  ExternalLink,
   Fullscreen,
   ImageIcon,
   Paperclip,
@@ -31,6 +32,7 @@ import {
   postAttachmentAccept,
   splitPreviewTextIntoPages
 } from "@/lib/attachmentRules";
+import { feedPreviewAttachments } from "@/lib/documentModel";
 import { deletedPostContextTitle, isDeletedPost } from "@/lib/symposiumCore";
 import { isSafeExternalUrl } from "@/packages/contracts/src";
 
@@ -295,12 +297,14 @@ export const buildPostAttachmentMetadata = async (file: File, contentType: strin
 
 export function AttachmentComposerField({
   attachments,
+  maxAttachments = maxPostAttachments,
   disabled = false,
   onAttachmentsChange,
   onBusyChange,
   onUploadAttachment
 }: {
   attachments: InquiryAttachment[];
+  maxAttachments?: number;
   disabled?: boolean;
   onAttachmentsChange: (attachments: InquiryAttachment[]) => void;
   onBusyChange?: (busy: boolean) => void;
@@ -313,10 +317,10 @@ export function AttachmentComposerField({
     const files = Array.from(event.target.files ?? []);
     event.target.value = "";
     if (!files.length) return;
-    const openSlots = maxPostAttachments - attachments.length;
+    const openSlots = maxAttachments - attachments.length;
     const selectedFiles = files.slice(0, Math.max(0, openSlots));
     if (!selectedFiles.length) {
-      setStatus(`Attachment limit reached (${maxPostAttachments})`);
+      setStatus(`Attachment limit reached (${maxAttachments})`);
       return;
     }
 
@@ -326,7 +330,7 @@ export function AttachmentComposerField({
     try {
       const uploaded: InquiryAttachment[] = [];
       for (const file of selectedFiles) uploaded.push(await onUploadAttachment(file));
-      onAttachmentsChange([...attachments, ...uploaded].slice(0, maxPostAttachments));
+      onAttachmentsChange([...attachments, ...uploaded].slice(0, maxAttachments));
       setStatus(`${uploaded.length} file${uploaded.length === 1 ? "" : "s"} attached`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not attach this file.");
@@ -341,16 +345,16 @@ export function AttachmentComposerField({
       <div className="composer-attachment-toolbar">
         <label className="attachment-picker">
           <Paperclip size={16} />
-          <span>{attachments.length}/{maxPostAttachments}</span>
+          <span>{attachments.length}/{maxAttachments}</span>
           <input
             type="file"
             multiple
             accept={postAttachmentAccept}
-            disabled={disabled || uploading || attachments.length >= maxPostAttachments}
+            disabled={disabled || uploading || attachments.length >= maxAttachments}
             onChange={uploadFiles}
           />
         </label>
-        {status ? <small>{status}</small> : <small>Images, video, PDF, text, or DOCX</small>}
+        {status ? <small>{status}</small> : <small>Media, documents, spreadsheets, text, or code</small>}
       </div>
       {attachments.length ? (
         <div className="composer-attachment-list">
@@ -385,7 +389,7 @@ const startAttachmentDrag = (attachment: InquiryAttachment) => (event: React.Dra
 
 function postPreviewAttachments(item: InquiryItem) {
   if (isDeletedPost(item)) return [];
-  return (item.attachments ?? []).filter((attachment) => attachment.url);
+  return feedPreviewAttachments(item.document, item.attachments ?? []).filter((attachment) => attachment.url);
 }
 
 const visibleAttachments = (attachments: InquiryAttachment[]) =>
@@ -1091,6 +1095,11 @@ export function AttachmentPreviewModal({
       {isFullscreen ? <Shrink size={15} /> : <Fullscreen size={15} />}
     </button>
   );
+  const openDedicatedViewer = () => {
+    if (item.id === "composer-preview") return;
+    const href = `/posts/${encodeURIComponent(item.id)}?viewer=full&attachment=${encodeURIComponent(activeAttachment.id)}`;
+    window.open(href, "_blank", "noopener,noreferrer");
+  };
 
   return (
     <div className="attachment-modal-backdrop" role="presentation" onClick={closeModal}>
@@ -1107,6 +1116,7 @@ export function AttachmentPreviewModal({
           <div className="attachment-modal-header-controls" role="group" aria-label="Attachment viewing controls">
             {isFullscreen ? zoomControls : null}
             {isFullscreen ? fullscreenButton : null}
+            {item.id !== "composer-preview" ? <button type="button" title="Open in a new tab" onClick={openDedicatedViewer}><ExternalLink size={15} /></button> : null}
             <button type="button" title="Close" onClick={closeModal}>
               <X size={17} />
             </button>

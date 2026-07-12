@@ -12,16 +12,17 @@ import type {
 import { quotedContentExcerpt } from "@/lib/contentQuotes";
 import { profileForHandle, profileInitials } from "@/features/identity/profilePresentation";
 import type { AttachedQuote, QuoteLinkResolver, QuoteOwner, QuoteSelection } from "@/features/quotes/quoteTypes";
-import {
-  AttachmentComposerField,
-  type AttachmentUploadHandler
-} from "@/features/attachments/AttachmentViews";
+import type { AttachmentUploadHandler } from "@/features/attachments/AttachmentViews";
+import { SymposiumDocumentEditor } from "@/features/content/SymposiumDocument";
+import { emptySymposiumDocument, editorCapabilityForKind } from "@/lib/documentModel";
+import type { VersionedDocumentContract } from "@/packages/contracts/src";
 
 export type { QuoteSelection } from "@/features/quotes/quoteTypes";
 export type QuoteActionHandler = (selection: QuoteSelection) => void;
 export type QuotePostDraft = {
   title: string;
   body: string;
+  document: VersionedDocumentContract;
   kind: Extract<InquiryItem["kind"], "paper" | "thought">;
   attachments: InquiryAttachment[];
   quoteSource: ContentQuoteSource;
@@ -226,6 +227,7 @@ export function QuoteComposerModal({
   onAddComment: (
     itemId: string,
     body: string,
+    document: VersionedDocumentContract,
     stance: string,
     parentId: string | null,
     attachments: InquiryAttachment[],
@@ -237,7 +239,10 @@ export function QuoteComposerModal({
   const [destination, setDestination] = useState<"post" | "comment">("post");
   const [kind, setKind] = useState<QuotePostDraft["kind"]>("thought");
   const [title, setTitle] = useState("");
-  const [body, setBody] = useState("");
+  const [postBody, setPostBody] = useState("");
+  const [commentBody, setCommentBody] = useState("");
+  const [postDocument, setPostDocument] = useState<VersionedDocumentContract>(() => emptySymposiumDocument());
+  const [commentDocument, setCommentDocument] = useState<VersionedDocumentContract>(() => emptySymposiumDocument());
   const [postAttachments, setPostAttachments] = useState<InquiryAttachment[]>([]);
   const [commentAttachments, setCommentAttachments] = useState<InquiryAttachment[]>([]);
   const [busy, setBusy] = useState(false);
@@ -245,6 +250,8 @@ export function QuoteComposerModal({
   const quoteSource: ContentQuoteSource = { sourceType: selection.sourceType, sourceId: selection.sourceId };
   const attachments = destination === "post" ? postAttachments : commentAttachments;
   const setAttachments = destination === "post" ? setPostAttachments : setCommentAttachments;
+  const body = destination === "post" ? postBody : commentBody;
+  const documentValue = destination === "post" ? postDocument : commentDocument;
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -258,6 +265,7 @@ export function QuoteComposerModal({
         const result = await onCreatePost({
           title: cleanTitle,
           body: cleanBody,
+          document: postDocument,
           kind,
           attachments: postAttachments,
           quoteSource
@@ -270,6 +278,7 @@ export function QuoteComposerModal({
         const saved = await onAddComment(
           selection.sourcePostId,
           cleanBody,
+          commentDocument,
           "Comment",
           selection.sourceType === "comment" ? selection.sourceId : null,
           commentAttachments,
@@ -312,19 +321,22 @@ export function QuoteComposerModal({
           </div>
         )}
         {destination === "post" ? <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Title" /> : null}
-        <textarea
-          value={body}
-          onChange={(event) => setBody(event.target.value)}
-          placeholder={destination === "comment" ? "Write your comment here" : `Write your ${kind} here`}
-        />
-        <ContentQuoteCard quote={quote} profiles={profiles} />
-        <AttachmentComposerField
+        <SymposiumDocumentEditor
+          value={documentValue}
+          capability={destination === "post" ? editorCapabilityForKind(kind) : "reduced"}
           attachments={attachments}
+          profiles={profiles}
           disabled={busy}
+          placeholder={destination === "comment" ? "Write your comment here" : `Write your ${kind} here`}
+          onChange={(document, plainText) => {
+            if (destination === "post") { setPostDocument(document); setPostBody(plainText); }
+            else { setCommentDocument(document); setCommentBody(plainText); }
+          }}
           onAttachmentsChange={setAttachments}
           onBusyChange={setBusy}
           onUploadAttachment={destination === "post" ? onUploadPostAttachment : onUploadCommentAttachment}
         />
+        <ContentQuoteCard quote={quote} profiles={profiles} />
         {status ? <small className="composer-submit-status">{status}</small> : null}
       </form>
     </div>

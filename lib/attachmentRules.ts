@@ -1,17 +1,37 @@
 export type AttachmentKind = "image" | "video" | "pdf" | "text" | "document";
 
 export const maxPostAttachments = 10;
+export const maxContentAttachments = 100;
 export const maxPostAttachmentBytes = 50 * 1024 * 1024;
 export const maxAttachmentPreviewTextLength = 50_000;
 
 const extensionContentTypes: Record<string, string> = {
   ".avif": "image/avif",
   ".csv": "text/csv",
+  ".c": "text/plain",
+  ".cpp": "text/plain",
+  ".css": "text/css",
+  ".go": "text/plain",
+  ".html": "text/html",
+  ".h": "text/plain",
+  ".java": "text/plain",
+  ".js": "text/javascript",
+  ".jsx": "text/javascript",
   ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   ".gif": "image/gif",
   ".jpeg": "image/jpeg",
   ".jpg": "image/jpeg",
   ".json": "application/json",
+  ".py": "text/x-python",
+  ".r": "text/plain",
+  ".rs": "text/plain",
+  ".sql": "application/sql",
+  ".ts": "text/typescript",
+  ".tsx": "text/typescript",
+  ".xml": "application/xml",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ".yaml": "application/yaml",
+  ".yml": "application/yaml",
   ".md": "text/markdown",
   ".mov": "video/quicktime",
   ".mp4": "video/mp4",
@@ -26,7 +46,11 @@ const extensionContentTypes: Record<string, string> = {
 export const allowedPostAttachmentTypes = new Set([
   "application/json",
   "application/pdf",
+  "application/sql",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/xml",
+  "application/yaml",
   "image/avif",
   "image/gif",
   "image/jpeg",
@@ -34,8 +58,13 @@ export const allowedPostAttachmentTypes = new Set([
   "image/png",
   "image/webp",
   "text/csv",
+  "text/css",
+  "text/html",
+  "text/javascript",
   "text/markdown",
   "text/plain",
+  "text/typescript",
+  "text/x-python",
   "video/mp4",
   "video/ogg",
   "video/quicktime",
@@ -57,12 +86,40 @@ export const postAttachmentAccept = [
   "text/plain",
   "text/markdown",
   "text/csv",
+  "text/css",
+  "text/html",
+  "text/javascript",
+  "text/typescript",
+  "text/x-python",
   "application/json",
+  "application/sql",
+  "application/xml",
+  "application/yaml",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   ".txt",
   ".md",
   ".csv",
   ".json",
+  ".js",
+  ".jsx",
+  ".ts",
+  ".tsx",
+  ".py",
+  ".r",
+  ".rs",
+  ".go",
+  ".java",
+  ".c",
+  ".cpp",
+  ".h",
+  ".html",
+  ".css",
+  ".xml",
+  ".yaml",
+  ".yml",
+  ".sql",
+  ".xlsx",
   ".docx"
 ].join(",");
 
@@ -106,7 +163,7 @@ export const attachmentKindForContentType = (contentType: string): AttachmentKin
 export const validatePostAttachmentDetails = (fileName: string, contentType: string, byteSize: number) => {
   if (!fileName.trim()) return "Attachment file name is required.";
   if (!allowedPostAttachmentTypes.has(contentType.toLowerCase())) {
-    return "Attach an image, video, PDF, text file, JSON/CSV/Markdown file, or DOCX.";
+    return "Attach an image, video, PDF, document, spreadsheet, text, Markdown, or source-code file.";
   }
   const nameTypeError = validateAttachmentNameAndContentType(fileName, contentType);
   if (nameTypeError) return nameTypeError;
@@ -144,6 +201,7 @@ export const validateAttachmentContentSignature = (contentType: string, bytes: U
       case "application/pdf":
         return asciiAt(bytes, 0, 5) === "%PDF-";
       case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+      case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
         return startsWithBytes(bytes, [0x50, 0x4b, 0x03, 0x04]);
       case "video/mp4":
       case "video/quicktime":
@@ -156,6 +214,14 @@ export const validateAttachmentContentSignature = (contentType: string, bytes: U
       case "text/markdown":
       case "text/csv":
       case "application/json":
+      case "application/sql":
+      case "application/xml":
+      case "application/yaml":
+      case "text/css":
+      case "text/html":
+      case "text/javascript":
+      case "text/typescript":
+      case "text/x-python":
         return !bytes.includes(0);
       default:
         return false;

@@ -1,0 +1,190 @@
+/* Owns attachment-native document rendering, expanded composition, and equation editing. */
+:root {
+  --document-font-system: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --document-font-serif: Iowan Old Style, Palatino Linotype, Book Antiqua, Georgia, serif;
+  --document-font-humanist: Optima, Candara, "Trebuchet MS", sans-serif;
+  --document-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --document-size-small: 0.84em;
+  --document-size-normal: 1em;
+  --document-size-large: 1.14em;
+  --document-size-lead: 1.3em;
+  --document-color-default: var(--ink);
+  --document-color-muted: var(--muted);
+  --document-color-blue: #173f5f;
+  --document-color-crimson: #8d2f3c;
+  --document-color-forest: #285943;
+  --document-color-gold: #9a6b16;
+}
+
+.symposium-document {
+  color: var(--ink);
+  font-family: var(--document-font-system);
+  line-height: 1.65;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.symposium-document > :first-child { margin-top: 0; }
+.symposium-document > :last-child { margin-bottom: 0; }
+.symposium-document-detail.document-width-standard { max-width: 54rem; }
+.symposium-document-detail.document-width-wide { max-width: 72rem; }
+.symposium-document-detail.document-margin-compact { padding-inline: 0; }
+.symposium-document-detail.document-margin-normal { padding-inline: clamp(0rem, 1.5vw, 0.75rem); }
+.symposium-document-detail.document-margin-generous { padding-inline: clamp(0.75rem, 4vw, 2.5rem); }
+.symposium-document p,
+.symposium-document blockquote,
+.symposium-document h1,
+.symposium-document h2,
+.symposium-document h3,
+.symposium-document h4,
+.symposium-document pre,
+.symposium-document ul,
+.symposium-document ol { margin: 0 0 0.95rem; white-space: pre-wrap; }
+.symposium-document h1 { font-size: clamp(1.65rem, 3vw, 2.35rem); line-height: 1.15; }
+.symposium-document h2 { font-size: clamp(1.35rem, 2.3vw, 1.8rem); line-height: 1.2; }
+.symposium-document h3 { font-size: 1.2rem; line-height: 1.25; }
+.symposium-document h4 { font-size: 1.05rem; line-height: 1.3; letter-spacing: 0.02em; }
+.symposium-document blockquote { border-left: 3px solid color-mix(in srgb, var(--accent) 55%, transparent); padding-left: 1rem; color: var(--muted); }
+.document-align-center { text-align: center; }
+.document-align-right { text-align: right; }
+.document-indent-1 { padding-left: 1.5rem; }
+.document-indent-2 { padding-left: 3rem; }
+.document-indent-3 { padding-left: 4.5rem; }
+.document-indent-4,
+.document-indent-5,
+.document-indent-6,
+.document-indent-7,
+.document-indent-8 { padding-left: min(25%, 6rem); }
+.document-mark-bold { font-weight: 760; }
+.document-mark-italic { font-style: italic; }
+.document-mark-underline { text-decoration: underline; text-underline-offset: 0.15em; }
+.document-mark-strike { text-decoration: line-through; }
+.document-mark-code { border-radius: 0.25rem; background: color-mix(in srgb, var(--ink) 8%, transparent); font-family: var(--document-font-mono); padding: 0.08em 0.28em; }
+.symposium-document a { color: color-mix(in srgb, var(--accent) 78%, var(--ink)); font-weight: 680; text-decoration: none; }
+.symposium-document a:hover { text-decoration: underline; text-underline-offset: 0.18em; }
+.document-code { overflow: auto; border: 1px solid var(--line); border-radius: 0.75rem; background: color-mix(in srgb, var(--ink) 6%, var(--surface)); padding: 1rem; font-family: var(--document-font-mono); font-size: 0.86rem; line-height: 1.55; }
+.document-list { padding-left: 1.4rem; }
+.document-list-dash { list-style: "—  "; }
+.document-list-lower-alpha { list-style: lower-alpha; }
+.document-list-upper-alpha { list-style: upper-alpha; }
+.document-equation { max-width: 100%; overflow-x: auto; overflow-y: hidden; padding: 0.25rem 0; }
+.document-equation.display { margin: 1.1rem 0 1.25rem; text-align: center; }
+.document-equation.inline { display: inline-block; vertical-align: middle; }
+.document-attachment-block { margin: 1.15rem 0 1.35rem; max-width: 100%; }
+.document-attachment-block figcaption { color: var(--muted); font-size: 0.82rem; line-height: 1.45; margin: 0.45rem 0 0; text-align: center; }
+.document-reference,
+.document-citation { display: inline-flex; border: 1px solid var(--line); border-radius: 0.55rem; padding: 0.45rem 0.65rem; margin: 0.25rem 0; }
+.document-expand-button { display: inline-block; margin-top: -0.55rem; }
+.feed-post .symposium-document-feed { font-size: inherit; }
+.comment-card .symposium-document-comment { margin-left: 2.8rem; max-width: calc(100% - 2.8rem); }
+.comment-card .symposium-document-comment .post-attachments-comment { margin-left: 0; max-width: 100%; }
+
+.symposium-document-editor {
+  border: 1px solid color-mix(in srgb, var(--line) 90%, transparent);
+  border-radius: 0.85rem;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.symposium-document-editor.disabled { opacity: 0.7; pointer-events: none; }
+.document-editor-toolbar {
+  align-items: center;
+  background: color-mix(in srgb, var(--surface-strong) 96%, transparent);
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  padding: 0.55rem;
+  position: sticky;
+  top: 0;
+  z-index: 4;
+}
+.document-editor-toolbar > div { align-items: center; border-right: 1px solid var(--line); display: flex; gap: 0.15rem; padding-right: 0.35rem; }
+.document-editor-toolbar > div:last-child { border-right: 0; }
+.document-editor-toolbar button,
+.document-block-rail button,
+.document-block-format button,
+.document-list-editor button,
+.document-equation-symbols button {
+  align-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 0.42rem;
+  color: var(--ink);
+  display: inline-flex;
+  justify-content: center;
+  min-height: 2rem;
+  min-width: 2rem;
+  padding: 0.35rem;
+}
+.document-editor-toolbar button:hover,
+.document-block-rail button:hover,
+.document-block-format button:hover,
+.document-list-editor button:hover,
+.document-equation-symbols button:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
+.document-editor-toolbar select,
+.document-list-editor select { background: var(--surface); border: 1px solid var(--line); border-radius: 0.45rem; color: var(--ink); min-height: 2rem; padding: 0.25rem 1.6rem 0.25rem 0.5rem; width: auto; }
+.document-color-controls button { background: var(--swatch); border: 2px solid color-mix(in srgb, var(--surface) 85%, transparent); border-radius: 999px; min-height: 1.35rem; min-width: 1.35rem; padding: 0; }
+.document-hidden-input { display: none !important; }
+.document-editor-canvas { min-height: 10.5rem; padding: 1.1rem 1rem 1.35rem 2.65rem; }
+.document-editor-canvas.document-width-standard { margin-inline: auto; max-width: 58rem; width: 100%; }
+.document-editor-canvas.document-width-wide { max-width: none; }
+.document-editor-canvas.document-margin-compact { padding-right: 0.55rem; }
+.document-editor-canvas.document-margin-generous { padding-left: 4rem; padding-right: 2.5rem; }
+.capability-paper .document-editor-canvas { min-height: 19rem; }
+.document-editor-block { border: 1px solid transparent; border-radius: 0.65rem; min-width: 0; padding: 0.35rem 0.45rem; position: relative; }
+.document-editor-block:hover,
+.document-editor-block.active { border-color: color-mix(in srgb, var(--accent) 25%, transparent); }
+.document-block-rail { display: flex; flex-direction: column; left: -2.35rem; opacity: 0; position: absolute; top: 0.2rem; transition: opacity 120ms ease; }
+.document-editor-block:hover .document-block-rail,
+.document-editor-block.active .document-block-rail { opacity: 1; }
+.document-block-rail button { min-height: 1.55rem; min-width: 1.55rem; padding: 0.2rem; }
+.document-block-format { display: flex; gap: 0.1rem; justify-content: flex-end; opacity: 0; position: absolute; right: 0.25rem; top: 0.2rem; z-index: 2; }
+.document-editor-block:hover .document-block-format,
+.document-editor-block.active .document-block-format { opacity: 1; }
+.document-block-format button { min-height: 1.55rem; min-width: 1.55rem; padding: 0.2rem; }
+.document-editable-text { border: 0; color: var(--ink); font-family: var(--document-font-system); line-height: 1.65; min-height: 1.65em; outline: none; padding: 0.28rem 0; white-space: pre-wrap; }
+.document-editable-text:empty::before { color: var(--muted); content: attr(data-placeholder); pointer-events: none; }
+.document-editable-heading { font-family: var(--document-font-serif); font-size: 1.65rem; font-weight: 760; line-height: 1.2; margin: 0.35rem 0; }
+.document-equation-editor { border: 1px solid var(--line); border-radius: 0.7rem; background: color-mix(in srgb, var(--surface) 80%, transparent); padding: 0.75rem; }
+.document-equation-editor > input,
+.document-inline-attachment-editor > input { background: var(--surface); border: 1px solid var(--line); border-radius: 0.45rem; color: var(--ink); min-height: 2.4rem; padding: 0.55rem 0.65rem; width: 100%; }
+.document-equation-symbols { display: flex; flex-wrap: wrap; gap: 0.2rem; margin: 0.55rem 0; }
+.document-equation-symbols button { background: var(--surface); font-family: var(--document-font-serif); }
+.document-equation-editor > label { align-items: center; color: var(--muted); display: flex; font-size: 0.8rem; gap: 0.4rem; }
+.document-equation-editor > label input { width: auto; }
+.document-inline-attachment-editor .post-attachments { margin: 0; max-width: 100%; }
+.document-inline-attachment-editor > input { margin-top: 0.45rem; }
+.document-list-editor textarea,
+.document-code-editor { background: transparent; border: 0; color: var(--ink); line-height: 1.65; min-height: 6rem; outline: none; padding: 0.35rem; resize: vertical; width: 100%; }
+.document-code-editor { font-family: var(--document-font-mono); }
+.document-list-editor > div { align-items: center; color: var(--muted); display: flex; gap: 0.35rem; font-size: 0.78rem; }
+.document-appended-attachments { border-top: 1px solid var(--line); padding: 0.75rem; }
+.document-appended-label { align-items: center; color: var(--ink); display: flex; gap: 0.45rem; margin-bottom: 0.5rem; }
+.document-appended-label small { color: var(--muted); margin-left: auto; }
+.document-appended-attachments .composer-attachments { margin: 0; }
+.document-missing-attachment { color: var(--muted); font-size: 0.85rem; }
+
+.post-composer-modal,
+.post-edit-modal,
+.quote-composer-modal { max-height: calc(100vh - 2rem); overflow-y: auto; }
+.post-composer .symposium-document-editor { width: 100%; }
+.comment-composer .symposium-document-editor { margin-top: 0.65rem; }
+.comment-composer.compact .document-editor-canvas { min-height: 6rem; }
+.comment-composer.compact .document-editor-toolbar { position: static; }
+
+@media (max-width: 720px) {
+  .document-editor-toolbar { position: static; }
+  .document-editor-canvas { padding-left: 2.2rem; }
+  .document-appended-label { align-items: flex-start; flex-wrap: wrap; }
+  .document-appended-label small { flex-basis: 100%; margin-left: 1.45rem; }
+  .comment-card .symposium-document-comment { margin-left: 0; max-width: 100%; }
+  .document-indent-2,
+  .document-indent-3,
+  .document-indent-4,
+  .document-indent-5,
+  .document-indent-6,
+  .document-indent-7,
+  .document-indent-8 { padding-left: 1.5rem; }
+}

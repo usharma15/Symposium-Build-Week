@@ -19,6 +19,7 @@
     "core:check": "tsx scripts/symposiumCoreCheck.ts",
     "cross-tab:check": "tsx scripts/crossTabItemSyncCheck.ts",
     "comment-attachment:check": "tsx scripts/commentAttachmentCheck.ts",
+    "document-editor:check": "tsx scripts/documentEditorCheck.ts",
     "quote:check": "tsx scripts/contentQuoteCheck.ts",
     "entities:check": "tsx scripts/entityStoreCheck.ts",
     "entity-revision:check": "tsx scripts/entityRevisionCheck.ts",
@@ -47,7 +48,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "typecheck:all": "npm run typecheck && npm run api:typecheck",
     "deploy:api:check": "npm run api:preflight && npm run api:typecheck",
-    "verify": "npm run architecture:check && npm run platform:check && npm run styles:check && npm run security:check && npm run infrastructure:check && npm run routing:check && npm run entities:check && npm run entity-revision:check && npm run follow-reconciliation:check && npm run api-client:check && npm run live-transport:check && npm run core:check && npm run action:check && npm run action-state:check && npm run reconciliation:check && npm run identity:check && npm run item-mutation:check && npm run cross-tab:check && npm run attachment:check && npm run comment-attachment:check && npm run quote:check && npm run storage-deletion:check && npm run mutation:check && npm run note-revision:check && npm run profile:check && npm run post-publishing:check && npm run entry-session:check && npm run typecheck:all && npm run build"
+    "verify": "npm run architecture:check && npm run platform:check && npm run styles:check && npm run security:check && npm run infrastructure:check && npm run routing:check && npm run entities:check && npm run entity-revision:check && npm run follow-reconciliation:check && npm run api-client:check && npm run live-transport:check && npm run core:check && npm run action:check && npm run action-state:check && npm run reconciliation:check && npm run identity:check && npm run item-mutation:check && npm run cross-tab:check && npm run attachment:check && npm run comment-attachment:check && npm run document-editor:check && npm run quote:check && npm run storage-deletion:check && npm run mutation:check && npm run note-revision:check && npm run profile:check && npm run post-publishing:check && npm run entry-session:check && npm run typecheck:all && npm run build"
   },
   "overrides": {
     "postcss": "8.5.15"
@@ -59,6 +60,7 @@
     "@clerk/nextjs": "7.5.9",
     "@fastify/cors": "11.2.0",
     "@trpc/server": "11.18.0",
+    "@types/katex": "^0.16.7",
     "@upstash/redis": "1.38.0",
     "docx-preview": "^0.4.0",
     "dotenv": "17.4.2",
@@ -66,6 +68,7 @@
     "drizzle-orm": "1.0.0-rc.4",
     "fastify": "5.9.0",
     "jszip": "^3.10.1",
+    "katex": "^0.16.22",
     "lucide-react": "^1.18.0",
     "next": "^16.2.9",
     "pg": "^8.21.0",

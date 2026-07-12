@@ -1,6 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import {
   createPostInputSchema,
+  documentFitsReducedEditor,
   postActionInputSchema,
   updatePostInputSchema,
   type CanonicalActionActivityContract,
@@ -47,7 +48,6 @@ import {
   type CommentRow,
   type SnapshotRow
 } from "./foundation";
-
 type ActionMutationResult = {
   item: InquiryItemContract;
   activity?: CanonicalActionActivityContract;
@@ -88,6 +88,7 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
     gatheringReason: "A new working post added to the live beta.",
     excerpt: input.body,
     body: input.body,
+    document: input.document,
     tags: [input.room, input.kind, ...author.fields.slice(0, 2).map((field) => field.toLowerCase())],
     signals: [
       { label: "Status", value: isPaper ? "Draft" : "New" },
@@ -164,6 +165,9 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
         searchablePostText({ ...item, authorName: item.author })
       ]
     );
+    if (input.document) {
+      await client.query("UPDATE posts SET content_document = $2 WHERE id = $1", [item.id, JSON.stringify(input.document)]);
+    }
 
     if (item.authorHandle && item.savedBy?.includes(item.authorHandle)) {
       await client.query(
@@ -281,6 +285,7 @@ export const applyPostAction = async (
         gathering_reason AS "gatheringReason",
         excerpt,
         body,
+        content_document AS "document",
         tags,
         signals,
         claims,
@@ -312,6 +317,7 @@ export const applyPostAction = async (
         author_name AS "authorName",
         stance,
         body,
+        content_document AS "document",
         metrics,
         saved_by AS "savedBy",
         signaled_by AS "signaledBy",
@@ -494,6 +500,7 @@ export const updatePost = async (
       ...existing,
       title: input.title,
       body: input.body,
+      document: input.document ?? existing.document,
       excerpt: input.body,
       claims: [input.body],
       editedAt,
@@ -519,7 +526,7 @@ export const updatePost = async (
         id, revision, kind, room, title, author_handle AS "authorHandle", author_name AS "authorName",
         affiliation, date_label AS "dateLabel", created_at AS "createdAt", edited_at AS "editedAt",
         deleted_at AS "deletedAt",
-        status, metrics, gathering_reason AS "gatheringReason", excerpt, body, tags, signals,
+        status, metrics, gathering_reason AS "gatheringReason", excerpt, body, content_document AS "document", tags, signals,
         claims, objections, evidence, tests, forks, saved, saved_by AS "savedBy",
         signaled_by AS "signaledBy", forked_by AS "forkedBy", quote
        FROM posts
@@ -540,6 +547,9 @@ export const updatePost = async (
     }
     if (row.authorHandle && cleanHandle(row.authorHandle) !== handle) {
       throw new TRPCError({ code: "FORBIDDEN", message: "Only the author can edit this post." });
+    }
+    if (row.kind !== "paper" && input.document && !documentFitsReducedEditor(input.document)) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "Thoughts use the reduced editor formatting set." });
     }
     const currentEditedAt = row.editedAt ? new Date(row.editedAt).toISOString() : null;
     if (input.expectedEditedAt !== undefined && input.expectedEditedAt !== currentEditedAt) {
@@ -572,6 +582,7 @@ export const updatePost = async (
       `UPDATE posts
        SET title = $2,
            body = $3,
+           content_document = $8,
            excerpt = $3,
            claims = $4,
            search_text = $5,
@@ -588,13 +599,14 @@ export const updatePost = async (
         JSON.stringify([input.body]),
         searchablePostText({ title: input.title, body: input.body, excerpt: input.body, authorName: row.authorName }),
         editedAt,
-        quote ? JSON.stringify(quote) : null
+        quote ? JSON.stringify(quote) : null,
+        input.document ? JSON.stringify(input.document) : row.document ? JSON.stringify(row.document) : null
       ]
     );
 
     const commentsResult = await client.query<CommentRow>(
       `SELECT id, revision, post_id AS "postId", parent_id AS "parentId", author_handle AS "authorHandle",
-        author_name AS "authorName", stance, body, metrics, saved_by AS "savedBy",
+        author_name AS "authorName", stance, body, content_document AS "document", metrics, saved_by AS "savedBy",
         signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, edited_at AS "editedAt",
         deleted_at AS "deletedAt", created_at AS "createdAt"
        FROM comments
@@ -613,6 +625,7 @@ export const updatePost = async (
         ...row,
         title: input.title,
         body: input.body,
+        document: input.document ?? row.document ?? undefined,
         excerpt: input.body,
         claims: [input.body],
         quote,
@@ -694,7 +707,7 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
         id, revision, kind, room, title, author_handle AS "authorHandle", author_name AS "authorName",
         affiliation, date_label AS "dateLabel", created_at AS "createdAt", edited_at AS "editedAt",
         deleted_at AS "deletedAt",
-        status, metrics, gathering_reason AS "gatheringReason", excerpt, body, tags, signals,
+        status, metrics, gathering_reason AS "gatheringReason", excerpt, body, content_document AS "document", tags, signals,
         claims, objections, evidence, tests, forks, saved, saved_by AS "savedBy",
         signaled_by AS "signaledBy", forked_by AS "forkedBy", quote
        FROM posts
@@ -713,7 +726,7 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
 
     const commentsResult = await client.query<CommentRow>(
       `SELECT id, revision, post_id AS "postId", parent_id AS "parentId", author_handle AS "authorHandle",
-        author_name AS "authorName", stance, body, metrics, saved_by AS "savedBy",
+        author_name AS "authorName", stance, body, content_document AS "document", metrics, saved_by AS "savedBy",
         signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, edited_at AS "editedAt",
         deleted_at AS "deletedAt", created_at AS "createdAt"
        FROM comments

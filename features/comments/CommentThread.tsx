@@ -34,13 +34,14 @@ import {
   relativeTimeLabel
 } from "@/lib/symposiumCore";
 import type { CommentActionHandler } from "@/features/actions/actionTypes";
-import { ExpandableBodyText } from "@/features/content/ExpandableBodyText";
+import { SymposiumDocumentEditor, SymposiumDocumentRenderer } from "@/features/content/SymposiumDocument";
+import { appendedContentAttachments, emptySymposiumDocument } from "@/lib/documentModel";
+import type { VersionedDocumentContract } from "@/packages/contracts/src";
 import { profileForHandle, profileInitials } from "@/features/identity/profilePresentation";
 import { useQualifiedView } from "@/features/live-sync/useQualifiedView";
 import { CanonicalLink } from "@/features/navigation/CanonicalLink";
 import {
   AttachmentCarousel,
-  AttachmentComposerField,
   type AttachmentUploadHandler
 } from "@/features/attachments/AttachmentViews";
 import {
@@ -56,6 +57,7 @@ export type CommentSegmentStacks = Record<string, string[]>;
 export type AddCommentHandler = (
   itemId: string,
   body: string,
+  document: VersionedDocumentContract,
   stance: string,
   parentId: string | null,
   attachments: InquiryAttachment[],
@@ -155,6 +157,7 @@ export function CommentComposer({
   compact?: boolean;
 }) {
   const [body, setBody] = useState("");
+  const [documentValue, setDocumentValue] = useState<VersionedDocumentContract>(() => emptySymposiumDocument());
   const [attachments, setAttachments] = useState<InquiryAttachment[]>([]);
   const [busy, setBusy] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -169,6 +172,7 @@ export function CommentComposer({
     const saved = await onAddComment(
       itemId,
       cleanBody,
+      documentValue,
       "Comment",
       parentId ?? null,
       attachments,
@@ -179,6 +183,7 @@ export function CommentComposer({
     setSubmitting(false);
     if (saved) {
       setBody("");
+      setDocumentValue(emptySymposiumDocument());
       setAttachments([]);
       setAttachedQuote(null);
     }
@@ -189,10 +194,17 @@ export function CommentComposer({
       <div className="comment-composer-actions">
         <button type="submit" disabled={busy || submitting}>{submitting ? "Saving…" : parentId ? "Add reply" : "Add comment"}</button>
       </div>
-      <textarea
-        value={body}
-        onChange={(event) => setBody(event.target.value)}
+      <SymposiumDocumentEditor
+        value={documentValue}
+        capability="reduced"
+        attachments={attachments}
+        profiles={profiles}
+        disabled={submitting}
         placeholder="Write your comment here"
+        onChange={(document, plainText) => { setDocumentValue(document); setBody(plainText); }}
+        onAttachmentsChange={setAttachments}
+        onBusyChange={setBusy}
+        onUploadAttachment={onUploadAttachment}
       />
       <QuoteLinkField
         attached={attachedQuote}
@@ -200,13 +212,6 @@ export function CommentComposer({
         disabled={submitting}
         onChange={setAttachedQuote}
         onResolve={onResolveQuoteLink}
-      />
-      <AttachmentComposerField
-        attachments={attachments}
-        disabled={submitting}
-        onAttachmentsChange={setAttachments}
-        onBusyChange={setBusy}
-        onUploadAttachment={onUploadAttachment}
       />
     </form>
   );
@@ -552,18 +557,22 @@ function CommentNode({
           onEditComment={onEditComment}
           onDeleteComment={onDeleteComment}
         />
-        <ExpandableBodyText
-          text={comment.body}
-          className="comment-text"
+        <SymposiumDocumentRenderer
+          document={comment.document}
+          body={comment.body}
+          attachments={comment.attachments}
+          profiles={profiles}
+          mode="comment"
+          onOpenAttachment={(attachmentId) => comment.id && onOpenAttachmentPreview(itemId, comment.id, attachmentId)}
           onExpand={() => {
             if (comment.id && !commentDeleted) {
               onCommentAction(itemId, comment.id, "read", { trigger: "expand", surface: "thread" });
             }
           }}
         />
-        {comment.id && !commentDeleted ? (
+        {comment.id && !commentDeleted && appendedContentAttachments(comment.document, comment.attachments ?? []).length ? (
           <AttachmentCarousel
-            attachments={comment.attachments ?? []}
+            attachments={appendedContentAttachments(comment.document, comment.attachments ?? [])}
             label="Comment attachments"
             variant="comment"
             onOpenPreview={(attachmentId) =>
@@ -603,8 +612,8 @@ function CommentNode({
                 profiles={profiles}
                 onUploadAttachment={onUploadAttachment}
                 onResolveQuoteLink={onResolveQuoteLink}
-                onAddComment={async (id, body, stance, parentId, attachments, quoteSource) => {
-                  const saved = await onAddComment(id, body, stance, parentId, attachments, quoteSource);
+                onAddComment={async (id, body, document, stance, parentId, attachments, quoteSource) => {
+                  const saved = await onAddComment(id, body, document, stance, parentId, attachments, quoteSource);
                   if (saved) setReplyOpen(false);
                   return saved;
                 }}

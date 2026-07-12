@@ -73,10 +73,10 @@ const main = async () => {
   versionedDocumentSchema.parse({
     version: 1,
     nodes: [
-      { type: "heading", level: 2, content: [{ text: "Working claim" }] },
-      { type: "paragraph", content: [{ text: "Evidence and context." }] },
-      { type: "reference", resource: { type: "post", id: "post-1" } },
-      { type: "attachment", attachmentId: "attachment-1", caption: "Result" }
+      { id: "heading-1", type: "heading", level: 2, content: [{ text: "Working claim" }] },
+      { id: "paragraph-1", type: "paragraph", content: [{ text: "Evidence and context." }] },
+      { id: "reference-1", type: "reference", resource: { type: "post", id: "post-1" } },
+      { id: "attachment-1", type: "attachment", attachmentId: "attachment-1", caption: "Result" }
     ]
   });
 

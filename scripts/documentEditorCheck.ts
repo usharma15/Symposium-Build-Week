@@ -1,0 +1,92 @@
+import assert from "node:assert/strict";
+import {
+  createCommentInputSchema,
+  createPostInputSchema,
+  versionedDocumentSchema,
+  type InquiryAttachmentContract,
+  type VersionedDocumentContract
+} from "../packages/contracts/src";
+import {
+  documentPlainText,
+  feedPreviewAttachments,
+  normalizeDocumentAttachments,
+  plainTextDocument
+} from "../lib/documentModel";
+
+const attachment = (id: string, kind: InquiryAttachmentContract["kind"] = "image"): InquiryAttachmentContract => ({
+  id,
+  fileName: `${id}.png`,
+  contentType: "image/png",
+  byteSize: 100,
+  status: "uploaded",
+  kind,
+  url: `https://assets.example/${id}.png`
+});
+
+const document: VersionedDocumentContract = {
+  version: 1,
+  nodes: [
+    { id: "intro", type: "paragraph", content: [{ text: "Evidence before assertion.", marks: ["bold"] }], align: "left", indent: 0 },
+    { id: "asset-a", type: "attachment", attachmentId: "inline-a", placement: "inline" },
+    { id: "equation", type: "equation", source: "E = mc^2", display: true },
+    { id: "asset-b", type: "attachment", attachmentId: "inline-b", placement: "inline" },
+    { id: "ending", type: "paragraph", content: [{ text: "Conclusion." }], align: "left", indent: 0 }
+  ]
+};
+
+assert.equal(versionedDocumentSchema.parse(document).version, 1);
+assert.equal(documentPlainText(document), "Evidence before assertion.\n\nE = mc^2\n\nConclusion.");
+
+const legacyBody = "First paragraph.\nStill first.\n\nSecond paragraph.";
+assert.equal(documentPlainText(plainTextDocument(legacyBody)), legacyBody);
+
+const attachments = [attachment("inline-b"), attachment("appended-a"), attachment("inline-a"), attachment("appended-b")];
+assert.deepEqual(
+  feedPreviewAttachments(document, attachments).map((item) => item.id),
+  ["appended-a", "appended-b", "inline-a", "inline-b"]
+);
+
+const missingInline = normalizeDocumentAttachments(document, attachments.filter((item) => item.id !== "inline-a"));
+assert.equal(missingInline.nodes.some((node) => node.type === "attachment" && node.attachmentId === "inline-a"), false);
+
+assert.equal(createPostInputSchema.safeParse({
+  title: "Paper",
+  body: "A paper",
+  document: { ...document, nodes: [{ id: "heading", type: "heading", level: 1, content: [{ text: "Section" }], align: "left" }] },
+  kind: "paper",
+  room: "library",
+  attachments: []
+}).success, true);
+
+assert.equal(createPostInputSchema.safeParse({
+  title: "Thought",
+  body: "A thought",
+  document: { ...document, nodes: [{ id: "heading", type: "heading", level: 1, content: [{ text: "Not reduced" }], align: "left" }] },
+  kind: "thought",
+  room: "symposium",
+  attachments: []
+}).success, false);
+
+assert.equal(createCommentInputSchema.safeParse({
+  body: "A comment",
+  document: { version: 1, nodes: [{ id: "p", type: "paragraph", content: [{ text: "Bold", marks: ["bold", "underline"] }], align: "left", indent: 0 }] },
+  stance: "Comment"
+}).success, true);
+
+assert.equal(createCommentInputSchema.safeParse({
+  body: "A comment",
+  document: { version: 1, nodes: [{ id: "p", type: "paragraph", content: [{ text: "Too styled", color: "blue" }], align: "left", indent: 0 }] },
+  stance: "Comment"
+}).success, false);
+
+assert.equal(createPostInputSchema.safeParse({
+  title: "Broken inline reference",
+  body: "Missing asset ownership",
+  document,
+  kind: "paper",
+  room: "library",
+  attachmentIds: [],
+  attachments: []
+}).success, false);
+
+console.log("document editor contract checks passed");

@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import { ClerkProvider } from "@clerk/nextjs";
 import "./globals.css";
+import "katex/dist/katex.min.css";
 
 const metadataBase = new URL(
   process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000"

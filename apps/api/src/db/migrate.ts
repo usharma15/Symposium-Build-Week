@@ -1203,6 +1203,37 @@ const migrations: Migration[] = [
           updated_at = now()
       WHERE posts.id IN (SELECT DISTINCT post_id FROM updated_comment_quotes);
     `
+  },
+  {
+    id: "0019_structured_content_documents",
+    sql: `
+      ALTER TABLE posts ADD COLUMN IF NOT EXISTS content_document JSONB;
+      ALTER TABLE comments ADD COLUMN IF NOT EXISTS content_document JSONB;
+
+      ALTER TABLE posts DROP CONSTRAINT IF EXISTS posts_content_document_shape_check;
+      ALTER TABLE posts
+        ADD CONSTRAINT posts_content_document_shape_check
+        CHECK (
+          content_document IS NULL OR (
+            jsonb_typeof(content_document) = 'object'
+            AND content_document->>'version' = '1'
+            AND jsonb_typeof(content_document->'nodes') = 'array'
+            AND jsonb_array_length(content_document->'nodes') > 0
+          )
+        );
+
+      ALTER TABLE comments DROP CONSTRAINT IF EXISTS comments_content_document_shape_check;
+      ALTER TABLE comments
+        ADD CONSTRAINT comments_content_document_shape_check
+        CHECK (
+          content_document IS NULL OR (
+            jsonb_typeof(content_document) = 'object'
+            AND content_document->>'version' = '1'
+            AND jsonb_typeof(content_document->'nodes') = 'array'
+            AND jsonb_array_length(content_document->'nodes') > 0
+          )
+        );
+    `
   }
 ];
 

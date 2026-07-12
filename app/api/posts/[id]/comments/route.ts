@@ -9,7 +9,7 @@ import {
 } from "@/lib/localAttachmentStore";
 import { findCommentInTree, isDeletedPost } from "@/lib/symposiumCore";
 import { ContentQuoteError, resolveLocalContentQuote } from "@/lib/contentQuotes";
-import { contentQuoteSourceSchema } from "@/packages/contracts/src";
+import { contentQuoteSourceSchema, versionedDocumentSchema } from "@/packages/contracts/src";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,6 +33,7 @@ export async function POST(request: Request, context: Context) {
 
   const input: CreateCommentInput = {
     body: String(body.body ?? "").trim(),
+    document: body.document === undefined ? undefined : versionedDocumentSchema.safeParse(body.document).data,
     stance: String(body.stance ?? "Comment").trim(),
     parentId: body.parentId ? String(body.parentId) : null
   };
@@ -44,6 +45,9 @@ export async function POST(request: Request, context: Context) {
 
   if (!input.body) {
     return jsonError("Comment body is required.", 400);
+  }
+  if (body.document !== undefined && !versionedDocumentSchema.safeParse(body.document).success) {
+    return jsonError("The comment document is invalid or unsupported.", 400);
   }
 
   const live = await proxyLiveBackend(`/v1/posts/${id}/comments`, {
