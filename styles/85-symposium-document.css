@@ -26,8 +26,8 @@
 
 .symposium-document > :first-child { margin-top: 0; }
 .symposium-document > :last-child { margin-bottom: 0; }
-.symposium-document-detail.document-width-standard { max-width: 54rem; }
-.symposium-document-detail.document-width-wide { max-width: 72rem; }
+.symposium-document-detail.document-width-standard { max-width: none; }
+.symposium-document-detail.document-width-wide { max-width: none; }
 .symposium-document-detail.document-margin-compact { padding-inline: 0; }
 .symposium-document-detail.document-margin-normal { padding-inline: clamp(0rem, 1.5vw, 0.75rem); }
 .symposium-document-detail.document-margin-generous { padding-inline: clamp(0.75rem, 4vw, 2.5rem); }
@@ -103,9 +103,6 @@
 .document-editor-toolbar > div { align-items: center; border-right: 1px solid var(--line); display: flex; gap: 0.15rem; padding-right: 0.35rem; }
 .document-editor-toolbar > div:last-child { border-right: 0; }
 .document-editor-toolbar button,
-.document-block-rail button,
-.document-block-format button,
-.document-list-editor button,
 .document-equation-symbols button {
   align-items: center;
   background: transparent;
@@ -119,34 +116,51 @@
   padding: 0.35rem;
 }
 .document-editor-toolbar button:hover,
-.document-block-rail button:hover,
-.document-block-format button:hover,
-.document-list-editor button:hover,
 .document-equation-symbols button:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
+.document-editor-toolbar button.active,
+.document-editor-toolbar button[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--accent) 17%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--line));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.document-editor-toolbar button:disabled { cursor: not-allowed; opacity: 0.36; }
 .document-editor-toolbar select,
 .document-list-editor select { background: var(--surface); border: 1px solid var(--line); border-radius: 0.45rem; color: var(--ink); min-height: 2rem; padding: 0.25rem 1.6rem 0.25rem 0.5rem; width: auto; }
-.document-color-controls button { background: var(--swatch); border: 2px solid color-mix(in srgb, var(--surface) 85%, transparent); border-radius: 999px; min-height: 1.35rem; min-width: 1.35rem; padding: 0; }
+.document-color-controls button { border-radius: 999px; min-height: 1.65rem; min-width: 1.65rem; padding: 0.18rem; }
+.document-color-controls button span { background: var(--swatch); border: 1px solid color-mix(in srgb, var(--ink) 22%, transparent); border-radius: inherit; display: block; height: 1rem; width: 1rem; }
 .document-hidden-input { display: none !important; }
-.document-editor-canvas { min-height: 10.5rem; padding: 1.1rem 1rem 1.35rem 2.65rem; }
-.document-editor-canvas.document-width-standard { margin-inline: auto; max-width: 58rem; width: 100%; }
-.document-editor-canvas.document-width-wide { max-width: none; }
-.document-editor-canvas.document-margin-compact { padding-right: 0.55rem; }
-.document-editor-canvas.document-margin-generous { padding-left: 4rem; padding-right: 2.5rem; }
+.document-editor-canvas { background: color-mix(in srgb, var(--surface) 80%, transparent); min-height: 10.5rem; overflow: hidden; }
+.document-editor-canvas .tiptap { box-sizing: border-box; margin-inline: auto; min-height: 10.5rem; outline: none; transition: max-width 160ms ease, padding 160ms ease; width: 100%; }
+.document-editor-canvas.document-width-standard .tiptap { max-width: 46rem; }
+.document-editor-canvas.document-width-wide .tiptap { max-width: none; }
+.document-editor-canvas.document-margin-compact .tiptap { padding: 1.15rem 1rem 1.8rem; }
+.document-editor-canvas.document-margin-normal .tiptap { padding: 1.5rem clamp(1.4rem, 4vw, 2.6rem) 2.2rem; }
+.document-editor-canvas.document-margin-generous .tiptap { padding: 1.8rem clamp(2.2rem, 7vw, 5rem) 2.7rem; }
 .capability-paper .document-editor-canvas { min-height: 19rem; }
-.document-editor-block { border: 1px solid transparent; border-radius: 0.65rem; min-width: 0; padding: 0.35rem 0.45rem; position: relative; }
-.document-editor-block:hover,
-.document-editor-block.active { border-color: color-mix(in srgb, var(--accent) 25%, transparent); }
-.document-block-rail { display: flex; flex-direction: column; left: -2.35rem; opacity: 0; position: absolute; top: 0.2rem; transition: opacity 120ms ease; }
-.document-editor-block:hover .document-block-rail,
-.document-editor-block.active .document-block-rail { opacity: 1; }
-.document-block-rail button { min-height: 1.55rem; min-width: 1.55rem; padding: 0.2rem; }
-.document-block-format { display: flex; gap: 0.1rem; justify-content: flex-end; opacity: 0; position: absolute; right: 0.25rem; top: 0.2rem; z-index: 2; }
-.document-editor-block:hover .document-block-format,
-.document-editor-block.active .document-block-format { opacity: 1; }
-.document-block-format button { min-height: 1.55rem; min-width: 1.55rem; padding: 0.2rem; }
-.document-editable-text { border: 0; color: var(--ink); font-family: var(--document-font-system); line-height: 1.65; min-height: 1.65em; outline: none; padding: 0.28rem 0; white-space: pre-wrap; }
-.document-editable-text:empty::before { color: var(--muted); content: attr(data-placeholder); pointer-events: none; }
-.document-editable-heading { font-family: var(--document-font-serif); font-size: 1.65rem; font-weight: 760; line-height: 1.2; margin: 0.35rem 0; }
+.document-editor-canvas .tiptap > :first-child { margin-top: 0; }
+.document-editor-canvas .tiptap > :last-child { margin-bottom: 0; }
+.document-editor-canvas .tiptap p,
+.document-editor-canvas .tiptap blockquote,
+.document-editor-canvas .tiptap h1,
+.document-editor-canvas .tiptap h2,
+.document-editor-canvas .tiptap h3,
+.document-editor-canvas .tiptap h4,
+.document-editor-canvas .tiptap pre,
+.document-editor-canvas .tiptap ul,
+.document-editor-canvas .tiptap ol { margin: 0 0 0.9rem; white-space: pre-wrap; }
+.document-editor-canvas .tiptap p { line-height: 1.7; min-height: 1.7em; }
+.document-editor-canvas .tiptap h1 { font-size: clamp(1.75rem, 4vw, 2.5rem); line-height: 1.15; }
+.document-editor-canvas .tiptap h2 { font-size: clamp(1.4rem, 3vw, 1.9rem); line-height: 1.2; }
+.document-editor-canvas .tiptap h3 { font-size: 1.2rem; }
+.document-editor-canvas .tiptap h4 { font-size: 1.05rem; }
+.document-editor-canvas .tiptap blockquote { border-left: 3px solid color-mix(in srgb, var(--accent) 55%, transparent); color: var(--muted); padding-left: 1rem; }
+.document-editor-canvas .tiptap ul,
+.document-editor-canvas .tiptap ol { padding-left: 1.5rem; }
+.document-editor-canvas .tiptap p[data-indent] { margin-left: calc(var(--document-indent, 0) * 1.5rem); }
+.document-editor-canvas .tiptap p.is-editor-empty:first-child::before { color: var(--muted); content: attr(data-placeholder); float: left; height: 0; pointer-events: none; }
+.document-editor-canvas .tiptap code { background: color-mix(in srgb, var(--ink) 8%, transparent); border-radius: 0.25rem; font-family: var(--document-font-mono); padding: 0.08em 0.28em; }
+.document-editor-canvas .tiptap pre { background: color-mix(in srgb, var(--ink) 6%, var(--surface)); border: 1px solid var(--line); border-radius: 0.75rem; overflow: auto; padding: 1rem; }
+.document-editor-canvas .tiptap pre code { background: transparent; padding: 0; }
 .document-equation-editor { border: 1px solid var(--line); border-radius: 0.7rem; background: color-mix(in srgb, var(--surface) 80%, transparent); padding: 0.75rem; }
 .document-equation-editor > input,
 .document-inline-attachment-editor > input { background: var(--surface); border: 1px solid var(--line); border-radius: 0.45rem; color: var(--ink); min-height: 2.4rem; padding: 0.55rem 0.65rem; width: 100%; }
@@ -156,10 +170,13 @@
 .document-equation-editor > label input { width: auto; }
 .document-inline-attachment-editor .post-attachments { margin: 0; max-width: 100%; }
 .document-inline-attachment-editor > input { margin-top: 0.45rem; }
-.document-list-editor textarea,
-.document-code-editor { background: transparent; border: 0; color: var(--ink); line-height: 1.65; min-height: 6rem; outline: none; padding: 0.35rem; resize: vertical; width: 100%; }
-.document-code-editor { font-family: var(--document-font-mono); }
-.document-list-editor > div { align-items: center; color: var(--muted); display: flex; gap: 0.35rem; font-size: 0.78rem; }
+.document-atomic-node { margin: 1rem 0 1.15rem; position: relative; transition: border-color 120ms ease, box-shadow 120ms ease; }
+.document-atomic-node.selected { border-color: color-mix(in srgb, var(--accent) 72%, var(--line)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent); }
+.document-atomic-delete { align-items: center; background: color-mix(in srgb, var(--surface) 92%, transparent); border: 1px solid var(--line); border-radius: 0.45rem; color: var(--ink); display: inline-flex; justify-content: center; min-height: 2rem; min-width: 2rem; opacity: 0; padding: 0.35rem; position: absolute; right: 0.45rem; top: 0.45rem; transition: opacity 120ms ease; z-index: 3; }
+.document-atomic-node:hover .document-atomic-delete,
+.document-atomic-node.selected .document-atomic-delete,
+.document-atomic-delete:focus-visible { opacity: 1; }
+.document-editor-canvas .ProseMirror-selectednode { outline: none; }
 .document-appended-attachments { border-top: 1px solid var(--line); padding: 0.75rem; }
 .document-appended-label { align-items: center; color: var(--ink); display: flex; gap: 0.45rem; margin-bottom: 0.5rem; }
 .document-appended-label small { color: var(--muted); margin-left: auto; }
@@ -176,7 +193,8 @@
 
 @media (max-width: 720px) {
   .document-editor-toolbar { position: static; }
-  .document-editor-canvas { padding-left: 2.2rem; }
+  .document-editor-canvas.document-margin-normal .tiptap { padding-inline: 1rem; }
+  .document-editor-canvas.document-margin-generous .tiptap { padding-inline: 1.55rem; }
   .document-appended-label { align-items: flex-start; flex-wrap: wrap; }
   .document-appended-label small { flex-basis: 100%; margin-left: 1.45rem; }
   .comment-card .symposium-document-comment { margin-left: 0; max-width: 100%; }

@@ -12,6 +12,10 @@ import {
   normalizeDocumentAttachments,
   plainTextDocument
 } from "../lib/documentModel";
+import {
+  symposiumDocumentToTiptap,
+  tiptapToSymposiumDocument
+} from "../features/content/SymposiumTiptapEditor";
 
 const attachment = (id: string, kind: InquiryAttachmentContract["kind"] = "image"): InquiryAttachmentContract => ({
   id,
@@ -36,6 +40,34 @@ const document: VersionedDocumentContract = {
 
 assert.equal(versionedDocumentSchema.parse(document).version, 1);
 assert.equal(documentPlainText(document), "Evidence before assertion.\n\nE = mc^2\n\nConclusion.");
+
+const formattedDocument: VersionedDocumentContract = {
+  version: 1,
+  settings: { width: "wide", margin: "generous" },
+  nodes: [
+    {
+      id: "formatted",
+      type: "paragraph",
+      content: [{ text: "A linked claim", marks: ["bold", "italic", "underline"], font: "serif", size: "large", color: "blue", link: "https://example.com/claim" }],
+      align: "center",
+      indent: 2
+    },
+    { id: "list", type: "list", style: "lower-alpha", depth: 1, items: [[{ text: "First" }], [{ text: "Second" }]] },
+    { id: "inline", type: "attachment", attachmentId: "inline-a", placement: "inline", caption: "Evidence" },
+    { id: "math", type: "equation", source: "\\int_0^1 x^2 dx", display: true, label: "Eq. 1" }
+  ]
+};
+
+assert.deepEqual(
+  tiptapToSymposiumDocument(symposiumDocumentToTiptap(formattedDocument), formattedDocument.settings),
+  formattedDocument,
+  "the continuous editor must round-trip canonical formatting, page settings, equations, and inline attachments"
+);
+
+const reducedProjection = tiptapToSymposiumDocument(symposiumDocumentToTiptap(formattedDocument), formattedDocument.settings, "reduced");
+assert.equal(reducedProjection.nodes.some((node) => node.type === "list" || node.type === "heading" || node.type === "code"), false);
+const reducedTextRuns = reducedProjection.nodes.flatMap((node) => node.type === "paragraph" || node.type === "quote" ? node.content : []);
+assert.equal(reducedTextRuns.some((run) => run.font || run.size || run.color || run.marks?.includes("code") || run.marks?.includes("strikethrough")), false);
 
 const legacyBody = "First paragraph.\nStill first.\n\nSecond paragraph.";
 assert.equal(documentPlainText(plainTextDocument(legacyBody)), legacyBody);
