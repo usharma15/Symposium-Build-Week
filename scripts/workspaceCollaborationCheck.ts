@@ -138,6 +138,7 @@ const main = async () => {
   assert.match(sharingDialog, /Direct and inherited access combine at the stronger level/);
   assert.match(sharingDialog, /Via \{inherited\.notebookName\}/);
   assert.match(sharingDialog, /isSelf \? "Leave" : "Remove"/);
+  assert.match(sharingDialog, /query\.trim\(\)\.length > 0 && searchedQuery === query\.trim\(\)/);
   assert.match(workspaceView, /WorkspaceSharingDialog/);
   assert.match(workspaceView, /Moving this draft can change inherited access/);
   assert.match(navigatorDocument, /Sharing and access/);

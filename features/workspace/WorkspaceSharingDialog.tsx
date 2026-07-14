@@ -174,7 +174,7 @@ export function WorkspaceSharingDialog({
               <UserPlus size={16} />Share
             </button>
             {selectedHandle ? <small className="workspace-sharing-role-help">{roleDescription[selectedRole]}</small> : null}
-            {!selectedHandle && (searching || searchedQuery === query.trim()) ? (
+            {!selectedHandle && (searching || (query.trim().length > 0 && searchedQuery === query.trim())) ? (
               <div className="workspace-sharing-results" role="listbox" aria-label="Participant results">
                 {searching ? <span>Searching…</span> : availableResults.map((person) => (
                   <button type="button" role="option" key={person.handle} onClick={() => choosePerson(person)}>
