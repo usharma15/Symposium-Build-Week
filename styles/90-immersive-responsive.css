@@ -127,7 +127,9 @@
     transform: translateX(-50%);
   }
 
-  .detail-layout.paper-detail {
+  .detail-layout.simple-detail,
+  .detail-layout.paper-detail,
+  .profile-page {
     grid-template-columns: minmax(0, 1fr);
     width: min(var(--symposium-feed-width), calc(100vw - 28px));
   }

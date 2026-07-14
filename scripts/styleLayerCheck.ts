@@ -70,11 +70,13 @@ const main = async () => {
     sources.get("80-immersive-overlays.css") ?? "",
     sources.get("88-workspace.css") ?? ""
   ].join("\n");
+  const responsiveStyles = sources.get("90-immersive-responsive.css") ?? "";
   assert.match(foundationStyles, /--symposium-feed-width:\s*840px/);
   assert.match(shellStyles, /\.symposium-shell[\s\S]*overflow-x:\s*clip/);
   assert.match(feedStyles, /\.feed-stream[\s\S]*max-width:\s*var\(--symposium-feed-width\)/);
   assert.match(feedStyles, /\.detail-layout\.simple-detail[\s\S]*var\(--symposium-feed-width\)/);
   assert.match(feedStyles, /\.workspace-main-column[\s\S]*var\(--symposium-feed-width\)/);
+  assert.match(responsiveStyles, /\.detail-layout\.simple-detail,[\s\S]*\.profile-page[\s\S]*width:\s*min\(var\(--symposium-feed-width\), calc\(100vw - 28px\)\)/);
   assert.match(documentStyles, /\.symposium-shell\.night[\s\S]*--document-surface-solid/);
   assert.match(documentStyles, /\.post-composer-modal,[\s\S]*padding-top:\s*0/);
   assert.match(documentStyles, /\.post-composer-modal \.document-editor-toolbar,[\s\S]*top:\s*0/);
