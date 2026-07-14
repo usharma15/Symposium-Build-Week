@@ -295,6 +295,61 @@ export const deleteLocalOwnerAttachments = async (ownerType: "post" | "comment" 
     return owned.length;
   });
 
+export const promoteLocalWorkspaceCommentAttachments = async (
+  sourceCommentId: string,
+  publicCommentId: string,
+  actorHandle?: string
+) => withStoreLock(async () => {
+  const store = await loadStore();
+  const owned = Object.values(store.attachments)
+    .filter(
+      (record) =>
+        record.ownerType === "note_comment" &&
+        record.ownerId === sourceCommentId &&
+        record.status === "uploaded" &&
+        (!record.actorHandle || record.actorHandle === actorHandle)
+    )
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  for (const record of owned) {
+    store.attachments[record.attachmentId] = {
+      ...record,
+      ownerType: "comment",
+      ownerId: publicCommentId,
+      updatedAt: new Date().toISOString()
+    };
+  }
+  if (owned.length) await saveStore(store);
+  return owned.map((record) => localRecordToAttachment(store.attachments[record.attachmentId]!));
+});
+
+export const promoteLocalWorkspaceDocumentAttachments = async (
+  sourceNoteId: string,
+  publicOwnerType: "post" | "comment",
+  publicOwnerId: string,
+  actorHandle?: string
+) => withStoreLock(async () => {
+  const store = await loadStore();
+  const owned = Object.values(store.attachments)
+    .filter(
+      (record) =>
+        record.ownerType === "note" &&
+        record.ownerId === sourceNoteId &&
+        record.status === "uploaded" &&
+        (!record.actorHandle || record.actorHandle === actorHandle)
+    )
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  for (const record of owned) {
+    store.attachments[record.attachmentId] = {
+      ...record,
+      ownerType: publicOwnerType,
+      ownerId: publicOwnerId,
+      updatedAt: new Date().toISOString()
+    };
+  }
+  if (owned.length) await saveStore(store);
+  return owned.map((record) => localRecordToAttachment(store.attachments[record.attachmentId]!));
+});
+
 export const resolveLocalPostAttachments = async (attachmentIds: string[], actorHandle?: string) => {
   const store = await loadStore();
   return attachmentIds.map((attachmentId): InquiryAttachment => {

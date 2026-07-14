@@ -1,14 +1,27 @@
 import { TRPCError } from "@trpc/server";
 import type { PoolClient } from "pg";
 import type {
+  InquiryCommentContract,
+  InquiryItemContract,
   WorkspaceAccessRoleContract,
   WorkspaceDocumentKindContract
 } from "../../../../packages/contracts/src";
+import {
+  appendCommentToTree,
+  findCommentInTree,
+  incrementMetric,
+  updateSignalValue
+} from "../../../../lib/symposiumCore";
 import { getPool } from "../db/client";
 import { mutationAuditMetadata, stageAuditLog } from "./audit";
 import { stageEvent } from "./events";
 import { claimMutation, completeMutation, type MutationContext } from "./mutations";
 import { runAtomic } from "./transactions";
+import { queueAttachmentsForOwnerStorageDeletion } from "./storageDeletion";
+import {
+  publishPreparedWorkspaceDiscussion,
+  type PreparedWorkspaceDiscussion
+} from "./workspaceDiscussionPublishing";
 
 export type PublishableWorkspaceRevision = {
   checkpointId: string;
@@ -76,7 +89,7 @@ export const loadPublishableWorkspaceRevision = async (
        ON direct.note_id = note.id AND direct.grantee_handle = $3
      LEFT JOIN workspace_notebook_grants inherited
        ON inherited.notebook_id = note.notebook_id AND inherited.grantee_handle = $3
-     WHERE note.id = $1 AND note.revision = $2 AND note.deleted_at IS NULL
+     WHERE note.id = $1 AND note.revision = $2 AND note.lifecycle = 'draft' AND note.deleted_at IS NULL
        AND (note.owner_handle = $3 OR direct.id IS NOT NULL OR inherited.id IS NOT NULL)`,
     [noteId, expectedRevision, publisher]
   );
@@ -165,18 +178,75 @@ export const assertWorkspaceRevisionNotPublished = async (
   }
 };
 
-export const persistWorkspacePublication = async <T extends { item: { id: string }; comment?: { id?: string } }>(
+export const persistWorkspacePublication = async <T extends { item: InquiryItemContract; comment?: InquiryCommentContract }>(
   revision: PublishableWorkspaceRevision,
   publisher: string,
   target: "paper" | "thought" | "comment" | "reply",
   result: T,
+  discussion: PreparedWorkspaceDiscussion,
   mutation?: MutationContext
 ) => runAtomic(async (client) => {
   const claim = await claimMutation<Record<string, unknown>>(client, publisher, mutation);
   if (claim.replayed) return { value: claim.response };
+  const publishedDiscussion = await publishPreparedWorkspaceDiscussion(client, {
+    discussion,
+    postId: result.item.id,
+    rootParentId: result.comment?.id ?? null
+  });
+  let publishedItem = result.item;
+  if (publishedDiscussion.totalCount) {
+    const critiques = incrementMetric(result.item.metrics.critiques, publishedDiscussion.activeCount);
+    const signals = updateSignalValue(result.item.signals, "Critiques", critiques);
+    let comments = result.item.comments;
+    for (const comment of publishedDiscussion.comments) {
+      const appended = appendCommentToTree(comments, comment);
+      if (!appended.inserted) throw new Error("The published draft discussion could not be attached to its public destination.");
+      comments = appended.comments;
+    }
+    const postRevision = await client.query<{ revision: number }>(
+      `UPDATE posts
+       SET metrics = $2, signals = $3, revision = revision + 1, updated_at = now()
+       WHERE id = $1
+       RETURNING revision`,
+      [result.item.id, JSON.stringify({ ...result.item.metrics, critiques }), JSON.stringify(signals)]
+    );
+    if (!postRevision.rows[0]) throw new TRPCError({ code: "NOT_FOUND", message: "Published post not found." });
+    publishedItem = {
+      ...result.item,
+      comments,
+      metrics: { ...result.item.metrics, critiques },
+      signals,
+      revision: postRevision.rows[0].revision
+    };
+  }
+  const publishedComment = result.comment?.id
+    ? findCommentInTree(publishedItem.comments, result.comment.id) ?? result.comment
+    : result.comment;
+  const publishedResult = {
+    ...result,
+    item: publishedItem,
+    ...(publishedComment ? { comment: publishedComment } : {})
+  };
+  const sourceAttachmentIds = [
+    ...await queueAttachmentsForOwnerStorageDeletion(
+      client,
+      "note",
+      revision.noteId,
+      "workspace_note_published"
+    ),
+    ...await queueAttachmentsForOwnerStorageDeletion(
+      client,
+      "note_comment",
+      discussion.comments.map((comment) => comment.id),
+      "workspace_discussion_published"
+    )
+  ];
   const changed = await client.query(
-    `UPDATE notes SET lifecycle = 'published', published_at = now(), published_post_id = $3, updated_at = now()
-     WHERE id = $1 AND revision = $2 AND deleted_at IS NULL RETURNING id`,
+    `UPDATE notes
+     SET lifecycle = 'published', published_at = now(), published_post_id = $3,
+         deleted_at = now(), updated_at = now()
+     WHERE id = $1 AND revision = $2 AND lifecycle = 'draft' AND deleted_at IS NULL
+     RETURNING id`,
     [revision.noteId, revision.revision, result.item.id]
   );
   if (!changed.rowCount) throw new TRPCError({ code: "CONFLICT", message: "The draft changed before publication completed." });
@@ -196,11 +266,11 @@ export const persistWorkspacePublication = async <T extends { item: { id: string
   );
   await client.query(
     `UPDATE workspace_note_comments SET archived_at = COALESCE(archived_at, now())
-     WHERE note_id = $1 AND deleted_at IS NULL`,
+     WHERE note_id = $1`,
     [revision.noteId]
   );
   const value = {
-    ...result,
+    ...publishedResult,
     publication: {
       noteId: revision.noteId,
       revision: revision.revision,
@@ -220,7 +290,8 @@ export const persistWorkspacePublication = async <T extends { item: { id: string
       noteId: revision.noteId,
       noteRevision: revision.revision,
       checkpointId: revision.checkpointId,
-      target
+      target,
+      sourceAttachmentCount: sourceAttachmentIds.length
     })
   });
   await completeMutation(client, publisher, mutation, value);
@@ -242,5 +313,13 @@ export const persistWorkspacePublication = async <T extends { item: { id: string
     visibility: "private",
     payload: { noteId: revision.noteId, revision: revision.revision, target, postId: result.item.id }
   });
-  return { value, events: [event] };
+  const publicEvent = await stageEvent(client, {
+    kind: "post.updated",
+    actorHandle: publisher,
+    subjectType: "post",
+    subjectId: result.item.id,
+    visibility: "public",
+    payload: { itemId: result.item.id, source: "workspace-publication" }
+  });
+  return { value, events: [event, publicEvent] };
 });

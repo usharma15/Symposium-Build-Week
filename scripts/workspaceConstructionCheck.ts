@@ -170,6 +170,7 @@ const main = async () => {
     repository,
     publishing,
     publicationState,
+    discussionPublishing,
     attachmentRepository,
     attachmentOwnership,
     workspaceHook,
@@ -186,12 +187,15 @@ const main = async () => {
     workspaceComments,
     workspaceCommentsHook,
     commentThread,
-    attachmentAccessRoute
+    attachmentAccessRoute,
+    localPublicationRoute,
+    localAttachmentStore
   ] = await Promise.all([
     readFile(path.join(root, "apps/api/src/db/migrate.ts"), "utf8"),
     readFile(path.join(root, "apps/api/src/repository/workspaceDocuments.ts"), "utf8"),
     readFile(path.join(root, "apps/api/src/services/notePublishing.ts"), "utf8"),
     readFile(path.join(root, "apps/api/src/services/workspacePublicationState.ts"), "utf8"),
+    readFile(path.join(root, "apps/api/src/services/workspaceDiscussionPublishing.ts"), "utf8"),
     readFile(path.join(root, "apps/api/src/repository/attachments.ts"), "utf8"),
     readFile(path.join(root, "apps/api/src/services/attachmentOwnership.ts"), "utf8"),
     readFile(path.join(root, "features/workspace/useWorkspaceDocuments.ts"), "utf8"),
@@ -208,7 +212,9 @@ const main = async () => {
     readFile(path.join(root, "apps/api/src/repository/workspaceComments.ts"), "utf8"),
     readFile(path.join(root, "features/workspace/useWorkspaceComments.ts"), "utf8"),
     readFile(path.join(root, "features/comments/CommentThread.tsx"), "utf8"),
-    readFile(path.join(root, "app/api/workspace/attachments/[attachmentId]/route.ts"), "utf8")
+    readFile(path.join(root, "app/api/workspace/attachments/[attachmentId]/route.ts"), "utf8"),
+    readFile(path.join(root, "app/api/workspace/documents/[noteId]/publish/route.ts"), "utf8"),
+    readFile(path.join(root, "lib/localAttachmentStore.ts"), "utf8")
   ]);
 
   assert.match(migration, /0020_workspace_documents/);
@@ -221,6 +227,8 @@ const main = async () => {
   assert.match(migration, /workspace_note_comment_actions/);
   assert.match(migration, /note_comment/);
   assert.match(migration, /note_publications_revision_unique_idx/);
+  assert.match(migration, /0023_workspace_publication_promotion/);
+  assert.match(migration, /WHERE lifecycle = 'published' AND deleted_at IS NULL/);
   assert.match(repository, /note\.owner_handle = \$2 OR direct\.id IS NOT NULL OR inherited\.id IS NOT NULL/);
   assert.match(repository, /reason: input\.checkpoint \? "checkpoint" : "autosave"/);
   assert.match(repository, /note\.content_document::text ILIKE/);
@@ -228,8 +236,22 @@ const main = async () => {
   assert.match(repository, /pg_advisory_xact_lock\(hashtextextended\('symposium:workspace-note:'/);
   assert.match(publicationState, /revision_row\.revision = \$2/);
   assert.match(publicationState, /pg_advisory_lock\(hashtextextended\('symposium:workspace-note:'/);
+  assert.match(publicationState, /deleted_at = now\(\)/);
+  assert.match(publicationState, /publishPreparedWorkspaceDiscussion/);
+  assert.match(publicationState, /workspace_note_published/);
   assert.match(publishing, /authorHandle: revision\.ownerHandle/);
   assert.match(publishing, /prepareWorkspacePublicationAttachments/);
+  assert.match(publishing, /prepareWorkspaceDiscussionPublication/);
+  assert.match(discussionPublishing, /FROM workspace_note_comments/);
+  assert.match(discussionPublishing, /sourceOwnerType: "note_comment"/);
+  assert.match(discussionPublishing, /INSERT INTO comments/);
+  assert.match(discussionPublishing, /INSERT INTO comment_actions/);
+  assert.match(discussionPublishing, /SELECT 'comment', \$2, actor_handle, bucket_start/);
+  assert.match(localPublicationRoute, /promoteLocalWorkspaceDocumentAttachments/);
+  assert.match(localPublicationRoute, /updatePost/);
+  assert.match(localPublicationRoute, /updateComment/);
+  assert.doesNotMatch(localPublicationRoute, /Private draft attachments remain protected/);
+  assert.match(localAttachmentStore, /ownerType: publicOwnerType/);
   assert.match(attachmentRepository, /input\.ownerType === "note" \|\| input\.ownerType === "note_comment" \? null : publicObjectUrl/);
   assert.match(attachmentOwnership, /row\.ownerId === null && row\.uploaderHandle !== input\.uploaderHandle/);
   assert.match(workspaceHook, /symposium-workspace-sync-v1/);
@@ -314,10 +336,11 @@ const main = async () => {
       "private workspace root and collaboration-ready grants",
       "immutable draft revision checkpoints",
       "permission-safe workspace search projections",
-      "exact-revision publication",
+      "exact-revision promotion out of the workspace",
+      "draft discussion, action, view, and attachment promotion",
       "save/publish serialization and single-publication revisions",
       "owner-preserving collaborator publication",
-      "protected private draft attachment delivery",
+      "protected private draft attachment delivery and public promotion parity",
       "private access-gated draft comments and replies",
       "revision-guarded draft comment edits and tombstones",
       "private comment likes, saves, and deduplicated views without reshares or quotes",

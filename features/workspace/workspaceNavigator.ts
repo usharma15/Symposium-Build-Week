@@ -8,8 +8,9 @@ export const workspaceDocumentsInNotebook = (documents: WorkspaceDocument[], not
   sortWorkspaceDocuments(documents.filter((document) => document.notebookId === notebookId));
 
 export const normalizeWorkspaceSnapshot = (snapshot: WorkspaceSnapshot): WorkspaceSnapshot => {
+  const documents = snapshot.documents.filter((document) => document.lifecycle === "draft");
   const documentCounts = new Map<string, number>();
-  for (const document of snapshot.documents) {
+  for (const document of documents) {
     if (document.notebookId) {
       documentCounts.set(document.notebookId, (documentCounts.get(document.notebookId) ?? 0) + 1);
     }
@@ -19,7 +20,7 @@ export const normalizeWorkspaceSnapshot = (snapshot: WorkspaceSnapshot): Workspa
     notebooks: snapshot.notebooks
       .map((notebook) => ({ ...notebook, documentCount: documentCounts.get(notebook.id) ?? 0 }))
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
-    documents: sortWorkspaceDocuments(snapshot.documents)
+    documents: sortWorkspaceDocuments(documents)
   };
 };
 

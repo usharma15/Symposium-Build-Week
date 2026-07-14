@@ -1446,6 +1446,15 @@ const migrations: Migration[] = [
       ALTER TABLE workspace_note_grants DROP CONSTRAINT IF EXISTS workspace_note_grants_revision_check;
       ALTER TABLE workspace_note_grants ADD CONSTRAINT workspace_note_grants_revision_check CHECK (revision >= 1);
     `
+  },
+  {
+    id: "0023_workspace_publication_promotion",
+    sql: `
+      UPDATE notes
+      SET deleted_at = COALESCE(deleted_at, published_at, updated_at, now()),
+          updated_at = now()
+      WHERE lifecycle = 'published' AND deleted_at IS NULL;
+    `
   }
 ];
 

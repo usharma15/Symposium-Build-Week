@@ -6,13 +6,15 @@ export type CanonicalRoute =
   | { kind: "opportunities" }
   | { kind: "messages"; conversationId?: string }
   | { kind: "post"; postId: string; commentId?: string }
-  | { kind: "profile"; handle: string; social?: ProfileSocialView }
+  | { kind: "profile"; handle: string; social?: ProfileSocialView; tab?: ProfileTab }
   | { kind: "communities" }
   | { kind: "community"; communityId: string };
 
 export const canonicalRoomIds = ["symposium", "library", "amphitheater"] as const;
 export type CanonicalRoomId = (typeof canonicalRoomIds)[number];
 export type ProfileSocialView = "followers" | "following";
+export const canonicalProfileTabs = ["all", "papers", "thoughts", "comments", "reshares", "likes", "saved"] as const;
+export type ProfileTab = (typeof canonicalProfileTabs)[number];
 
 export const canonicalRouteForRoom = (roomId: string): CanonicalRoute => {
   if (roomId === "hall") return { kind: "hall" };
@@ -58,7 +60,8 @@ export const canonicalRouteHref = (route: CanonicalRoute) => {
   }
   if (route.kind === "profile") {
     const base = `/profiles/${encoded(route.handle.replace(/^@/, ""))}`;
-    return route.social ? `${base}/${route.social}` : base;
+    if (route.social) return `${base}/${route.social}`;
+    return route.tab && route.tab !== "all" ? `${base}/${route.tab}` : base;
   }
   if (route.kind === "communities") return "/communities";
   if (route.kind === "community") return `/communities/${encoded(route.communityId)}`;
@@ -97,8 +100,10 @@ export const parseCanonicalRoute = (pathname: string, search = ""): CanonicalRou
   }
   if (segments[0] === "profiles" && segments[1]) {
     const social = segments[2] === "followers" || segments[2] === "following" ? segments[2] : undefined;
+    const tab = canonicalProfileTabs.includes(segments[2] as ProfileTab) ? segments[2] as ProfileTab : undefined;
     const handle = `@${segments[1].replace(/^@/, "")}`;
-    return social ? { kind: "profile", handle, social } : { kind: "profile", handle };
+    if (social) return { kind: "profile", handle, social };
+    return tab && tab !== "all" ? { kind: "profile", handle, tab } : { kind: "profile", handle };
   }
   if (segments[0] === "communities" && segments[1]) {
     return { kind: "community", communityId: segments[1] };

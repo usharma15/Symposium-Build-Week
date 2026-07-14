@@ -12,6 +12,7 @@ import { createPost } from "../repository/posts";
 import type { Actor } from "./auth";
 import type { MutationContext } from "./mutations";
 import { prepareWorkspacePublicationAttachments } from "./workspaceAttachmentPublishing";
+import { prepareWorkspaceDiscussionPublication } from "./workspaceDiscussionPublishing";
 import {
   assertWorkspaceRevisionNotPublished,
   loadPublishableWorkspaceRevision,
@@ -68,6 +69,11 @@ export const publishNote = async (rawInput: unknown, actor: Actor, mutation?: Mu
     await assertWorkspaceRevisionNotPublished(client, revision);
     const target = publicationTarget(revision, input);
     const document = versionedDocumentSchema.parse(revision.document);
+    const discussion = await prepareWorkspaceDiscussionPublication(client, {
+      noteId: revision.noteId,
+      revision: revision.revision,
+      ownerHandle: revision.ownerHandle
+    });
     if (target !== "paper" && !documentFitsReducedEditor(document)) {
       throw new TRPCError({
         code: "BAD_REQUEST",
@@ -98,7 +104,7 @@ export const publishNote = async (rawInput: unknown, actor: Actor, mutation?: Mu
         ownerActor,
         mutation ? { ...mutation, scope: "note.publish.post" } : undefined
       );
-      return persistWorkspacePublication(revision, publisher, target, { item }, mutation);
+      return persistWorkspacePublication(revision, publisher, target, { item }, discussion, mutation);
     }
 
     const targetId = revision.targetId?.trim();
@@ -133,6 +139,6 @@ export const publishNote = async (rawInput: unknown, actor: Actor, mutation?: Mu
       ownerActor,
       mutation ? { ...mutation, scope: "note.publish.comment" } : undefined
     );
-    return persistWorkspacePublication(revision, publisher, target, commentResult, mutation);
+    return persistWorkspacePublication(revision, publisher, target, commentResult, discussion, mutation);
   });
 };

@@ -89,6 +89,16 @@ const loadStore = async () => {
     for (const workspace of Object.values(workspaces)) {
       workspace.notebookGrants ??= {};
       workspace.documentGrants ??= {};
+      const publishedIds = workspace.documents
+        .filter((document) => document.lifecycle === "published")
+        .map((document) => document.id);
+      if (publishedIds.length) {
+        workspace.documents = workspace.documents.filter((document) => document.lifecycle !== "published");
+        for (const noteId of publishedIds) {
+          delete workspace.revisions[noteId];
+          delete workspace.documentGrants[noteId];
+        }
+      }
     }
     return { version: 1, workspaces } satisfies LocalWorkspaceStore;
   } catch (error) {
@@ -530,10 +540,14 @@ export const markLocalWorkspacePublished = async (
   const { workspace, index, document } = located;
   assertLocalDocumentAccess(workspace, document, handle, "publish");
   if (!document || document.revision !== revision) throw new LocalWorkspaceStoreError("The draft changed before publication completed.", 409);
-  const now = new Date().toISOString();
-  workspace.documents[index] = { ...document, lifecycle: "published", publishedAt: now, publishedPostId: postId, updatedAt: now };
+  workspace.documents.splice(index, 1);
+  delete workspace.revisions[noteId];
+  delete workspace.documentGrants[noteId];
   await saveStore(store);
-  return workspace.documents[index]!;
+  await deleteLocalOwnerAttachments("note", noteId);
+  const { deleteLocalWorkspaceCommentsForDocument } = await import("@/lib/localWorkspaceCommentStore");
+  await deleteLocalWorkspaceCommentsForDocument(noteId);
+  return { noteId, postId };
 });
 
 type LocalAccessResource = {

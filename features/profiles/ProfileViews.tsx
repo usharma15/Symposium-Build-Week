@@ -50,13 +50,13 @@ import { profileForHandle, profileInitials } from "@/features/identity/profilePr
 import { FeedPost } from "@/features/posts/PostViews";
 import { useQualifiedView } from "@/features/live-sync/useQualifiedView";
 import { CanonicalLink } from "@/features/navigation/CanonicalLink";
-import type { ProfileSocialView } from "@/features/navigation/canonicalRoute";
+import type { ProfileSocialView, ProfileTab } from "@/features/navigation/canonicalRoute";
 import {
   ContentQuoteCard,
   type QuoteActionHandler
 } from "@/features/quotes/QuoteViews";
 
-export type ProfileTab = "all" | "papers" | "thoughts" | "comments" | "reshares" | "likes" | "saved";
+export type { ProfileTab } from "@/features/navigation/canonicalRoute";
 export type ProfileActivityKind = "authored" | "comments" | "fork" | "signal" | "save";
 export type ProfileCommentActivityKind = Exclude<ProfileActivityKind, "authored">;
 export type ProfileSocialLists = { following: string[]; followers: string[] };
@@ -484,15 +484,15 @@ export function ProfileView({
           </div>
           <div className="profile-metrics" aria-label={`${person.name} activity totals`}>
             {tabs.map((tab) => (
-              <button
+              <CanonicalLink
                 key={tab.id}
-                type="button"
+                route={{ kind: "profile", handle: person.handle, tab: tab.id }}
                 className={activeTab === tab.id ? "active" : ""}
-                onClick={() => onActiveTabChange(tab.id)}
+                onNavigate={() => onActiveTabChange(tab.id)}
               >
                 <strong>{tabCounts[tab.id]}</strong>
                 <span>{tab.label}</span>
-              </button>
+              </CanonicalLink>
             ))}
           </div>
         </div>

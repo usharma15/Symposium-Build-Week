@@ -45,6 +45,16 @@ assert.deepEqual(parseCanonicalRoute("/posts/post%2Fone", "?comment=comment%20on
 assert.equal(canonicalRouteHref({ kind: "profile", handle: "@ada" }), "/profiles/ada");
 assert.deepEqual(parseCanonicalRoute("/profiles/ada"), { kind: "profile", handle: "@ada" });
 assert.equal(
+  canonicalRouteHref({ kind: "profile", handle: "@ada", tab: "papers" }),
+  "/profiles/ada/papers"
+);
+assert.deepEqual(parseCanonicalRoute("/profiles/ada/saved"), {
+  kind: "profile",
+  handle: "@ada",
+  tab: "saved"
+});
+assert.equal(canonicalRouteHref({ kind: "profile", handle: "@ada", tab: "all" }), "/profiles/ada");
+assert.equal(
   canonicalRouteHref({ kind: "profile", handle: "@ada", social: "followers" }),
   "/profiles/ada/followers"
 );
@@ -70,7 +80,7 @@ console.log(
         "workspace draft-comment deep links and funding views",
         "opportunities and messages",
         "post and comment round-trip",
-        "profile and social-graph routes",
+        "profile filter and social-graph routes",
         "community routes",
         "safe fallback"
       ]

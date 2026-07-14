@@ -421,7 +421,7 @@ function SymposiumExperience({
   const [profileSocialView, setProfileSocialView] = useState<ProfileSocialView | null>(
     initialRoute.kind === "profile" ? initialRoute.social ?? null : null
   );
-  const [profileActiveTabs, setProfileActiveTabs] = useState<Record<string, ProfileTab>>({});
+  const [profileActiveTab, setProfileActiveTab] = useState<ProfileTab>(initialRoute.kind === "profile" ? initialRoute.tab ?? "all" : "all");
   const [profileActivityRevision, setProfileActivityRevision] = useState(0);
   const [profileActivityByHandle, setProfileActivityByHandle] = useState<
     Record<string, ProfileActivitySnapshot>
@@ -1277,6 +1277,7 @@ function SymposiumExperience({
     setSelectedCommentId(snapshot.selectedCommentId);
     setSelectedProfileName(snapshot.selectedProfileName);
     setProfileSocialView(snapshot.profileSocialView);
+    setProfileActiveTab(snapshot.profileTab);
     setOfficeMode(snapshot.officeMode);
     setPatronageMode(snapshot.patronageMode);
     setSelectedCommunityId(snapshot.selectedCommunityId);
@@ -1793,6 +1794,7 @@ function SymposiumExperience({
       selectedCommentId,
       selectedProfileName,
       profileSocialView,
+      profileTab: selectedProfileName ? profileActiveTab : "all",
       officeMode,
       patronageMode,
       selectedCommunityId,
@@ -1836,6 +1838,7 @@ function SymposiumExperience({
     setSelectedCommentId(snapshot.selectedCommentId);
     setSelectedProfileName(snapshot.selectedProfileName);
     setProfileSocialView(snapshot.profileSocialView ?? null);
+    setProfileActiveTab(snapshot.profileTab);
     setOfficeMode(snapshot.officeMode);
     setPatronageMode(snapshot.patronageMode);
     setSelectedCommunityId(snapshot.selectedCommunityId);
@@ -1902,6 +1905,7 @@ function SymposiumExperience({
     if (next.selectedCommentId !== undefined) setSelectedCommentId(next.selectedCommentId);
     if (next.selectedProfileName !== undefined) setSelectedProfileName(next.selectedProfileName);
     if (next.profileSocialView !== undefined) setProfileSocialView(next.profileSocialView);
+    if (next.profileTab !== undefined) setProfileActiveTab(next.profileTab);
     if (next.selectedItemId !== undefined && next.selectedItemId !== selectedItemId) {
       commentSegmentStacksRef.current = {};
       visibleCommentSegmentStacksRef.current = {};
@@ -1980,12 +1984,7 @@ function SymposiumExperience({
 
   const openProfile = (profileKey: string) => {
     flushPendingActivityRecency();
-    navigateView({
-      selectedProfileName: profileKey,
-      profileSocialView: null,
-      selectedItemId: null,
-      selectedCommentId: null
-    });
+    navigateView({ selectedProfileName: profileKey, profileSocialView: null, profileTab: "all", selectedItemId: null, selectedCommentId: null });
   };
 
   const changeProfileSocialView = (view: ProfileSocialView | null) => {
@@ -1993,11 +1992,11 @@ function SymposiumExperience({
     navigateView({ profileSocialView: view }, null);
   };
 
-  const changeProfileTab = (handle: string, tab: ProfileTab) => {
+  const changeProfileTab = (tab: ProfileTab) => {
+    if (profileActiveTab === tab && !profileSocialView) return;
     flushPendingActivityRecency();
-    setProfileActiveTabs((current) => ({ ...current, [handle]: tab }));
+    navigateView({ profileSocialView: null, profileTab: tab }, null);
   };
-
   const openTablet = () => {
     setComposerOpen(false);
     setSettingsOpen(false);
@@ -3063,7 +3062,7 @@ function SymposiumExperience({
 
   const acceptWorkspacePublication = (result: WorkspacePublicationResponse) => {
     mergeLiveItem(result.item);
-    setSyncStatus("Draft published; private history retained");
+    setSyncStatus("Published and moved out of the workspace");
     openPost(result.item.id, result.comment?.id ?? null, result.comment ? "thread" : "detail");
   };
 
@@ -3230,11 +3229,11 @@ function SymposiumExperience({
             socialView={profileSocialView}
             getProfileRecency={getProfileRecency}
             getProfileCommentRecency={getProfileCommentRecency}
-            activeTab={profileActiveTabs[selectedProfile.handle] ?? "all"}
+            activeTab={profileActiveTab}
             activityRevision={profileActivityRevision}
             canonicalActivities={profileActivityByHandle[selectedProfile.handle]?.entries ?? []}
             canonicalActivityLoaded={profileActivityByHandle[selectedProfile.handle]?.loaded ?? false}
-            onActiveTabChange={(tab) => changeProfileTab(selectedProfile.handle, tab)}
+            onActiveTabChange={changeProfileTab}
             onSocialViewChange={changeProfileSocialView}
             onEditPost={setEditingPost}
             onDeletePost={deletePost}

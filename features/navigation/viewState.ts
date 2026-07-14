@@ -1,5 +1,5 @@
 import type { RoomId } from "@/lib/mockData";
-import type { CanonicalRoute, ProfileSocialView } from "@/features/navigation/canonicalRoute";
+import type { CanonicalRoute, ProfileSocialView, ProfileTab } from "@/features/navigation/canonicalRoute";
 
 export type OfficeMode = "desk" | "saved" | "notes";
 export type PatronageMode = "lobby" | "civic" | "private";
@@ -10,6 +10,7 @@ export type ViewSnapshot = {
   selectedCommentId: string | null;
   selectedProfileName: string | null;
   profileSocialView: ProfileSocialView | null;
+  profileTab: ProfileTab;
   officeMode: OfficeMode;
   patronageMode: PatronageMode;
   selectedCommunityId: string | null;
@@ -56,7 +57,8 @@ export const canonicalRouteForView = (
     return {
       kind: "profile",
       handle: resolveProfileHandle(snapshot.selectedProfileName),
-      social: snapshot.profileSocialView ?? undefined
+      social: snapshot.profileSocialView ?? undefined,
+      tab: snapshot.profileSocialView ? undefined : snapshot.profileTab
     };
   }
   if (snapshot.selectedCommunityId) {
@@ -86,6 +88,7 @@ export const snapshotForCanonicalRoute = (route: CanonicalRoute): ViewSnapshot =
   selectedCommentId: route.kind === "post" ? route.commentId ?? null : null,
   selectedProfileName: route.kind === "profile" ? route.handle : null,
   profileSocialView: route.kind === "profile" ? route.social ?? null : null,
+  profileTab: route.kind === "profile" ? route.tab ?? "all" : "all",
   officeMode: officeModeForCanonicalRoute(route),
   patronageMode: patronageModeForCanonicalRoute(route),
   selectedCommunityId: route.kind === "community" ? route.communityId : null,

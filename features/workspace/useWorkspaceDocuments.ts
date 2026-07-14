@@ -254,7 +254,7 @@ export const useWorkspaceDocuments = (actorHandle: string) => {
     );
     await refresh({ quiet: true });
     announceChange();
-    setStatus("Draft published; private history retained");
+    setStatus("Published and moved out of the workspace");
     return result;
   }, [actorHandle, announceChange, refresh]);
 

@@ -169,7 +169,7 @@ The current guarantees are:
 - Bootstrap reads profiles, posts, comments, attachments, communities, and action ledgers from one repeatable-read snapshot, so a refresh cannot mix rows from different mutation moments.
 - Follow, membership, call, notification, message, note, opportunity, assistant, and upload-prepare writes use atomic transactions and no-op-aware state transitions.
 - Direct-message creation uses a transaction-scoped advisory lock so simultaneous first messages cannot produce duplicate direct conversations.
-- Note publishing is a recoverable two-stage idempotent operation: a retry reuses the same post and then completes the publication record.
+- Note publishing is a recoverable two-stage idempotent promotion: a retry reuses the same post, moves the draft discussion and its public attachment copies into the destination, soft-removes the source from workspace projections, and then completes the publication record.
 - Workspace, note, block, AI-conversation, message-conversation, notification, private-community, Office, and draft access is checked server-side against the authenticated actor. Unknown and foreign resources deliberately collapse to `404` where existence should not be disclosed.
 - Public bootstrap/search/profile/community projections remove email addresses, private save membership, privacy-disabled action membership, private-community member lists, and Office/draft content. Public live events contain only refresh-safe identifiers; personalized payloads use explicit event audiences.
 - Event cursors are strictly parsed, event delivery is audience-filtered in both durable polling and local streaming, slow SSE clients are dropped, and both SSE and Socket.IO connections have process/client/room/buffer bounds.

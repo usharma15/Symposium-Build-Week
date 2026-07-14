@@ -59,6 +59,7 @@ The application will progressively replace its private history stack with URLs t
 - `/posts/[postId]`
 - `/posts/[postId]?comment=[commentId]`
 - `/profiles/[handle]`
+- `/profiles/[handle]/[activity-filter]`
 - `/profiles/[handle]/followers`
 - `/profiles/[handle]/following`
 - `/communities/[slug]`
@@ -69,7 +70,7 @@ The application will progressively replace its private history stack with URLs t
 
 The existing in-world navigation remains the visual shell. URL routing becomes its state authority rather than a competing navigation system.
 
-Canonical routing is live for public rooms, workspace modes, funding modes, opportunities, messages and selected conversations, the community directory, selected communities, profiles and social graphs, posts, and selected comments. Resource navigation uses semantic anchors with a client-navigation adapter: ordinary clicks retain the synchronized shell, while modified clicks, middle-click, copying, and new tabs retain native browser behavior. Direct-entry application Back falls back to the Main Hall without manufacturing a history loop.
+Canonical routing is live for public rooms, workspace modes, funding modes, opportunities, messages and selected conversations, the community directory, selected communities, profiles, profile activity filters and social graphs, posts, and selected comments. Resource navigation uses semantic anchors with a client-navigation adapter: ordinary clicks retain the synchronized shell, while modified clicks, middle-click, copying, and new tabs retain native browser behavior. Direct-entry application Back falls back to the Main Hall without manufacturing a history loop.
 
 ## Shared content model
 
@@ -87,7 +88,7 @@ Posts, comments, notes, drafts, and messages receive capability policies over th
 
 Notes are a private workspace-document family, not a second post store. Generic Notes and Paper drafts use the full shared editor; Thought, Comment, and Reply drafts use the reduced capability policy; Quick Notes have a reserved filing surface but are not yet creatable. `All` is a virtual last-edited projection, while a document may be filed in zero or one durable notebook.
 
-Every create, autosave, explicit Save Draft, and notebook-removal move advances the document revision and stores an immutable `workspace_note_revisions` checkpoint. Publish always resolves the exact open revision, serializes against saves and notebook moves with a document-scoped advisory lock, and records a unique note/revision publication before the private draft history is retained. A collaborator with publish rights publishes under the immutable document owner's authorship; the publisher remains separately audited.
+Every create, autosave, explicit Save Draft, and notebook-removal move advances the document revision and stores an immutable `workspace_note_revisions` checkpoint. Publish always resolves the exact open revision, serializes against saves and notebook moves with a document-scoped advisory lock, and records a unique note/revision publication. A successful publication promotes the draft out of every workspace projection, transfers its discussion tree into the public post or published comment, and retains only the internal publication, revision, and audit linkage required for idempotency and recovery. A collaborator with publish rights publishes under the immutable document owner's authorship; the publisher remains separately audited.
 
 The workspace root is always private. Notebook and document grants define cumulative viewer, commenter, editor, and publisher roles, with notebook access inherited by current and future filed documents. Generic Notes and Papers are collaboration-capable; Thoughts, Comments, and Replies remain owner-editable and owner-publishable. The sharing-and-collaboration manager exposes the same authoritative grants in note cards, note details, notebook rows, and navigation menus; it enforces delegated role ceilings, exact grant revisions, direct-plus-inherited precedence, grantor/owner revocation, self-leave, audit events, notifications, local fallback, and live/cross-tab convergence. Draft discussion uses the same effective-access projection and intentionally omits public quote and reshare actions.
 
@@ -95,7 +96,7 @@ The workspace root is always private. Notebook and document grants define cumula
 
 Attachments remain independent staged resources. Binding them to posts, comments, notes, drafts, or messages is an atomic owner transition performed inside the owning domain mutation. Editing uses a declared retained/added/removed set so detached objects can be expired safely.
 
-Post, comment, reply, and workspace-document attachments use the shared owner-neutral claim service. Edits submit the complete desired attachment identity set under a content-version precondition; retained objects stay ordered even when an authorised collaborator did not upload them, new staged objects are claimed in the owning transaction, and removed objects become unavailable and enter the durable deletion queue before commit. Workspace attachments use permission-checked same-origin delivery and short-lived signed object URLs. Publishing an exact workspace revision creates deterministic public copies, rewrites inline attachment references to the public identities, preserves the private source objects, and durably queues failed copies for deletion. Private message attachment delivery remains intentionally fail-closed.
+Post, comment, reply, and workspace-document attachments use the shared owner-neutral claim service. Edits submit the complete desired attachment identity set under a content-version precondition; retained objects stay ordered even when an authorised collaborator did not upload them, new staged objects are claimed in the owning transaction, and removed objects become unavailable and enter the durable deletion queue before commit. Workspace attachments use permission-checked same-origin delivery and short-lived signed object URLs. Publishing an exact workspace revision creates deterministic public copies for the document and its discussion, rewrites inline attachment references to the public identities, then durably queues the private source objects for deletion after the public owners are committed. Private message attachment delivery remains intentionally fail-closed.
 
 Posts and comments also share one quote-reference contract. Either owner type can quote either public source type through the direct quote action or by attaching a canonical Symposium link while drafting; the destination stores an exact-word, formatting-preserving, non-recursive source snapshot inside its own transaction, edits use the same content-version precondition, and source deletion strips the snapshot while preserving only safe canonical identity for an unavailable-state card.
 

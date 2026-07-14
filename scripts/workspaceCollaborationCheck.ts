@@ -150,7 +150,8 @@ const main = async () => {
   assert.match(publication, /uploaderHandle: revision\.ownerHandle/);
   assert.match(publication, /attachmentIds: publishedContent\.attachmentIds/);
   assert.doesNotMatch(publication, /Publishing their public copies will be activated/);
-  assert.match(attachmentPublishing, /owner_type = 'note'/);
+  assert.match(attachmentPublishing, /type PrivateOwnerType = "note" \| "note_comment"/);
+  assert.match(attachmentPublishing, /WHERE owner_type = \$1/);
   assert.match(attachmentPublishing, /workspace-publications/);
   assert.match(attachmentPublishing, /workspacePublication/);
   assert.match(attachmentPublishing, /promoteUploadedObject/);

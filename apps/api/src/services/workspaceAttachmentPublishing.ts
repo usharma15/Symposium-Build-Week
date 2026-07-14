@@ -7,6 +7,7 @@ import { promoteUploadedObject } from "./storage";
 import { queueAttachmentRowsForStorageDeletion, triggerStorageDeletion } from "./storageDeletion";
 
 type PublicOwnerType = "post" | "comment";
+type PrivateOwnerType = "note" | "note_comment";
 
 type SourceAttachment = {
   id: string;
@@ -70,7 +71,8 @@ export const rewritePublishedAttachmentReferences = (
 
 const loadSourceAttachments = async (
   client: PoolClient,
-  noteId: string,
+  ownerType: PrivateOwnerType,
+  ownerId: string,
   attachmentIds: string[]
 ) => {
   if (!attachmentIds.length) return [];
@@ -86,11 +88,11 @@ const loadSourceAttachments = async (
        status,
        verified_at AS "verifiedAt"
      FROM attachments
-     WHERE owner_type = 'note'
-       AND owner_id = $1
-       AND id = ANY($2::uuid[])
+     WHERE owner_type = $1
+       AND owner_id = $2
+       AND id = ANY($3::uuid[])
        AND status IN ('uploaded', 'previewed')`,
-    [noteId, attachmentIds]
+    [ownerType, ownerId, attachmentIds]
   );
   const byId = new Map(result.rows.map((row) => [row.id, row]));
   const ordered = attachmentIds.map((attachmentId) => byId.get(attachmentId));
@@ -109,6 +111,8 @@ const ensurePublicAttachmentCopy = async (
     noteId: string;
     revision: number;
     ownerType: PublicOwnerType;
+    sourceOwnerType: PrivateOwnerType;
+    sourceOwnerId: string;
     uploaderHandle: string;
     source: SourceAttachment;
   }
@@ -166,6 +170,8 @@ const ensurePublicAttachmentCopy = async (
         workspacePublication: {
           noteId: input.noteId,
           revision: input.revision,
+          sourceOwnerType: input.sourceOwnerType,
+          sourceOwnerId: input.sourceOwnerId,
           sourceAttachmentId: input.source.id
         }
       }),
@@ -202,6 +208,8 @@ export const prepareWorkspacePublicationAttachments = async (
     attachmentIds: string[];
     document: VersionedDocumentContract;
     ownerType: PublicOwnerType;
+    sourceOwnerType?: PrivateOwnerType;
+    sourceOwnerId?: string;
     uploaderHandle: string;
   }
 ) => {
@@ -212,14 +220,21 @@ export const prepareWorkspacePublicationAttachments = async (
       message: "Public attachment delivery must be configured before this draft can be published."
     });
   }
-  const sources = await loadSourceAttachments(client, input.noteId, input.attachmentIds);
+  const sourceOwnerType = input.sourceOwnerType ?? "note";
+  const sourceOwnerId = input.sourceOwnerId ?? input.noteId;
+  const sources = await loadSourceAttachments(client, sourceOwnerType, sourceOwnerId, input.attachmentIds);
   if (sources.some((source) => source.bucket !== env.R2_BUCKET)) {
     throw new TRPCError({ code: "PRECONDITION_FAILED", message: "A draft attachment is stored outside the active publication bucket." });
   }
   const publicAttachmentIds: string[] = [];
   const attachmentIdMap = new Map<string, string>();
   for (const source of sources) {
-    const publicId = await ensurePublicAttachmentCopy(client, { ...input, source });
+    const publicId = await ensurePublicAttachmentCopy(client, {
+      ...input,
+      sourceOwnerType,
+      sourceOwnerId,
+      source
+    });
     publicAttachmentIds.push(publicId);
     attachmentIdMap.set(source.id, publicId);
   }
