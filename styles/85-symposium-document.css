@@ -122,7 +122,7 @@
   overflow: visible;
 }
 
-.symposium-document-editor.disabled { opacity: 0.7; pointer-events: none; }
+.symposium-document-editor.disabled { pointer-events: none; }
 .document-editor-toolbar {
   align-items: center;
   background: var(--document-surface-solid);

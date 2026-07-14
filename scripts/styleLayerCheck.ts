@@ -68,6 +68,8 @@ const main = async () => {
   assert.match(quoteStyles, /\.quote-link-input-row/);
 
   const documentStyles = sources.get("85-symposium-document.css") ?? "";
+  assert.match(documentStyles, /\.symposium-document-editor\.disabled\s*\{[^}]*pointer-events:\s*none/);
+  assert.doesNotMatch(documentStyles, /\.symposium-document-editor\.disabled\s*\{[^}]*opacity:/);
   const attachmentStyles = [sources.get("20-legacy-content.css") ?? "", sources.get("87-structured-attachments.css") ?? ""].join("\n");
   const foundationStyles = sources.get("00-foundations-entry.css") ?? "";
   const shellStyles = sources.get("10-legacy-shell.css") ?? "";
