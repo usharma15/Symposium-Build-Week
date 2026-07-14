@@ -297,6 +297,7 @@ const main = async () => {
   assert.match(workspaceStyles, /\.workspace-search\s*\{[^}]*background: var\(--document-control-solid\)[^}]*color: var\(--ink\)/);
   assert.match(workspaceStyles, /\.workspace-search input\s*\{[^}]*background: transparent[^}]*color: inherit/);
   assert.match(workspaceStyles, /\.workspace-detail-nav button\.danger\s*\{[^}]*color: color-mix\(in srgb, #b42f2f 60%, var\(--ink\)\)/);
+  assert.match(workspaceStyles, /\.workspace-editor-footer\s*\{[^}]*position: sticky;[^}]*bottom: 0/);
   assert.match(workspaceStyles, /\.workspace-editor \.document-editor-toolbar\s*\{[^}]*z-index: 8/);
   assert.doesNotMatch(workspaceStyles, /\.workspace-editor \.document-editor-toolbar\s*\{[^}]*top:/);
 

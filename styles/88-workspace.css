@@ -1046,7 +1046,7 @@
 
 .workspace-editor-footer {
   position: sticky;
-  bottom: 14px;
+  bottom: 0;
   z-index: 6;
   justify-content: space-between;
   gap: 12px;

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   createCommentInputSchema,
   createPostInputSchema,
@@ -37,6 +38,10 @@ const document: VersionedDocumentContract = {
     { id: "ending", type: "paragraph", content: [{ text: "Conclusion." }], align: "left", indent: 0 }
   ]
 };
+
+const editorSource = readFileSync("features/content/SymposiumTiptapEditor.tsx", "utf8");
+assert.match(editorSource, /const initialTextStyle = initialFormatting\.textStyle \?\? defaultPreferredTextStyle/);
+assert.match(editorSource, /if \(capability === "paper"\) initialFormatting\.textStyle = initialTextStyle/);
 
 assert.equal(versionedDocumentSchema.parse(document).version, 1);
 assert.equal(documentPlainText(document), "Evidence before assertion.\n\nE = mc^2\n\nConclusion.");

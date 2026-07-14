@@ -606,6 +606,7 @@ function EditorToolbar({ editor, capability, documentValue, onSettingsChange, on
   uploadDisabled: boolean;
 }) {
   const initialFormatting = persistentFormattingForEditor(editor);
+  const initialTextStyle = initialFormatting.textStyle ?? defaultPreferredTextStyle;
   const initialMarks = initialFormatting.marks ?? {
     bold: editor.isActive("bold"),
     italic: editor.isActive("italic"),
@@ -620,7 +621,8 @@ function EditorToolbar({ editor, capability, documentValue, onSettingsChange, on
   initialFormatting.block = initialBlock;
   initialFormatting.alignment = initialAlignment;
   initialFormatting.indent = initialIndent;
-  const [preferredTextStyle, setPreferredTextStyle] = useState<PreferredTextStyle>(() => initialFormatting.textStyle ?? defaultPreferredTextStyle);
+  if (capability === "paper") initialFormatting.textStyle = initialTextStyle;
+  const [preferredTextStyle, setPreferredTextStyle] = useState<PreferredTextStyle>(() => initialTextStyle);
   const [preferredMarks, setPreferredMarks] = useState<PreferredInlineMarks>(() => initialMarks);
   const [preferredBlock, setPreferredBlock] = useState<PreferredBlock>(() => initialBlock);
   const [preferredAlignment, setPreferredAlignment] = useState<PreferredAlignment>(() => initialAlignment);
