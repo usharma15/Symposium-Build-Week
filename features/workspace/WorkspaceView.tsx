@@ -29,7 +29,7 @@ import type {
 } from "@/lib/workspaceTypes";
 
 type WorkspaceSection = "all" | "notebooks" | "quick";
-const creationKinds: WorkspaceDocument["kind"][] = ["note", "paper", "thought", "comment", "reply"];
+const creationKinds: WorkspaceDocument["kind"][] = ["note", "thought", "paper"];
 const kindDescription: Record<WorkspaceDocument["kind"], string> = {
   note: "A flexible full-tooling note that can become a Paper or Thought",
   paper: "A full research draft destined for the Library",
@@ -39,23 +39,8 @@ const kindDescription: Record<WorkspaceDocument["kind"], string> = {
   quick: "A light capture space reserved for the next pass"
 };
 
-const dayStart = (value: Date) => new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
-
-const workspaceDateGroup = (value: string, now = new Date()) => {
-  const date = new Date(value);
-  const elapsedDays = Math.floor((dayStart(now) - dayStart(date)) / 86_400_000);
-  if (elapsedDays === 0) return "Today";
-  if (elapsedDays === 1) return "Yesterday";
-  if (elapsedDays < 30) return "Previous 30 Days";
-  if (date.getFullYear() === now.getFullYear()) return date.toLocaleDateString(undefined, { month: "long" });
-  return date.toLocaleDateString(undefined, { month: "long", year: "numeric" });
-};
-
-const workspaceSidebarTimestamp = (value: string, now = new Date()) => {
-  const date = new Date(value);
-  if (dayStart(date) === dayStart(now)) return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-};
+const workspaceSidebarTimestamp = (value: string) =>
+  new Date(value).toLocaleDateString(undefined, { day: "2-digit", month: "2-digit", year: "2-digit" });
 
 const workspaceSidebarExcerpt = (document: WorkspaceDocument) =>
   document.body.replace(/\s+/g, " ").trim() || `${workspaceKindLabel[document.kind]} draft`;
@@ -118,17 +103,6 @@ export function WorkspaceView({
     if (section === "quick") return [];
     return [...candidates].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
   }, [query, searchResults, section, selectedNotebookId, workspace.snapshot.documents]);
-
-  const groupedDocuments = useMemo(() => {
-    const groups = new Map<string, WorkspaceDocument[]>();
-    visibleDocuments.forEach((document) => {
-      const group = workspaceDateGroup(document.updatedAt);
-      const documents = groups.get(group);
-      if (documents) documents.push(document);
-      else groups.set(group, [document]);
-    });
-    return [...groups.entries()];
-  }, [visibleDocuments]);
 
   const createDocument = async (kind: WorkspaceDocument["kind"]) => {
     setNewMenuOpen(false);
@@ -197,13 +171,12 @@ export function WorkspaceView({
         <div className="room-mini-title">
           <p className="eyebrow">Private research workspace</p>
           <h1>Notes</h1>
-          <p>Draft, organise, revise, and publish research without leaving your office.</p>
         </div>
 
         <nav className="workspace-tabs" aria-label="Workspace sections">
-          <button type="button" className={section === "all" ? "active" : ""} onClick={() => { setSection("all"); setSelectedNotebookId(null); setSelectedDocumentId(null); setEditSelected(false); }}><FileText size={15} /><span>All</span></button>
-          <button type="button" className={section === "notebooks" ? "active" : ""} onClick={() => { setSection("notebooks"); setSelectedDocumentId(null); setEditSelected(false); }}><BookOpen size={15} /><span>Notebooks</span></button>
-          <button type="button" className={section === "quick" ? "active" : ""} onClick={() => { setSection("quick"); setSelectedNotebookId(null); setSelectedDocumentId(null); setEditSelected(false); }}><StickyNote size={15} /><span>Quick Notes</span></button>
+          <button type="button" className={section === "all" ? "active" : ""} onClick={() => { setSection("all"); setSelectedNotebookId(null); setSelectedDocumentId(null); setEditSelected(false); setNewMenuOpen(false); }}><FileText size={15} /><span>All</span></button>
+          <button type="button" className={section === "notebooks" ? "active" : ""} onClick={() => { setSection("notebooks"); setSelectedNotebookId(null); setSelectedDocumentId(null); setEditSelected(false); setNewMenuOpen(false); }}><BookOpen size={15} /><span>Notebooks</span></button>
+          <button type="button" className={section === "quick" ? "active" : ""} onClick={() => { setSection("quick"); setSelectedNotebookId(null); setSelectedDocumentId(null); setEditSelected(false); setNewMenuOpen(false); }}><StickyNote size={15} /><span>Quick Notes</span></button>
         </nav>
 
         <div className="workspace-create-wrap">
@@ -222,12 +195,11 @@ export function WorkspaceView({
           {searching ? <span>Searching…</span> : query ? <button type="button" title="Clear search" onClick={() => setQuery("")}><X size={15} /></button> : <kbd>⌘ K</kbd>}
         </label>
 
-        <div className="workspace-sync-status" aria-live="polite">{workspace.error ? <span className="error">{workspace.error}</span> : workspace.status}</div>
+        <div className={`workspace-sidebar-scroll workspace-sidebar-${section}`} aria-label={`${section === "quick" ? "Quick Notes" : section === "notebooks" ? "Notebooks" : "All drafts"} list`}>
+          {workspace.error ? <div className="workspace-sidebar-error" role="alert">{workspace.error}</div> : null}
 
-        <div className="workspace-sidebar-scroll" aria-label={`${section === "quick" ? "Quick Notes" : section === "notebooks" ? "Notebook drafts" : "All drafts"} list`}>
           {section === "notebooks" ? (
           <div className="workspace-notebook-rail">
-            <button type="button" className={!selectedNotebookId ? "active" : ""} onClick={() => setSelectedNotebookId(null)}><Folder size={16} /><span><strong>All notebooks</strong><small>{workspace.snapshot.documents.filter((document) => document.notebookId).length} drafts</small></span></button>
             {workspace.snapshot.notebooks.map((notebook) => (
               <div className={`workspace-notebook-row ${selectedNotebookId === notebook.id ? "active" : ""}`} key={notebook.id}>
                 <button type="button" onClick={() => setSelectedNotebookId(notebook.id)}><Folder size={16} /><span><strong>{notebook.name}</strong><small>{notebook.documentCount} {notebook.documentCount === 1 ? "draft" : "drafts"}</small></span></button>
@@ -257,12 +229,11 @@ export function WorkspaceView({
             </section>
           ) : null}
 
-          {section === "quick" ? (
+          {section === "notebooks" ? null : section === "quick" ? (
             <div className="workspace-sidebar-empty"><StickyNote size={18} /><strong>Quick Notes</strong><span>Your quick-capture inbox will appear here.</span></div>
-          ) : groupedDocuments.length ? groupedDocuments.map(([label, documents]) => (
-            <section className="workspace-sidebar-group" key={label} aria-label={label}>
-              <h2>{label}</h2>
-              {documents.map((document) => (
+          ) : visibleDocuments.length ? (
+            <div className="workspace-sidebar-list">
+              {visibleDocuments.map((document) => (
                 <button
                   type="button"
                   className={`workspace-sidebar-document ${selectedDocumentId === document.id ? "active" : ""}`}
@@ -270,12 +241,16 @@ export function WorkspaceView({
                   onClick={() => { setSelectedDocumentId(document.id); setEditSelected(false); }}
                 >
                   <strong>{document.title || "Untitled note"}</strong>
-                  <span><time>{workspaceSidebarTimestamp(document.updatedAt)}</time><small>{workspaceSidebarExcerpt(document)}</small></span>
-                  <em>{workspaceKindLabel[document.kind]}{document.notebookName ? ` · ${document.notebookName}` : ""}</em>
+                  <span className="workspace-sidebar-preview">{workspaceSidebarExcerpt(document)}</span>
+                  <span className="workspace-sidebar-meta">
+                    <time>{workspaceSidebarTimestamp(document.updatedAt)}</time>
+                    <em>{workspaceKindLabel[document.kind]}</em>
+                    {document.notebookName ? <small>{document.notebookName}</small> : null}
+                  </span>
                 </button>
               ))}
-            </section>
-          )) : (
+            </div>
+          ) : (
             <div className="workspace-sidebar-empty"><FileText size={18} /><strong>{searching ? "Searching…" : query ? "No results" : selectedNotebookId ? "Empty notebook" : "No drafts yet"}</strong><span>{query ? "Try another term." : "Create a draft to begin."}</span></div>
           )}
         </div>

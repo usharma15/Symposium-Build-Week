@@ -299,9 +299,10 @@ button.quote-card-thought:hover {
 
 .social-actions {
   display: grid;
-  grid-template-columns: repeat(5, minmax(78px, 1fr)) repeat(2, minmax(38px, 0.45fr));
-  gap: clamp(4px, 0.8vw, 10px);
+  grid-template-columns: repeat(5, minmax(78px, 1fr)) repeat(2, 42px);
+  gap: clamp(4px, 0.55vw, 7px);
   width: 100%;
+  overflow-wrap: normal;
 }
 
 .social-actions .quote-action-button,
@@ -317,16 +318,32 @@ button.quote-card-thought:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
+  gap: 5px;
   min-width: 0;
-  padding: 0 4px;
+  padding: 0 2px;
+  overflow-wrap: normal;
+  white-space: nowrap;
+}
+
+.social-actions button > svg,
+.social-actions a > svg,
+.social-actions strong {
+  flex: 0 0 auto;
 }
 
 .social-actions strong {
-  min-width: 0;
+  min-width: max-content;
   margin-left: 2px;
   text-align: left;
   font-variant-numeric: tabular-nums;
+  overflow-wrap: normal;
+  white-space: nowrap;
+  word-break: normal;
+}
+
+.social-actions .metric-label {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .metric-label {
@@ -338,6 +355,12 @@ button.quote-card-thought:hover {
 
 .social-actions button.active {
   color: #1a757d;
+}
+
+@media (max-width: 760px) {
+  .social-actions {
+    grid-template-columns: repeat(5, minmax(108px, 1fr)) repeat(2, 42px);
+  }
 }
 
 .detail-layout,

@@ -266,7 +266,7 @@
   justify-content: flex-start;
 }
 
-.comment-composer.compact button {
+.comment-composer.compact .comment-composer-actions > button {
   display: inline-flex;
   align-items: center;
   justify-content: center;

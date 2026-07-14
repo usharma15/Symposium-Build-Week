@@ -45,6 +45,12 @@ const main = async () => {
   );
   assert.match(composerStyles, /\.comment-composer-actions/);
   assert.match(composerStyles, /\.composer-attachment-list[\s\S]*min-width:\s*0/);
+  assert.match(composerStyles, /\.comment-composer\.compact \.comment-composer-actions > button/);
+  assert.doesNotMatch(
+    composerStyles,
+    /\.comment-composer\.compact\s+button\s*\{/,
+    "Compact reply actions must not resize every document-toolbar button."
+  );
 
   const quoteStyles = [
     sources.get("20-legacy-content.css") ?? "",
@@ -80,9 +86,15 @@ const main = async () => {
   assert.match(documentStyles, /\.symposium-shell\.night[\s\S]*--document-surface-solid/);
   assert.match(documentStyles, /\.post-composer-modal,[\s\S]*padding-top:\s*0/);
   assert.match(documentStyles, /\.post-composer-modal \.document-editor-toolbar,[\s\S]*top:\s*0/);
+  assert.match(documentStyles, /\.comment-composer \.document-editor-toolbar\s*\{[^}]*position:\s*static[^}]*top:\s*auto/);
+  assert.match(documentStyles, /\.comment-composer \.symposium-document-editor:focus-within \.document-editor-toolbar\s*\{[^}]*position:\s*sticky[^}]*top:\s*82px/);
+  assert.match(documentStyles, /\.comment-composer\.compact \.document-editor-toolbar\s*\{[^}]*flex-wrap:\s*nowrap[^}]*overflow-x:\s*auto/);
   assert.match(documentStyles, /\.document-collapsible-content\.collapsed\.is-collapsible::after/);
   assert.match(attachmentStyles, /\.attachment-modal[\s\S]*background:\s*var\(--document-surface-solid\)/);
   assert.match(attachmentStyles, /\.attachment-sheet-scroll[\s\S]*background:\s*var\(--attachment-preview-surface\)/);
+  assert.match(feedStyles, /\.social-actions\s*\{[^}]*repeat\(2, 42px\)[^}]*overflow-wrap:\s*normal/);
+  assert.match(feedStyles, /\.social-actions button > svg,\s*\.social-actions a > svg,\s*\.social-actions strong\s*\{[^}]*flex:\s*0 0 auto/);
+  assert.match(feedStyles, /\.social-actions strong\s*\{[^}]*white-space:\s*nowrap[^}]*word-break:\s*normal/);
 
   console.log(
     JSON.stringify(
@@ -96,6 +108,8 @@ const main = async () => {
           "shared quote card and composer layout",
           "one canonical feed and clicked-post width",
           "flush sticky editor and opaque themed attachment surfaces",
+          "focus-scoped inline comment and compact reply toolbars",
+          "single-line post metrics across feed and detail surfaces",
           "overflow-only feed preview fades"
         ]
       },

@@ -274,7 +274,19 @@
 }
 .comment-composer .symposium-document-editor { margin-top: 0.65rem; }
 .comment-composer.compact .document-editor-canvas { min-height: 6rem; }
-.comment-composer.compact .document-editor-toolbar { top: 82px; }
+.comment-composer .document-editor-toolbar { position: static; top: auto; }
+.comment-composer .symposium-document-editor:focus-within .document-editor-toolbar {
+  position: sticky;
+  top: 82px;
+  z-index: 7;
+}
+.comment-composer.compact .document-editor-toolbar {
+  flex-wrap: nowrap;
+  gap: 0.2rem;
+  overflow-x: auto;
+  padding: 0.4rem;
+}
+.comment-composer.compact .document-editor-toolbar > div { flex: 0 0 auto; }
 
 @media (max-width: 720px) {
   .post-composer .composer-primary-actions { width: 100%; }
