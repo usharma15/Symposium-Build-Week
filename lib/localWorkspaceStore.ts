@@ -242,6 +242,8 @@ export const deleteLocalWorkspaceDocument = async (noteId: string, rawInput: unk
     workspace.documents = workspace.documents.filter((candidate) => candidate.id !== noteId);
     delete workspace.revisions[noteId];
     await deleteLocalOwnerAttachments("note", noteId);
+    const { deleteLocalWorkspaceCommentsForDocument } = await import("@/lib/localWorkspaceCommentStore");
+    await deleteLocalWorkspaceCommentsForDocument(noteId);
     await saveStore(store);
     return { deleted: true, noteId };
   });
@@ -329,10 +331,15 @@ export const searchLocalWorkspace = async (rawInput: unknown, actorHandle: strin
   const input = workspaceSearchInputSchema.parse(rawInput);
   const current = await getLocalWorkspace(actorHandle);
   const phrase = input.query.toLowerCase();
+  const { getLocalWorkspaceComments } = await import("@/lib/localWorkspaceCommentStore");
+  const commentTextByDocument = new Map(await Promise.all(current.documents.map(async (document) => {
+    const discussion = await getLocalWorkspaceComments(document.id, actorHandle);
+    return [document.id, JSON.stringify(discussion.comments)] as const;
+  })));
   const documents = current.documents
     .filter((document) => !input.kind || document.kind === input.kind)
     .filter((document) => input.notebookId === undefined || document.notebookId === input.notebookId)
-    .filter((document) => [document.title, document.body, document.ownerName, document.ownerHandle, document.notebookName ?? "", JSON.stringify(document.document), ...document.attachments.map((attachment) => `${attachment.fileName} ${JSON.stringify(attachment.metadata ?? {})}`)].join(" ").toLowerCase().includes(phrase))
+    .filter((document) => [document.title, document.body, document.ownerName, document.ownerHandle, document.notebookName ?? "", JSON.stringify(document.document), commentTextByDocument.get(document.id) ?? "", ...document.attachments.map((attachment) => `${attachment.fileName} ${JSON.stringify(attachment.metadata ?? {})}`)].join(" ").toLowerCase().includes(phrase))
     .slice(0, input.limit);
   const collaborators = Array.from(
     new Map(

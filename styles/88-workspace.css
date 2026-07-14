@@ -1110,21 +1110,29 @@
 .workspace-draft-discussion {
   margin-top: 26px;
   padding: 18px;
-  border: 1px dashed var(--line-strong);
+  border: 1px solid var(--line-strong);
   border-radius: 12px;
   background: color-mix(in srgb, var(--panel) 68%, transparent);
 }
 
-.workspace-draft-discussion h2 {
-  margin: 0 0 6px;
-  font-size: 1rem;
+.workspace-draft-discussion > header {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 12px; margin-bottom: 12px;
 }
+
+.workspace-draft-discussion > header h2 { margin: 0; font-size: 1rem; }
+
+.workspace-draft-discussion > header span { color: var(--muted); font-size: 0.72rem; }
 
 .workspace-draft-discussion p {
   margin: 0;
   color: var(--muted);
   line-height: 1.55;
 }
+
+.workspace-draft-discussion .comment-composer { border: 1px solid var(--line); background: var(--document-surface-solid); }
+
+.workspace-draft-discussion .comment-card { padding-right: 82px; }
 
 @media (max-width: 760px) {
   .room-layout.workspace-room-layout {

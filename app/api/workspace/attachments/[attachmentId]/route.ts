@@ -20,7 +20,7 @@ export async function GET(request: Request, context: Context) {
   }
   try {
     const { record, bytes } = await readLocalAttachment(attachmentId);
-    if (record.ownerType !== "note" || (record.actorHandle && record.actorHandle !== actorHandle)) {
+    if (!["note", "note_comment"].includes(record.ownerType) || (record.actorHandle && record.actorHandle !== actorHandle)) {
       return jsonError("Attachment not found.", 404);
     }
     return new Response(new Blob([bytes], { type: record.contentType }), {

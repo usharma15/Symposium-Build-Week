@@ -3,7 +3,7 @@ import { cleanHandle } from "@/lib/symposiumCore";
 import { defaultProfile } from "./foundation";
 
 const viewDedupeWindowMs = 60 * 60 * 1000;
-type ViewTargetType = "post" | "comment";
+type ViewTargetType = "post" | "comment" | "note_comment";
 const memoryContentViews = new Map<string, number>();
 
 const normalizeViewActorHandle = (handle: string) => {

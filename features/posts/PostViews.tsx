@@ -345,15 +345,18 @@ export function PostEditModal({
 
 export function CommentEditModal({
   item,
+  context,
   comment,
   onClose,
   onSave,
   onDelete,
   onUploadAttachment,
   onResolveQuoteLink,
-  profiles
+  profiles,
+  allowQuotes = true
 }: {
-  item: InquiryItem;
+  item?: InquiryItem;
+  context?: { id: string; title: string };
   comment: InquiryComment;
   onClose: () => void;
   onSave: (
@@ -366,9 +369,12 @@ export function CommentEditModal({
   ) => Promise<void>;
   onDelete: (itemId: string, commentId: string) => void;
   onUploadAttachment: AttachmentUploadHandler;
-  onResolveQuoteLink: QuoteLinkResolver;
+  onResolveQuoteLink?: QuoteLinkResolver;
   profiles: Record<string, ResearchProfile>;
+  allowQuotes?: boolean;
 }) {
+  const itemId = item?.id ?? context?.id ?? "";
+  const contextTitle = item ? deletedPostContextTitle(item) : context?.title ?? "draft";
   const [body, setBody] = useState(comment.body);
   const [documentValue, setDocumentValue] = useState<VersionedDocumentContract>(() => documentForContent(comment.document, comment.body));
   const [attachments, setAttachments] = useState<InquiryAttachment[]>(comment.attachments ?? []);
@@ -382,7 +388,7 @@ export function CommentEditModal({
     if (!comment.id || busy || !body.trim()) return;
     setBusy(true);
     try {
-      await onSave(item.id, comment.id, body, documentValue, attachments, attachedQuote?.quote ?? null);
+      await onSave(itemId, comment.id, body, documentValue, attachments, allowQuotes ? attachedQuote?.quote ?? null : null);
     } finally {
       setBusy(false);
     }
@@ -394,14 +400,14 @@ export function CommentEditModal({
         <div className="composer-modal-head">
           <div>
             <span>Edit comment</span>
-            <strong>On {deletedPostContextTitle(item)}</strong>
+            <strong>On {contextTitle}</strong>
           </div>
           <button type="button" title="Close" onClick={onClose}>
             <X size={17} />
           </button>
         </div>
         <div className="composer-topline">
-          <button className="danger-action" type="button" onClick={() => comment.id && onDelete(item.id, comment.id)}>
+          <button className="danger-action" type="button" onClick={() => comment.id && onDelete(itemId, comment.id)}>
             <Trash2 size={16} />
             Delete
           </button>
@@ -419,14 +425,16 @@ export function CommentEditModal({
           onBusyChange={setBusy}
           onUploadAttachment={onUploadAttachment}
         />
-        <QuoteLinkField
-          attached={attachedQuote}
-          owner={{ ownerId: comment.id ?? "", ownerType: "comment" }}
-          profiles={profiles}
-          disabled={busy}
-          onChange={setAttachedQuote}
-          onResolve={onResolveQuoteLink}
-        />
+        {allowQuotes && onResolveQuoteLink ? (
+          <QuoteLinkField
+            attached={attachedQuote}
+            owner={{ ownerId: comment.id ?? "", ownerType: "comment" }}
+            profiles={profiles}
+            disabled={busy}
+            onChange={setAttachedQuote}
+            onResolve={onResolveQuoteLink}
+          />
+        ) : null}
       </form>
     </div>
   );

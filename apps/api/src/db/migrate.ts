@@ -1375,6 +1375,65 @@ const migrations: Migration[] = [
       CREATE UNIQUE INDEX IF NOT EXISTS note_publications_revision_unique_idx
         ON note_publications (note_id, note_revision) WHERE note_id IS NOT NULL AND note_revision IS NOT NULL;
     `
+  },
+  {
+    id: "0021_workspace_draft_discussion",
+    sql: `
+      ALTER TABLE workspace_note_comments ADD COLUMN IF NOT EXISTS parent_id UUID;
+      ALTER TABLE workspace_note_comments ADD COLUMN IF NOT EXISTS author_name TEXT;
+      ALTER TABLE workspace_note_comments ADD COLUMN IF NOT EXISTS stance TEXT NOT NULL DEFAULT 'Comment';
+      ALTER TABLE workspace_note_comments ADD COLUMN IF NOT EXISTS content_document JSONB;
+      ALTER TABLE workspace_note_comments ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
+
+      UPDATE workspace_note_comments comment
+      SET author_name = COALESCE(profile.name, comment.author_handle, 'Former participant')
+      FROM profiles profile
+      WHERE profile.handle = comment.author_handle AND comment.author_name IS NULL;
+      UPDATE workspace_note_comments
+      SET author_name = COALESCE(author_handle, 'Former participant')
+      WHERE author_name IS NULL;
+      ALTER TABLE workspace_note_comments ALTER COLUMN author_name SET NOT NULL;
+
+      ALTER TABLE workspace_note_comments DROP CONSTRAINT IF EXISTS workspace_note_comments_parent_id_fkey;
+      ALTER TABLE workspace_note_comments
+        ADD CONSTRAINT workspace_note_comments_parent_id_fkey
+        FOREIGN KEY (parent_id) REFERENCES workspace_note_comments(id) ON DELETE SET NULL;
+      ALTER TABLE workspace_note_comments DROP CONSTRAINT IF EXISTS workspace_note_comments_content_document_shape_check;
+      ALTER TABLE workspace_note_comments
+        ADD CONSTRAINT workspace_note_comments_content_document_shape_check
+        CHECK (
+          content_document IS NULL OR (
+            jsonb_typeof(content_document) = 'object'
+            AND content_document->>'version' = '1'
+            AND jsonb_typeof(content_document->'nodes') = 'array'
+            AND jsonb_array_length(content_document->'nodes') > 0
+          )
+        );
+      CREATE INDEX IF NOT EXISTS workspace_note_comments_parent_idx
+        ON workspace_note_comments (parent_id, created_at ASC);
+
+      CREATE TABLE IF NOT EXISTS workspace_note_comment_actions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        comment_id UUID NOT NULL REFERENCES workspace_note_comments(id) ON DELETE CASCADE,
+        note_id UUID NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+        actor_handle TEXT NOT NULL REFERENCES profiles(handle) ON DELETE CASCADE,
+        action TEXT NOT NULL CHECK (action IN ('save', 'signal')),
+        active BOOLEAN NOT NULL DEFAULT true,
+        count INTEGER NOT NULL DEFAULT 1 CHECK (count >= 0),
+        revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (comment_id, actor_handle, action)
+      );
+      CREATE INDEX IF NOT EXISTS workspace_note_comment_actions_note_idx
+        ON workspace_note_comment_actions (note_id);
+      CREATE INDEX IF NOT EXISTS workspace_note_comment_actions_actor_idx
+        ON workspace_note_comment_actions (actor_handle);
+
+      ALTER TABLE attachments DROP CONSTRAINT IF EXISTS attachments_owner_type_check;
+      ALTER TABLE attachments ADD CONSTRAINT attachments_owner_type_check
+        CHECK (owner_type IN ('post', 'comment', 'message', 'note', 'note_comment', 'profile'));
+    `
   }
 ];
 

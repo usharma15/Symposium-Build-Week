@@ -3287,6 +3287,9 @@ function SymposiumExperience({
             profiles={profiles}
             onOpenSaved={() => toggleOfficeMode("saved")}
             onPublished={acceptWorkspacePublication}
+            onOpenProfile={openProfile}
+            initialDocumentId={initialRoute.kind === "workspace" ? initialRoute.noteId : undefined}
+            initialCommentId={initialRoute.kind === "workspace" ? initialRoute.commentId : undefined}
           />
         ) : activeRoom === "funding" && patronageMode === "lobby" ? (
           <PatronageLobbyView

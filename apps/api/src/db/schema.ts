@@ -421,7 +421,7 @@ export const attachments = pgTable(
     index("attachments_owner_idx").on(table.ownerType, table.ownerId),
     index("attachments_uploader_status_idx").on(table.uploaderHandle, table.status, table.createdAt),
     index("attachments_status_updated_idx").on(table.status, table.updatedAt),
-    check("attachments_owner_type_check", sql`${table.ownerType} IN ('post', 'comment', 'message', 'note', 'profile')`),
+    check("attachments_owner_type_check", sql`${table.ownerType} IN ('post', 'comment', 'message', 'note', 'note_comment', 'profile')`),
     check("attachments_status_check", sql`${table.status} IN ('pending', 'verifying', 'uploaded', 'previewed', 'failed')`),
     check("attachments_byte_size_check", sql`${table.byteSize} > 0 AND ${table.byteSize} <= 52428800`)
   ]
@@ -722,17 +722,47 @@ export const workspaceNoteComments = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     noteId: uuid("note_id").notNull().references(() => notes.id, { onDelete: "cascade" }),
+    parentId: uuid("parent_id"),
     authorHandle: text("author_handle").references(() => profiles.handle, { onDelete: "set null" }),
+    authorName: text("author_name").notNull(),
+    stance: text("stance").default("Comment").notNull(),
     body: text("body").notNull(),
+    document: jsonb("content_document").$type<VersionedDocumentContract>(),
     revision: integer("revision").default(1).notNull(),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn(),
+    editedAt: timestamp("edited_at", { withTimezone: true }),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     deletedAt: timestamp("deleted_at", { withTimezone: true })
   },
   (table) => [
     index("workspace_note_comments_note_created_idx").on(table.noteId, table.createdAt),
+    index("workspace_note_comments_parent_idx").on(table.parentId),
     check("workspace_note_comments_revision_check", sql`${table.revision} >= 1`)
+  ]
+);
+
+export const workspaceNoteCommentActions = pgTable(
+  "workspace_note_comment_actions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    commentId: uuid("comment_id").notNull().references(() => workspaceNoteComments.id, { onDelete: "cascade" }),
+    noteId: uuid("note_id").notNull().references(() => notes.id, { onDelete: "cascade" }),
+    actorHandle: text("actor_handle").notNull().references(() => profiles.handle, { onDelete: "cascade" }),
+    action: text("action").notNull(),
+    active: boolean("active").default(true).notNull(),
+    count: integer("count").default(1).notNull(),
+    revision: integer("revision").default(1).notNull(),
+    createdAt: createdAtColumn(),
+    updatedAt: updatedAtColumn()
+  },
+  (table) => [
+    uniqueIndex("workspace_note_comment_actions_unique_idx").on(table.commentId, table.actorHandle, table.action),
+    index("workspace_note_comment_actions_note_idx").on(table.noteId),
+    index("workspace_note_comment_actions_actor_idx").on(table.actorHandle),
+    check("workspace_note_comment_actions_action_check", sql`${table.action} IN ('save', 'signal')`),
+    check("workspace_note_comment_actions_count_check", sql`${table.count} >= 0`),
+    check("workspace_note_comment_actions_revision_check", sql`${table.revision} >= 1`)
   ]
 );
 

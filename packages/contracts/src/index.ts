@@ -586,7 +586,7 @@ export const createAttachmentUploadInputSchema = z.object({
   fileName: z.string().min(1).max(255),
   contentType: z.string().min(1).max(160),
   byteSize: z.number().int().positive().max(50 * 1024 * 1024),
-  ownerType: z.enum(["post", "comment", "message", "note", "profile"]),
+  ownerType: z.enum(["post", "comment", "message", "note", "note_comment", "profile"]),
   ownerId: z.string().trim().min(1).max(200).optional()
 });
 
@@ -649,6 +649,42 @@ export const updateWorkspaceDocumentInputSchema = workspaceDocumentFieldsSchema.
   if (input.kind === "quick") {
     context.addIssue({ code: "custom", path: ["kind"], message: "Quick Notes are reserved for the next workspace pass." });
   }
+});
+
+export const createWorkspaceCommentInputSchema = z.object({
+  body: z.string().trim().min(1).max(8000),
+  document: versionedDocumentSchema.optional(),
+  stance: z.string().trim().min(1).max(80).default("Comment"),
+  parentId: z.string().uuid().nullable().optional(),
+  attachmentIds: z.array(postAttachmentIdSchema).max(100).default([])
+}).superRefine((input, context) => {
+  validateDocumentAttachmentReferences(input.document, input.attachmentIds, context);
+  if (input.document && !documentFitsReducedEditor(input.document)) {
+    context.addIssue({ code: "custom", path: ["document"], message: "Draft comments use the reduced editor formatting set." });
+  }
+});
+
+export const updateWorkspaceCommentInputSchema = z.object({
+  body: z.string().trim().min(1).max(8000),
+  document: versionedDocumentSchema.optional(),
+  expectedRevision: z.number().int().positive(),
+  attachmentIds: z.array(postAttachmentIdSchema).max(100).default([])
+}).superRefine((input, context) => {
+  validateDocumentAttachmentReferences(input.document, input.attachmentIds, context);
+  if (input.document && !documentFitsReducedEditor(input.document)) {
+    context.addIssue({ code: "custom", path: ["document"], message: "Draft comments use the reduced editor formatting set." });
+  }
+});
+
+export const deleteWorkspaceCommentInputSchema = z.object({
+  expectedRevision: z.number().int().positive()
+});
+
+export const workspaceCommentActionInputSchema = z.object({
+  action: z.enum(["signal", "save", "read"]),
+  active: z.boolean().optional(),
+  trigger: z.enum(["visibility", "click", "expand"]).optional(),
+  surface: z.enum(["thread", "workspace"]).optional()
 });
 
 export const deleteWorkspaceDocumentInputSchema = z.object({
@@ -790,6 +826,10 @@ export type WorkspaceAccessRoleContract = z.infer<typeof workspaceAccessRoleSche
 export type WorkspaceLifecycleContract = z.infer<typeof workspaceLifecycleSchema>;
 export type CreateWorkspaceDocumentInputContract = z.infer<typeof createWorkspaceDocumentInputSchema>;
 export type UpdateWorkspaceDocumentInputContract = z.infer<typeof updateWorkspaceDocumentInputSchema>;
+export type CreateWorkspaceCommentInputContract = z.infer<typeof createWorkspaceCommentInputSchema>;
+export type UpdateWorkspaceCommentInputContract = z.infer<typeof updateWorkspaceCommentInputSchema>;
+export type DeleteWorkspaceCommentInputContract = z.infer<typeof deleteWorkspaceCommentInputSchema>;
+export type WorkspaceCommentActionInputContract = z.infer<typeof workspaceCommentActionInputSchema>;
 export type CreateWorkspaceNotebookInputContract = z.infer<typeof createWorkspaceNotebookInputSchema>;
 export type UpdateWorkspaceNotebookInputContract = z.infer<typeof updateWorkspaceNotebookInputSchema>;
 export type WorkspaceSearchInputContract = z.infer<typeof workspaceSearchInputSchema>;

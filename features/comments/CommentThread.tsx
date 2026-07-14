@@ -54,6 +54,12 @@ import type { AttachedQuote, QuoteLinkResolver } from "@/features/quotes/quoteLi
 import { canonicalRouteHref } from "@/features/navigation/canonicalRoute";
 
 export type CommentSegmentStacks = Record<string, string[]>;
+export type CommentThreadOptions = {
+  allowQuotes?: boolean;
+  allowReplies?: boolean;
+  allowReshares?: boolean;
+  commentHref?: (itemId: string, commentId: string) => string | null;
+};
 export type AddCommentHandler = (
   itemId: string,
   body: string,
@@ -146,15 +152,17 @@ export function CommentComposer({
   onResolveQuoteLink,
   profiles,
   parentId,
-  compact = false
+  compact = false,
+  allowQuotes = true
 }: {
   itemId: string;
   onAddComment: AddCommentHandler;
   onUploadAttachment: AttachmentUploadHandler;
-  onResolveQuoteLink: QuoteLinkResolver;
+  onResolveQuoteLink?: QuoteLinkResolver;
   profiles: Record<string, ResearchProfile>;
   parentId?: string | null;
   compact?: boolean;
+  allowQuotes?: boolean;
 }) {
   const [body, setBody] = useState("");
   const [documentValue, setDocumentValue] = useState<VersionedDocumentContract>(() => emptySymposiumDocument());
@@ -176,7 +184,7 @@ export function CommentComposer({
       "Comment",
       parentId ?? null,
       attachments,
-      attachedQuote
+      allowQuotes && attachedQuote
         ? { sourceType: attachedQuote.selection.sourceType, sourceId: attachedQuote.selection.sourceId }
         : undefined
     );
@@ -206,13 +214,15 @@ export function CommentComposer({
         onBusyChange={setBusy}
         onUploadAttachment={onUploadAttachment}
       />
-      <QuoteLinkField
-        attached={attachedQuote}
-        profiles={profiles}
-        disabled={submitting}
-        onChange={setAttachedQuote}
-        onResolve={onResolveQuoteLink}
-      />
+      {allowQuotes && onResolveQuoteLink ? (
+        <QuoteLinkField
+          attached={attachedQuote}
+          profiles={profiles}
+          disabled={submitting}
+          onChange={setAttachedQuote}
+          onResolve={onResolveQuoteLink}
+        />
+      ) : null}
     </form>
   );
 }
@@ -238,6 +248,7 @@ export function CommentThread({
   commentSegmentStacks,
   onCommentSegmentStackChange,
   onVisibleCommentSegmentStackChange,
+  options = {},
   depth = 0
 }: {
   comments: InquiryComment[];
@@ -247,11 +258,11 @@ export function CommentThread({
   onOpenProfile: (name: string) => void;
   onAddComment: AddCommentHandler;
   onUploadAttachment: AttachmentUploadHandler;
-  onResolveQuoteLink: QuoteLinkResolver;
+  onResolveQuoteLink?: QuoteLinkResolver;
   onOpenAttachmentPreview: CommentAttachmentPreviewHandler;
   onCommentAction: CommentActionHandler;
-  onQuote: QuoteActionHandler;
-  onOpenQuote: QuoteActionHandler;
+  onQuote?: QuoteActionHandler;
+  onOpenQuote?: QuoteActionHandler;
   onEditComment: (itemId: string, commentId: string) => void;
   onDeleteComment: (itemId: string, commentId: string) => void;
   actorHandle: string;
@@ -260,6 +271,7 @@ export function CommentThread({
   commentSegmentStacks: CommentSegmentStacks;
   onCommentSegmentStackChange: (key: string, stack: string[]) => void;
   onVisibleCommentSegmentStackChange: (key: string, stack: string[]) => void;
+  options?: CommentThreadOptions;
   depth?: number;
 }) {
   return (
@@ -290,6 +302,7 @@ export function CommentThread({
             segmentStack={commentSegmentStacks[rootStackKey] ?? null}
             onSegmentStackChange={(stack) => onCommentSegmentStackChange(rootStackKey, stack)}
             onVisibleSegmentStackChange={(stack) => onVisibleCommentSegmentStackChange(rootStackKey, stack)}
+            options={options}
             depth={depth}
           />
         );
@@ -337,6 +350,7 @@ function CommentRootSegment({
   segmentStack,
   onSegmentStackChange,
   onVisibleSegmentStackChange,
+  options,
   depth
 }: {
   rootStackKey: string;
@@ -347,11 +361,11 @@ function CommentRootSegment({
   onOpenProfile: (name: string) => void;
   onAddComment: AddCommentHandler;
   onUploadAttachment: AttachmentUploadHandler;
-  onResolveQuoteLink: QuoteLinkResolver;
+  onResolveQuoteLink?: QuoteLinkResolver;
   onOpenAttachmentPreview: CommentAttachmentPreviewHandler;
   onCommentAction: CommentActionHandler;
-  onQuote: QuoteActionHandler;
-  onOpenQuote: QuoteActionHandler;
+  onQuote?: QuoteActionHandler;
+  onOpenQuote?: QuoteActionHandler;
   onEditComment: (itemId: string, commentId: string) => void;
   onDeleteComment: (itemId: string, commentId: string) => void;
   actorHandle: string;
@@ -360,6 +374,7 @@ function CommentRootSegment({
   segmentStack: string[] | null;
   onSegmentStackChange: (stack: string[]) => void;
   onVisibleSegmentStackChange: (stack: string[]) => void;
+  options: CommentThreadOptions;
   depth: number;
 }) {
   const segmentRef = useRef<HTMLDivElement | null>(null);
@@ -435,6 +450,7 @@ function CommentRootSegment({
         onOpenReplySegment={openReplySegment}
         onClearSelectedComment={onClearSelectedComment}
         onSelectComment={onSelectComment}
+        options={options}
         leadingAction={
           visibleSegmentStack.length ? (
             <button
@@ -472,6 +488,7 @@ function CommentNode({
   onOpenReplySegment,
   onClearSelectedComment,
   onSelectComment,
+  options,
   leadingAction
 }: {
   comment: InquiryComment;
@@ -481,11 +498,11 @@ function CommentNode({
   onOpenProfile: (name: string) => void;
   onAddComment: AddCommentHandler;
   onUploadAttachment: AttachmentUploadHandler;
-  onResolveQuoteLink: QuoteLinkResolver;
+  onResolveQuoteLink?: QuoteLinkResolver;
   onOpenAttachmentPreview: CommentAttachmentPreviewHandler;
   onCommentAction: CommentActionHandler;
-  onQuote: QuoteActionHandler;
-  onOpenQuote: QuoteActionHandler;
+  onQuote?: QuoteActionHandler;
+  onOpenQuote?: QuoteActionHandler;
   onEditComment: (itemId: string, commentId: string) => void;
   onDeleteComment: (itemId: string, commentId: string) => void;
   actorHandle: string;
@@ -494,6 +511,7 @@ function CommentNode({
   onOpenReplySegment: (commentId: string) => void;
   onClearSelectedComment: () => void;
   onSelectComment: (commentId: string) => void;
+  options: CommentThreadOptions;
   leadingAction?: ReactNode;
 }) {
   const [replyOpen, setReplyOpen] = useState(false);
@@ -580,7 +598,7 @@ function CommentNode({
             }
           />
         ) : null}
-        {comment.quote ? (
+        {options.allowQuotes !== false && comment.quote && onOpenQuote ? (
           <ContentQuoteCard
             quote={comment.quote}
             profiles={profiles}
@@ -597,9 +615,10 @@ function CommentNode({
           itemId={itemId}
           actorHandle={actorHandle}
           onAction={onCommentAction}
-          onQuote={() => comment.id && onQuote({ sourceType: "comment", sourceId: comment.id, sourcePostId: itemId })}
+          onQuote={onQuote ? () => comment.id && onQuote({ sourceType: "comment", sourceId: comment.id, sourcePostId: itemId }) : undefined}
+          options={options}
         />
-        {commentDeleted ? null : (
+        {commentDeleted || options.allowReplies === false ? null : (
           <>
             <button className="reply-button" type="button" onClick={() => setReplyOpen((open) => !open)}>
               Reply
@@ -612,6 +631,7 @@ function CommentNode({
                 profiles={profiles}
                 onUploadAttachment={onUploadAttachment}
                 onResolveQuoteLink={onResolveQuoteLink}
+                allowQuotes={options.allowQuotes !== false}
                 onAddComment={async (id, body, document, stance, parentId, attachments, quoteSource) => {
                   const saved = await onAddComment(id, body, document, stance, parentId, attachments, quoteSource);
                   if (saved) setReplyOpen(false);
@@ -660,6 +680,7 @@ function CommentNode({
                 onOpenReplySegment={onOpenReplySegment}
                 onClearSelectedComment={onClearSelectedComment}
                 onSelectComment={onSelectComment}
+                options={options}
               />
             ))}
           </div>
@@ -689,13 +710,15 @@ export function CommentActions({
   itemId,
   actorHandle,
   onAction,
-  onQuote
+  onQuote,
+  options = {}
 }: {
   comment: InquiryComment;
   itemId: string;
   actorHandle: string;
   onAction: (itemId: string, commentId: string, action: CommentAction) => void;
-  onQuote: () => void;
+  onQuote?: () => void;
+  options?: CommentThreadOptions;
 }) {
   if (!comment.id) return null;
 
@@ -707,7 +730,10 @@ export function CommentActions({
     { label: "Reshares", active: commentActionActive(comment, "fork", actorHandle), value: deleted ? deletedMetricLabel : metrics.forks, icon: Repeat2, action: "fork" as CommentAction },
     { label: "Saves", active: commentActionActive(comment, "save", actorHandle), value: deleted ? deletedMetricLabel : metrics.saves, icon: Bookmark, action: "save" as CommentAction },
     { label: "Views", value: deleted ? deletedMetricLabel : metrics.reads, icon: Eye, action: null }
-  ];
+  ].filter((action) => options.allowReshares !== false || action.label !== "Reshares");
+  const commentHref = options.commentHref
+    ? options.commentHref(itemId, comment.id)
+    : canonicalRouteHref({ kind: "post", postId: itemId, commentId: comment.id });
 
   return (
     <div className="comment-actions" aria-label="Comment actions">
@@ -732,16 +758,18 @@ export function CommentActions({
           </button>
         );
       })}
-      <QuoteActionButton disabled={deleted} label="comment" onQuote={onQuote} />
-      <a
-        className="content-link-action"
-        href={canonicalRouteHref({ kind: "post", postId: itemId, commentId: comment.id })}
-        title="Open comment link"
-        aria-label="Open comment link"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <Link2 size={15} aria-hidden="true" />
-      </a>
+      {options.allowQuotes !== false && onQuote ? <QuoteActionButton disabled={deleted} label="comment" onQuote={onQuote} /> : null}
+      {commentHref ? (
+        <a
+          className="content-link-action"
+          href={commentHref}
+          title="Open comment link"
+          aria-label="Open comment link"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <Link2 size={15} aria-hidden="true" />
+        </a>
+      ) : null}
     </div>
   );
 }

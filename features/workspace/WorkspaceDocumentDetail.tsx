@@ -3,13 +3,21 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { ArrowLeft, Check, Clock3, Pencil, Send, Trash2, Users } from "lucide-react";
 import { SymposiumDocumentEditor, SymposiumDocumentRenderer } from "@/features/content/SymposiumDocument";
-import type { AttachmentUploadHandler } from "@/features/attachments/AttachmentViews";
+import { AttachmentPreviewModal, type AttachmentUploadHandler } from "@/features/attachments/AttachmentViews";
+import {
+  CommentComposer,
+  CommentThread,
+  type CommentSegmentStacks
+} from "@/features/comments/CommentThread";
+import { CommentEditModal } from "@/features/posts/PostViews";
 import { profileForHandle, profileInitials } from "@/features/identity/profilePresentation";
 import type { InquiryAttachment, ResearchProfile } from "@/lib/mockData";
-import { relativeTimeLabel } from "@/lib/symposiumCore";
+import { findCommentInTree, relativeTimeLabel } from "@/lib/symposiumCore";
 import type { VersionedDocumentContract } from "@/packages/contracts/src";
 import type { WorkspaceDocument, WorkspaceNotebook, WorkspacePublicationResponse } from "@/lib/workspaceTypes";
 import { workspaceKindLabel } from "@/features/workspace/WorkspaceDocumentCard";
+import { useWorkspaceComments } from "@/features/workspace/useWorkspaceComments";
+import { canonicalRouteHref } from "@/features/navigation/canonicalRoute";
 
 type SaveDraft = {
   title: string;
@@ -50,6 +58,8 @@ export type WorkspaceDocumentDetailHandle = {
 
 type WorkspaceDocumentDetailProps = {
   document: WorkspaceDocument;
+  actorHandle: string;
+  initialCommentId?: string;
   notebooks: WorkspaceNotebook[];
   profiles: Record<string, ResearchProfile>;
   initiallyEditing: boolean;
@@ -59,10 +69,14 @@ type WorkspaceDocumentDetailProps = {
   onPublish: (document: WorkspaceDocument, target?: "paper" | "thought") => Promise<WorkspacePublicationResponse>;
   onPublished: (result: WorkspacePublicationResponse) => void;
   onUploadAttachment: AttachmentUploadHandler;
+  onUploadCommentAttachment: AttachmentUploadHandler;
+  onOpenProfile: (handle: string) => void;
 };
 
 export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle, WorkspaceDocumentDetailProps>(function WorkspaceDocumentDetail({
   document,
+  actorHandle,
+  initialCommentId,
   notebooks,
   profiles,
   initiallyEditing,
@@ -71,7 +85,9 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
   onDelete,
   onPublish,
   onPublished,
-  onUploadAttachment
+  onUploadAttachment,
+  onUploadCommentAttachment,
+  onOpenProfile
 }, ref) {
   const [editing, setEditing] = useState(initiallyEditing);
   const [title, setTitle] = useState(document.title);
@@ -90,6 +106,10 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
   const [uploading, setUploading] = useState(false);
   const [saveState, setSaveState] = useState("Saved");
   const [error, setError] = useState<string | null>(null);
+  const [selectedCommentId, setSelectedCommentId] = useState<string | null>(initialCommentId ?? null);
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [commentPreview, setCommentPreview] = useState<{ commentId: string; attachmentId: string } | null>(null);
+  const [commentSegmentStacks, setCommentSegmentStacks] = useState<CommentSegmentStacks>({});
   const savePromiseRef = useRef<Promise<WorkspaceDocument | null> | null>(null);
   const savedDocumentRef = useRef(document);
   const revisionRef = useRef(document.revision);
@@ -102,6 +122,7 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
     publicationTarget: document.publicationTarget,
     attachments: document.attachments
   }));
+  const discussion = useWorkspaceComments(document.id, actorHandle);
 
   const currentDraft = useCallback(() => ({
     title: title.trim() || "Untitled note",
@@ -251,6 +272,23 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
   const capability = document.kind === "note" || document.kind === "paper" ? "paper" : "reduced";
   const targetLinked = document.kind !== "comment" && document.kind !== "reply" || Boolean(targetId.trim());
   const publicationChosen = document.kind !== "note" || publicationTarget !== "undecided";
+  const editingComment = editingCommentId ? findCommentInTree(discussion.comments, editingCommentId) ?? null : null;
+  const previewComment = commentPreview ? findCommentInTree(discussion.comments, commentPreview.commentId) ?? null : null;
+
+  const updateCommentSegmentStack = (key: string, stack: string[]) => {
+    setCommentSegmentStacks((current) => ({ ...current, [key]: stack }));
+  };
+
+  const deleteComment = async (commentId: string) => {
+    if (!window.confirm("Delete this comment?")) return;
+    try {
+      await discussion.deleteComment(commentId);
+      setEditingCommentId((current) => current === commentId ? null : current);
+      setSelectedCommentId((current) => current === commentId ? null : current);
+    } catch (caught) {
+      discussion.setError(caught instanceof Error ? caught.message : "Comment could not be deleted.");
+    }
+  };
 
   return (
     <div className="workspace-detail" data-testid={`workspace-detail-${document.id}`}>
@@ -335,14 +373,85 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
               </div>
               {error ? <div className="workspace-error" role="alert">{error}</div> : null}
               {document.access.canPublish ? <div className="workspace-reader-post"><button type="button" className="primary" disabled={!document.body.trim() || !targetLinked || !publicationChosen} onClick={() => void publish()}><Send size={15} />Post this saved draft</button></div> : null}
-              <section className="workspace-draft-discussion">
-                <h2>Draft discussion</h2>
-                <p>Comments on shared drafts will live here and remain in the private history after publication. Sharing and draft discussion activate in the collaboration pass.</p>
-              </section>
             </>
           )}
+
+          <section className="comments-section workspace-draft-discussion" id={`workspace-comments-${document.id}`}>
+            <header>
+              <h2>Draft discussion</h2>
+              <span aria-live="polite">{discussion.status}</span>
+            </header>
+            {document.access.canComment ? (
+              <CommentComposer
+                itemId={document.id}
+                profiles={profiles}
+                onAddComment={discussion.addComment}
+                onUploadAttachment={onUploadCommentAttachment}
+                allowQuotes={false}
+              />
+            ) : null}
+            {discussion.loading && !discussion.comments.length ? <p>Opening the private discussion…</p> : null}
+            {discussion.error ? <div className="workspace-error" role="alert">{discussion.error}</div> : null}
+            <CommentThread
+              comments={discussion.comments}
+              itemId={document.id}
+              profiles={profiles}
+              selectedCommentId={selectedCommentId}
+              onOpenProfile={onOpenProfile}
+              onAddComment={discussion.addComment}
+              onUploadAttachment={onUploadCommentAttachment}
+              onOpenAttachmentPreview={(_noteId, commentId, attachmentId) => setCommentPreview({ commentId, attachmentId })}
+              onCommentAction={discussion.applyAction}
+              onEditComment={(_noteId, commentId) => setEditingCommentId(commentId)}
+              onDeleteComment={(_noteId, commentId) => void deleteComment(commentId)}
+              actorHandle={actorHandle}
+              onClearSelectedComment={() => setSelectedCommentId(null)}
+              onSelectComment={setSelectedCommentId}
+              commentSegmentStacks={commentSegmentStacks}
+              onCommentSegmentStackChange={updateCommentSegmentStack}
+              onVisibleCommentSegmentStackChange={() => undefined}
+              options={{
+                allowQuotes: false,
+                allowReplies: document.access.canComment,
+                allowReshares: false,
+                commentHref: (noteId, commentId) => canonicalRouteHref({
+                  kind: "workspace",
+                  view: "notes",
+                  noteId,
+                  commentId
+                }) + `#comment-${commentId}`
+              }}
+            />
+          </section>
         </div>
       </article>
+      {editingComment && !editingComment.deletedAt ? (
+        <CommentEditModal
+          context={{ id: document.id, title: document.title }}
+          comment={editingComment}
+          onClose={() => setEditingCommentId(null)}
+          onSave={async (_noteId, _commentId, nextBody, nextDocument, nextAttachments) => {
+            try {
+              await discussion.updateComment(editingComment, nextBody, nextDocument, nextAttachments);
+              setEditingCommentId(null);
+            } catch (caught) {
+              discussion.setError(caught instanceof Error ? caught.message : "Comment edit could not be saved.");
+            }
+          }}
+          onDelete={(_noteId, commentId) => void deleteComment(commentId)}
+          onUploadAttachment={onUploadCommentAttachment}
+          profiles={profiles}
+          allowQuotes={false}
+        />
+      ) : null}
+      {commentPreview && previewComment?.attachments?.length ? (
+        <AttachmentPreviewModal
+          attachments={previewComment.attachments}
+          contextTitle={document.title}
+          attachmentId={commentPreview.attachmentId}
+          onClose={() => setCommentPreview(null)}
+        />
+      ) : null}
     </div>
   );
 });

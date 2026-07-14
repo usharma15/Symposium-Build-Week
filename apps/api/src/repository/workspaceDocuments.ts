@@ -510,6 +510,10 @@ export const deleteWorkspaceDocument = async (
     const access = await findDocumentAccess(client, noteId, handle, true);
     if (!access || access.role !== "owner") throw new TRPCError({ code: "NOT_FOUND", message: "Draft not found." });
     assertExpectedRevision("note", access.revision, input.expectedRevision);
+    const commentIds = await client.query<{ id: string }>(
+      "SELECT id::text FROM workspace_note_comments WHERE note_id = $1",
+      [noteId]
+    );
     const deleted = await client.query(
       `UPDATE notes SET deleted_at = now(), revision = revision + 1, updated_at = now()
        WHERE id = $1 AND revision = $2 AND deleted_at IS NULL
@@ -517,7 +521,14 @@ export const deleteWorkspaceDocument = async (
       [noteId, input.expectedRevision]
     );
     if (!deleted.rowCount) throw new TRPCError({ code: "CONFLICT", message: "This draft changed before deletion." });
-    removedAttachmentIds = await queueAttachmentsForOwnerStorageDeletion(client, "note", noteId, "workspace_document_deleted");
+    const noteAttachmentIds = await queueAttachmentsForOwnerStorageDeletion(client, "note", noteId, "workspace_document_deleted");
+    const commentAttachmentIds = await queueAttachmentsForOwnerStorageDeletion(
+      client,
+      "note_comment",
+      commentIds.rows.map((comment) => comment.id),
+      "workspace_document_deleted"
+    );
+    removedAttachmentIds = Array.from(new Set([...noteAttachmentIds, ...commentAttachmentIds]));
     const value = { deleted: true, noteId, removedAttachmentIds };
     await stageAuditLog(client, {
       actorHandle: handle,
@@ -826,10 +837,15 @@ export const assertWorkspaceAttachmentAccess = async (attachmentId: string, acto
     const attachment = await client.query<{ objectKey: string }>(
       `SELECT attachment.object_key AS "objectKey"
        FROM attachments attachment
-       JOIN notes note ON attachment.owner_type = 'note' AND attachment.owner_id = note.id::text
+       LEFT JOIN notes direct_note
+         ON attachment.owner_type = 'note' AND attachment.owner_id = direct_note.id::text
+       LEFT JOIN workspace_note_comments comment
+         ON attachment.owner_type = 'note_comment' AND attachment.owner_id = comment.id::text
+       JOIN notes note ON note.id = COALESCE(direct_note.id, comment.note_id)
        LEFT JOIN workspace_note_grants direct ON direct.note_id = note.id AND direct.grantee_handle = $2
        LEFT JOIN workspace_notebook_grants inherited ON inherited.notebook_id = note.notebook_id AND inherited.grantee_handle = $2
        WHERE attachment.id = $1 AND attachment.status IN ('uploaded', 'previewed')
+         AND attachment.owner_type IN ('note', 'note_comment')
          AND note.deleted_at IS NULL
          AND (note.owner_handle = $2 OR direct.id IS NOT NULL OR inherited.id IS NOT NULL)`,
       [attachmentId, handle]

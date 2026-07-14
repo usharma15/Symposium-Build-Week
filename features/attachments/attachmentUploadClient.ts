@@ -83,7 +83,7 @@ export const uploadConfirmedAttachment = async (input: {
   file: File;
   idempotencyKey: string;
   metadata: Record<string, unknown>;
-  ownerType: "post" | "comment" | "note";
+  ownerType: "post" | "comment" | "note" | "note_comment";
 }): Promise<InquiryAttachment> => {
   const contentType = inferAttachmentContentType(input.file.name, input.file.type);
   const validationError = validatePostAttachmentDetails(input.file.name, contentType, input.file.size);
@@ -102,7 +102,8 @@ export const uploadConfirmedAttachment = async (input: {
   if (!uploadResponse.ok) throw await responseError(uploadResponse, "Could not prepare this attachment upload.");
 
   const upload = (await uploadResponse.json()) as AttachmentUploadResponse;
-  if (!upload.uploadUrl || !upload.attachmentId || (input.ownerType !== "note" && !upload.publicUrl)) {
+  const privateWorkspaceAttachment = input.ownerType === "note" || input.ownerType === "note_comment";
+  if (!upload.uploadUrl || !upload.attachmentId || (!privateWorkspaceAttachment && !upload.publicUrl)) {
     throw new Error("Could not prepare this attachment upload.");
   }
   const putResponse = await fetch(upload.uploadUrl, {
@@ -121,7 +122,7 @@ export const uploadConfirmedAttachment = async (input: {
   if (!confirmResponse.ok) throw await responseError(confirmResponse, "Could not confirm this attachment.");
 
   const confirmed = (await confirmResponse.json()) as AttachmentConfirmResponse;
-  const publicUrl = input.ownerType === "note"
+  const publicUrl = privateWorkspaceAttachment
     ? `/api/workspace/attachments/${encodeURIComponent(upload.attachmentId)}?actorHandle=${encodeURIComponent(input.actorHandle)}`
     : confirmed.publicUrl ?? upload.publicUrl;
   if (!publicUrl) throw new Error("The confirmed attachment does not have a persistent delivery URL.");

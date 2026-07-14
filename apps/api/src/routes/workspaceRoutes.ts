@@ -18,6 +18,13 @@ import {
   updateWorkspaceDocument,
   updateWorkspaceNotebook
 } from "../repository/workspaceDocuments";
+import {
+  applyWorkspaceCommentAction,
+  createWorkspaceComment,
+  deleteWorkspaceComment,
+  getWorkspaceComments,
+  updateWorkspaceComment
+} from "../repository/workspaceComments";
 import { publishNote } from "../services/notePublishing";
 import { createPrivateDownloadUrl } from "../services/storage";
 
@@ -128,6 +135,74 @@ export const registerWorkspaceRoutes = (app: FastifyInstance) => {
         mutationContextFromRequest(request, "workspace.document.delete", request.body)
       );
       return reply.send(result);
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.get<{ Params: { noteId: string } }>("/v1/workspace/documents/:noteId/comments", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      return reply.send(await getWorkspaceComments(request.params.noteId, actor));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.post<{ Params: { noteId: string } }>("/v1/workspace/documents/:noteId/comments", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      return reply.send(await createWorkspaceComment(
+        request.params.noteId,
+        request.body,
+        actor,
+        mutationContextFromRequest(request, "workspace.comment.create", request.body)
+      ));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.patch<{ Params: { noteId: string; commentId: string } }>("/v1/workspace/documents/:noteId/comments/:commentId", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      return reply.send(await updateWorkspaceComment(
+        request.params.noteId,
+        request.params.commentId,
+        request.body,
+        actor,
+        mutationContextFromRequest(request, "workspace.comment.update", request.body)
+      ));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.delete<{ Params: { noteId: string; commentId: string } }>("/v1/workspace/documents/:noteId/comments/:commentId", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      return reply.send(await deleteWorkspaceComment(
+        request.params.noteId,
+        request.params.commentId,
+        request.body,
+        actor,
+        mutationContextFromRequest(request, "workspace.comment.delete", request.body)
+      ));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.post<{ Params: { noteId: string; commentId: string } }>("/v1/workspace/documents/:noteId/comments/:commentId/actions", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      return reply.send(await applyWorkspaceCommentAction(
+        request.params.noteId,
+        request.params.commentId,
+        request.body,
+        actor,
+        mutationContextFromRequest(request, "workspace.comment.action", request.body)
+      ));
     } catch (error) {
       return sendError(app, reply, error);
     }

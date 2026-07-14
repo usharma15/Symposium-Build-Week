@@ -982,14 +982,12 @@ function AttachmentExpandedPane({
 
 export function AttachmentPreviewModal({
   item,
+  attachments: sourceAttachments,
+  contextTitle,
   attachmentId,
   onClose
-}: {
-  item: InquiryItem;
-  attachmentId: string;
-  onClose: () => void;
-}) {
-  const attachments = postPreviewAttachments(item);
+}: { item?: InquiryItem; attachments?: InquiryAttachment[]; contextTitle?: string; attachmentId: string; onClose: () => void }) {
+  const attachments = sourceAttachments ? visibleAttachments(sourceAttachments) : item ? postPreviewAttachments(item) : [];
   const attachmentIdsKey = attachments.map((attachment) => attachment.id).join("|");
   const initialIndex = Math.max(0, attachments.findIndex((attachment) => attachment.id === attachmentId));
   const [activeIndex, setActiveIndex] = useState(initialIndex);
@@ -1133,7 +1131,7 @@ export function AttachmentPreviewModal({
     </button>
   );
   const openDedicatedViewer = () => {
-    if (item.id === "composer-preview") return;
+    if (!item || item.id === "composer-preview") return;
     const href = `/posts/${encodeURIComponent(item.id)}?viewer=full&attachment=${encodeURIComponent(activeAttachment.id)}`;
     window.open(href, "_blank", "noopener,noreferrer");
   };
@@ -1148,12 +1146,12 @@ export function AttachmentPreviewModal({
       >
         <header>
           <div className="attachment-modal-title">
-            <span>{deletedPostContextTitle(item)}</span>
+            <span>{item ? deletedPostContextTitle(item) : contextTitle ?? "Private draft attachment"}</span>
           </div>
           <div className="attachment-modal-header-controls" role="group" aria-label="Attachment viewing controls">
             {isFullscreen ? zoomControls : null}
             {isFullscreen ? fullscreenButton : null}
-            {item.id !== "composer-preview" ? <button type="button" title="Open in a new tab" onClick={openDedicatedViewer}><ExternalLink size={15} /></button> : null}
+            {item && item.id !== "composer-preview" ? <button type="button" title="Open in a new tab" onClick={openDedicatedViewer}><ExternalLink size={15} /></button> : null}
             {activeAttachment.url ? <a href={activeAttachment.url} target="_blank" rel="noopener noreferrer" title="Open original file" aria-label="Open original file"><FileText size={15} /></a> : null}
             <button type="button" title="Close" onClick={closeModal}>
               <X size={17} />

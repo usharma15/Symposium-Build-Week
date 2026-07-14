@@ -54,18 +54,24 @@ export function WorkspaceView({
   actorHandle,
   profiles,
   onOpenSaved,
-  onPublished
+  onPublished,
+  onOpenProfile,
+  initialDocumentId,
+  initialCommentId
 }: {
   room: Room;
   actorHandle: string;
   profiles: Record<string, ResearchProfile>;
   onOpenSaved: () => void;
   onPublished: (result: WorkspacePublicationResponse) => void;
+  onOpenProfile: (handle: string) => void;
+  initialDocumentId?: string;
+  initialCommentId?: string;
 }) {
   const workspace = useWorkspaceDocuments(actorHandle);
   const [section, setSection] = useState<WorkspaceSection>("all");
   const [selectedNotebookId, setSelectedNotebookId] = useState<string | null>(null);
-  const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
+  const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(initialDocumentId ?? null);
   const [editSelected, setEditSelected] = useState(false);
   const [newMenuOpen, setNewMenuOpen] = useState(false);
   const [notebookName, setNotebookName] = useState("");
@@ -286,6 +292,18 @@ export function WorkspaceView({
     });
   };
 
+  const uploadDraftCommentAttachment = async (file: File) => {
+    const contentType = file.type || "application/octet-stream";
+    const metadata = await buildPostAttachmentMetadata(file, contentType);
+    return uploadConfirmedAttachment({
+      actorHandle,
+      file,
+      idempotencyKey: createClientMutationId("workspace-comment-attachment-upload"),
+      metadata,
+      ownerType: "note_comment"
+    });
+  };
+
   const publishCard = async (document: WorkspaceDocument) => {
     if (document.kind === "note" || document.kind === "comment" || document.kind === "reply" || !document.body.trim()) {
       setSelectedDocumentId(document.id);
@@ -426,6 +444,8 @@ export function WorkspaceView({
             ref={detailRef}
             key={selectedDocument.id}
             document={selectedDocument}
+            actorHandle={actorHandle}
+            initialCommentId={selectedDocument.id === initialDocumentId ? initialCommentId : undefined}
             notebooks={workspace.snapshot.notebooks}
             profiles={profiles}
             initiallyEditing={editSelected}
@@ -439,6 +459,8 @@ export function WorkspaceView({
             onPublish={workspace.publishDocument}
             onPublished={onPublished}
             onUploadAttachment={uploadDraftAttachment}
+            onUploadCommentAttachment={uploadDraftCommentAttachment}
+            onOpenProfile={onOpenProfile}
           />
         ) : section === "quick" ? (
           <section className="workspace-quick-empty">

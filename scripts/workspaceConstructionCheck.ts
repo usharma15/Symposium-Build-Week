@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
+  createWorkspaceCommentInputSchema,
   createWorkspaceDocumentInputSchema,
+  updateWorkspaceCommentInputSchema,
   updateWorkspaceDocumentInputSchema,
+  workspaceCommentActionInputSchema,
   workspaceSearchInputSchema
 } from "@/packages/contracts/src";
 import {
@@ -13,6 +16,7 @@ import {
   workspaceDocumentsInNotebook
 } from "@/features/workspace/workspaceNavigator";
 import type { WorkspaceDocument } from "@/lib/workspaceTypes";
+import { reconcileWorkspaceComments } from "@/features/workspace/workspaceCommentState";
 
 const paragraph = {
   version: 1 as const,
@@ -93,6 +97,36 @@ const main = async () => {
     kind: "paper"
   }).success, false);
   assert.equal(workspaceSearchInputSchema.parse({ query: "methods", limit: "12" }).limit, 12);
+  assert.equal(createWorkspaceCommentInputSchema.safeParse({
+    body: "Private review",
+    document: paragraph,
+    attachmentIds: []
+  }).success, true);
+  assert.equal(createWorkspaceCommentInputSchema.safeParse({
+    body: "Unsupported heading",
+    document: heading,
+    attachmentIds: []
+  }).success, false);
+  assert.equal(updateWorkspaceCommentInputSchema.safeParse({
+    body: "Revision guarded review",
+    document: paragraph,
+    expectedRevision: 3,
+    attachmentIds: []
+  }).success, true);
+  assert.equal(updateWorkspaceCommentInputSchema.safeParse({
+    body: "Missing revision",
+    document: paragraph,
+    attachmentIds: []
+  }).success, false);
+  assert.equal(workspaceCommentActionInputSchema.safeParse({ action: "fork" }).success, false);
+  assert.equal(workspaceCommentActionInputSchema.safeParse({ action: "signal", active: true }).success, true);
+  const reconciledComments = reconcileWorkspaceComments(
+    [{ id: "comment-1", author: "Owner", body: "newer", stance: "Comment", revision: 3, replies: [] }],
+    [{ id: "comment-1", author: "Owner", body: "stale", stance: "Comment", revision: 2, replies: [] },
+      { id: "comment-2", parentId: "comment-1", author: "Owner", body: "reply", stance: "Comment", revision: 1, replies: [] }]
+  );
+  assert.equal(reconciledComments[0]?.body, "newer");
+  assert.equal(reconciledComments[0]?.replies?.[0]?.id, "comment-2");
 
   const olderDocument = workspaceDocument({ id: "older", notebookId: "notebook-1", notebookName: "Methods", updatedAt: "2026-07-14T00:00:00.000Z" });
   const newerDocument = workspaceDocument({ id: "newer", notebookId: "notebook-1", notebookName: "Methods", updatedAt: "2026-07-14T01:00:00.000Z" });
@@ -143,7 +177,11 @@ const main = async () => {
     composerDrafts,
     workspaceNavigator,
     workspaceNavigatorDocument,
-    workspaceDetail
+    workspaceDetail,
+    workspaceComments,
+    workspaceCommentsHook,
+    commentThread,
+    attachmentAccessRoute
   ] = await Promise.all([
     readFile(path.join(root, "apps/api/src/db/migrate.ts"), "utf8"),
     readFile(path.join(root, "apps/api/src/repository/workspaceDocuments.ts"), "utf8"),
@@ -160,7 +198,11 @@ const main = async () => {
     readFile(path.join(root, "features/workspace/savePostDraftToWorkspace.ts"), "utf8"),
     readFile(path.join(root, "features/workspace/workspaceNavigator.ts"), "utf8"),
     readFile(path.join(root, "features/workspace/WorkspaceNavigatorDocument.tsx"), "utf8"),
-    readFile(path.join(root, "features/workspace/WorkspaceDocumentDetail.tsx"), "utf8")
+    readFile(path.join(root, "features/workspace/WorkspaceDocumentDetail.tsx"), "utf8"),
+    readFile(path.join(root, "apps/api/src/repository/workspaceComments.ts"), "utf8"),
+    readFile(path.join(root, "features/workspace/useWorkspaceComments.ts"), "utf8"),
+    readFile(path.join(root, "features/comments/CommentThread.tsx"), "utf8"),
+    readFile(path.join(root, "app/api/workspace/attachments/[attachmentId]/route.ts"), "utf8")
   ]);
 
   assert.match(migration, /0020_workspace_documents/);
@@ -169,6 +211,9 @@ const main = async () => {
   assert.match(migration, /workspace_notebook_grants/);
   assert.match(migration, /workspace_note_grants/);
   assert.match(migration, /workspace_note_comments/);
+  assert.match(migration, /0021_workspace_draft_discussion/);
+  assert.match(migration, /workspace_note_comment_actions/);
+  assert.match(migration, /note_comment/);
   assert.match(migration, /note_publications_revision_unique_idx/);
   assert.match(repository, /note\.owner_handle = \$2 OR direct\.id IS NOT NULL OR inherited\.id IS NOT NULL/);
   assert.match(repository, /reason: input\.checkpoint \? "checkpoint" : "autosave"/);
@@ -179,7 +224,7 @@ const main = async () => {
   assert.match(publicationState, /pg_advisory_lock\(hashtextextended\('symposium:workspace-note:'/);
   assert.match(publishing, /authorHandle: revision\.ownerHandle/);
   assert.match(publishing, /Private draft attachments remain protected/);
-  assert.match(attachmentRepository, /input\.ownerType === "note" \? null : publicObjectUrl/);
+  assert.match(attachmentRepository, /input\.ownerType === "note" \|\| input\.ownerType === "note_comment" \? null : publicObjectUrl/);
   assert.match(attachmentOwnership, /row\.ownerId === null && row\.uploaderHandle !== input\.uploaderHandle/);
   assert.match(workspaceHook, /symposium-workspace-sync-v1/);
   assert.match(workspaceHook, /cache: "no-store"/);
@@ -202,6 +247,22 @@ const main = async () => {
   assert.match(workspaceDetail, /savePromiseRef/);
   assert.match(workspaceDetail, /prepareForNavigation/);
   assert.match(workspaceDetail, /document\.revision <= savedDocumentRef\.current\.revision/);
+  assert.match(workspaceDetail, /<CommentComposer/);
+  assert.match(workspaceDetail, /<CommentThread/);
+  assert.match(workspaceDetail, /allowQuotes: false/);
+  assert.match(workspaceDetail, /allowReshares: false/);
+  assert.match(workspaceComments, /roleRank\[access\.role\] < roleRank\.commenter/);
+  assert.match(workspaceComments, /visibility: "private"/);
+  assert.match(workspaceComments, /recordContentView\(client, "note_comment"/);
+  assert.match(workspaceComments, /ownerType: "note_comment"/);
+  assert.match(workspaceCommentsHook, /symposium-workspace-discussion-sync-v1/);
+  assert.match(workspaceCommentsHook, /cache: "no-store"/);
+  assert.match(workspaceCommentsHook, /createClientMutationId\("workspace-comment-update"\)/);
+  assert.match(commentThread, /allowReplies\?: boolean/);
+  assert.match(commentThread, /allowReshares !== false/);
+  assert.match(commentThread, /allowQuotes !== false/);
+  assert.match(attachmentAccessRoute, /\["note", "note_comment"\]/);
+  assert.match(repository, /queueAttachmentsForOwnerStorageDeletion\([\s\S]*"note_comment"/);
   assert.match(workspaceNavigator, /workspaceDocumentMetadataUpdate/);
   assert.match(workspaceNavigator, /runAfterWorkspaceSave/);
   assert.doesNotMatch(workspaceView, /workspaceDateGroup/);
@@ -246,6 +307,12 @@ const main = async () => {
       "save/publish serialization and single-publication revisions",
       "owner-preserving collaborator publication",
       "protected private draft attachment delivery",
+      "private access-gated draft comments and replies",
+      "revision-guarded draft comment edits and tombstones",
+      "private comment likes, saves, and deduplicated views without reshares or quotes",
+      "private draft comment attachments and deletion cleanup",
+      "authoritative live and cross-tab draft discussion convergence",
+      "revision-aware protection against out-of-order draft comment responses",
       "cross-tab convergence and no-store transport",
       "All, Notebooks, Quick Notes, and persistent search surfaces",
       "fixed independently scrolling five-draft Notes navigator",

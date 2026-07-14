@@ -1,7 +1,7 @@
 export type CanonicalRoute =
   | { kind: "hall" }
   | { kind: "room"; roomId: CanonicalRoomId }
-  | { kind: "workspace"; view?: "saved" | "notes" }
+  | { kind: "workspace"; view?: "saved" | "notes"; noteId?: string; commentId?: string }
   | { kind: "funding"; view?: "civic" | "private" }
   | { kind: "opportunities" }
   | { kind: "messages"; conversationId?: string }
@@ -39,7 +39,14 @@ const encoded = (value: string) => encodeURIComponent(value.trim());
 
 export const canonicalRouteHref = (route: CanonicalRoute) => {
   if (route.kind === "room") return `/rooms/${route.roomId}`;
-  if (route.kind === "workspace") return route.view ? `/workspace?view=${route.view}` : "/workspace";
+  if (route.kind === "workspace") {
+    const parameters = new URLSearchParams();
+    if (route.view) parameters.set("view", route.view);
+    if (route.noteId) parameters.set("note", route.noteId);
+    if (route.commentId) parameters.set("comment", route.commentId);
+    const query = parameters.toString();
+    return query ? `/workspace?${query}` : "/workspace";
+  }
   if (route.kind === "funding") return route.view ? `/funding?view=${route.view}` : "/funding";
   if (route.kind === "opportunities") return "/opportunities";
   if (route.kind === "messages") {
@@ -64,8 +71,16 @@ export const parseCanonicalRoute = (pathname: string, search = ""): CanonicalRou
     return { kind: "room", roomId: segments[1] as CanonicalRoomId };
   }
   if (segments[0] === "workspace") {
-    const view = new URLSearchParams(search).get("view");
-    return { kind: "workspace", view: view === "saved" || view === "notes" ? view : undefined };
+    const parameters = new URLSearchParams(search);
+    const view = parameters.get("view");
+    const noteId = parameters.get("note")?.trim() || undefined;
+    const commentId = parameters.get("comment")?.trim() || undefined;
+    return {
+      kind: "workspace",
+      ...(view === "saved" || view === "notes" ? { view } : {}),
+      ...(noteId ? { noteId } : {}),
+      ...(commentId ? { commentId } : {})
+    };
   }
   if (segments[0] === "funding") {
     const view = new URLSearchParams(search).get("view");

@@ -11,6 +11,8 @@ import {
   profiles,
   storageDeletionJobs,
   workspaceNotebooks,
+  workspaceNoteComments,
+  workspaceNoteCommentActions,
   workspaceNoteRevisions,
   workspaceNotebookGrants,
   workspaceNoteGrants
@@ -19,7 +21,7 @@ import { parseEventCursor } from "@/apps/api/src/services/events";
 import { clerkSecretMode } from "@/apps/api/src/config/preflight";
 
 const main = async () => {
-  assert.equal(latestMigrationId, "0020_workspace_documents");
+  assert.equal(latestMigrationId, "0021_workspace_draft_discussion");
   assert.equal(clerkSecretMode("sk_test_example"), "development");
   assert.equal(clerkSecretMode("sk_live_example"), "production");
   assert.equal(clerkSecretMode(undefined), "missing");
@@ -34,6 +36,8 @@ const main = async () => {
   assert.ok("revision" in notes);
   assert.ok("revision" in noteBlocks);
   assert.ok("revision" in workspaceNotebooks);
+  assert.ok("parentId" in workspaceNoteComments);
+  assert.ok("action" in workspaceNoteCommentActions);
   assert.ok("revision" in workspaceNoteRevisions);
   assert.ok("role" in workspaceNotebookGrants);
   assert.ok("role" in workspaceNoteGrants);

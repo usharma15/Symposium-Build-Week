@@ -12,6 +12,16 @@ assert.equal(canonicalRouteHref({ kind: "room", roomId: "library" }), "/rooms/li
 assert.deepEqual(parseCanonicalRoute("/rooms/amphitheater"), { kind: "room", roomId: "amphitheater" });
 assert.equal(canonicalRouteHref({ kind: "workspace", view: "notes" }), "/workspace?view=notes");
 assert.deepEqual(parseCanonicalRoute("/workspace", "?view=saved"), { kind: "workspace", view: "saved" });
+assert.equal(
+  canonicalRouteHref({ kind: "workspace", view: "notes", noteId: "note one", commentId: "comment/one" }),
+  "/workspace?view=notes&note=note+one&comment=comment%2Fone"
+);
+assert.deepEqual(parseCanonicalRoute("/workspace", "?view=notes&note=note%20one&comment=comment%2Fone"), {
+  kind: "workspace",
+  view: "notes",
+  noteId: "note one",
+  commentId: "comment/one"
+});
 assert.equal(canonicalRouteHref({ kind: "funding", view: "private" }), "/funding?view=private");
 assert.deepEqual(parseCanonicalRoute("/opportunities"), { kind: "opportunities" });
 assert.deepEqual(parseCanonicalRoute("/messages"), { kind: "messages" });
@@ -57,7 +67,7 @@ console.log(
       ok: true,
       checked: [
         "room routes",
-        "workspace and funding views",
+        "workspace draft-comment deep links and funding views",
         "opportunities and messages",
         "post and comment round-trip",
         "profile and social-graph routes",

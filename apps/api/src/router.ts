@@ -10,8 +10,10 @@ import {
   createPostInputSchema,
   createProfileInputSchema,
   createWorkspaceDocumentInputSchema,
+  createWorkspaceCommentInputSchema,
   createWorkspaceNotebookInputSchema,
   deleteWorkspaceDocumentInputSchema,
+  deleteWorkspaceCommentInputSchema,
   deleteWorkspaceNotebookInputSchema,
   followProfileInputSchema,
   joinCommunityInputSchema,
@@ -22,9 +24,11 @@ import {
   searchInputSchema,
   sendMessageInputSchema,
   updateWorkspaceDocumentInputSchema,
+  updateWorkspaceCommentInputSchema,
   updateWorkspaceNotebookInputSchema,
   unfollowProfileInputSchema,
-  workspaceSearchInputSchema
+  workspaceSearchInputSchema,
+  workspaceCommentActionInputSchema
 } from "../../../packages/contracts/src";
 import { askAssistant } from "./repository/assistant";
 import { confirmAttachment, createAttachmentUpload } from "./repository/attachments";
@@ -60,6 +64,13 @@ import {
   updateWorkspaceDocument,
   updateWorkspaceNotebook
 } from "./repository/workspaceDocuments";
+import {
+  applyWorkspaceCommentAction,
+  createWorkspaceComment,
+  deleteWorkspaceComment,
+  getWorkspaceComments,
+  updateWorkspaceComment
+} from "./repository/workspaceComments";
 import { publishNote } from "./services/notePublishing";
 import { authedProcedure, publicProcedure, router } from "./trpc";
 import { mutationContextFromRequest } from "./services/mutations";
@@ -187,6 +198,29 @@ export const appRouter = router({
       .input(z.object({ noteId: z.string().uuid(), input: deleteWorkspaceDocumentInputSchema }))
       .mutation(({ ctx, input }) =>
         deleteWorkspaceDocument(input.noteId, input.input, ctx.actor, mutationContextFromRequest(ctx.req, "workspace.document.delete", input.input))
+      ),
+    getComments: authedProcedure.input(z.object({ noteId: z.string().uuid() })).query(({ ctx, input }) =>
+      getWorkspaceComments(input.noteId, ctx.actor)
+    ),
+    createComment: authedProcedure
+      .input(z.object({ noteId: z.string().uuid(), input: createWorkspaceCommentInputSchema }))
+      .mutation(({ ctx, input }) =>
+        createWorkspaceComment(input.noteId, input.input, ctx.actor, mutationContextFromRequest(ctx.req, "workspace.comment.create", input.input))
+      ),
+    updateComment: authedProcedure
+      .input(z.object({ noteId: z.string().uuid(), commentId: z.string().uuid(), input: updateWorkspaceCommentInputSchema }))
+      .mutation(({ ctx, input }) =>
+        updateWorkspaceComment(input.noteId, input.commentId, input.input, ctx.actor, mutationContextFromRequest(ctx.req, "workspace.comment.update", input.input))
+      ),
+    deleteComment: authedProcedure
+      .input(z.object({ noteId: z.string().uuid(), commentId: z.string().uuid(), input: deleteWorkspaceCommentInputSchema }))
+      .mutation(({ ctx, input }) =>
+        deleteWorkspaceComment(input.noteId, input.commentId, input.input, ctx.actor, mutationContextFromRequest(ctx.req, "workspace.comment.delete", input.input))
+      ),
+    commentAction: authedProcedure
+      .input(z.object({ noteId: z.string().uuid(), commentId: z.string().uuid(), input: workspaceCommentActionInputSchema }))
+      .mutation(({ ctx, input }) =>
+        applyWorkspaceCommentAction(input.noteId, input.commentId, input.input, ctx.actor, mutationContextFromRequest(ctx.req, "workspace.comment.action", input.input))
       ),
     createNotebook: authedProcedure.input(createWorkspaceNotebookInputSchema).mutation(({ ctx, input }) =>
       createWorkspaceNotebook(input, ctx.actor, mutationContextFromRequest(ctx.req, "workspace.notebook.create", input))

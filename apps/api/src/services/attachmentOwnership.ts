@@ -3,7 +3,7 @@ import type { PoolClient } from "pg";
 import type { AttachmentRow } from "../repository/foundation";
 import { queueAttachmentRowsForStorageDeletion, type AttachmentStorageRow } from "./storageDeletion";
 
-export type AttachmentOwnerType = "post" | "comment" | "note";
+export type AttachmentOwnerType = "post" | "comment" | "note" | "note_comment";
 
 export type OwnedAttachmentRow = AttachmentRow &
   AttachmentStorageRow & {

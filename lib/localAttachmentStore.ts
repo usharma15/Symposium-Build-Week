@@ -5,7 +5,7 @@ import { attachmentKindForContentType, validateAttachmentContentSignature } from
 import { officeArchiveFormatForContentType, validateOfficeArchive } from "@/lib/docxSecurity";
 import type { InquiryAttachment } from "@/lib/mockData";
 
-type LocalAttachmentOwnerType = "post" | "comment" | "message" | "note" | "profile";
+type LocalAttachmentOwnerType = "post" | "comment" | "message" | "note" | "note_comment" | "profile";
 type LocalAttachmentStatus = "pending" | "uploaded";
 
 export type LocalAttachmentRecord = {
@@ -220,7 +220,7 @@ const localRecordToAttachment = (record: LocalAttachmentRecord): InquiryAttachme
   fileName: record.fileName,
   contentType: record.contentType,
   byteSize: record.byteSize,
-  url: record.ownerType === "note"
+  url: record.ownerType === "note" || record.ownerType === "note_comment"
     ? `/api/workspace/attachments/${encodeURIComponent(record.attachmentId)}${record.actorHandle ? `?actorHandle=${encodeURIComponent(record.actorHandle)}` : ""}`
     : localAttachmentPublicPath(record),
   status: "uploaded",
@@ -233,7 +233,7 @@ export const replaceLocalOwnerAttachments = async (input: {
   actorHandle?: string;
   attachmentIds: string[];
   ownerId: string;
-  ownerType: "post" | "comment" | "note";
+  ownerType: "post" | "comment" | "note" | "note_comment";
 }) =>
   withStoreLock(async () => {
     if (input.attachmentIds.length > 100) {
@@ -281,7 +281,7 @@ export const replaceLocalOwnerAttachments = async (input: {
     return input.attachmentIds.map((attachmentId) => localRecordToAttachment(store.attachments[attachmentId]!));
   });
 
-export const deleteLocalOwnerAttachments = async (ownerType: "post" | "comment" | "note", ownerId: string) =>
+export const deleteLocalOwnerAttachments = async (ownerType: "post" | "comment" | "note" | "note_comment", ownerId: string) =>
   withStoreLock(async () => {
     const store = await loadStore();
     const owned = Object.values(store.attachments).filter(
@@ -316,7 +316,7 @@ export const resolveLocalPostAttachments = async (attachmentIds: string[], actor
 };
 
 export const localAttachmentsForOwner = async (
-  ownerType: "post" | "comment" | "note",
+  ownerType: "post" | "comment" | "note" | "note_comment",
   ownerId: string,
   actorHandle?: string
 ) => {
