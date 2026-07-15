@@ -212,40 +212,6 @@
     rgba(13, 17, 20, 0.78);
 }
 
-.symposium-shell.night .post-kind-paper,
-.symposium-shell.night .post-kind-draft,
-.symposium-shell.night .post-kind-code {
-  border-color: rgba(248, 211, 149, 0.22);
-  background:
-    linear-gradient(180deg, rgba(39, 33, 24, 0.94), rgba(16, 18, 18, 0.86)),
-    rgba(17, 15, 13, 0.92);
-}
-
-.symposium-shell.night .post-kind-thought,
-.symposium-shell.night .post-kind-note {
-  border-color: rgba(157, 238, 243, 0.2);
-  background:
-    linear-gradient(180deg, rgba(13, 33, 40, 0.94), rgba(8, 16, 20, 0.9)),
-    rgba(8, 18, 22, 0.94);
-}
-
-.symposium-shell.night .post-kind-paper:hover,
-.symposium-shell.night .post-kind-draft:hover,
-.symposium-shell.night .post-kind-code:hover {
-  border-color: rgba(248, 211, 149, 0.32);
-  background:
-    linear-gradient(180deg, rgba(45, 38, 27, 0.96), rgba(19, 20, 18, 0.9)),
-    rgba(20, 18, 15, 0.94);
-}
-
-.symposium-shell.night .post-kind-thought:hover,
-.symposium-shell.night .post-kind-note:hover {
-  border-color: rgba(157, 238, 243, 0.3);
-  background:
-    linear-gradient(180deg, rgba(15, 39, 47, 0.96), rgba(10, 19, 24, 0.93)),
-    rgba(9, 21, 26, 0.96);
-}
-
 .symposium-shell.night .feed-post p,
 .symposium-shell.night .post-author small,
 .symposium-shell.night .post-time-footer,

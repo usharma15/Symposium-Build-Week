@@ -531,35 +531,3 @@
   border-color: var(--line-strong);
   color: var(--ink);
 }
-
-.post-kind-paper,
-.post-kind-draft,
-.post-kind-code {
-  background:
-    linear-gradient(180deg, rgba(255, 253, 245, 0.94), rgba(247, 238, 214, 0.82)),
-    rgba(247, 238, 214, 0.9);
-}
-
-.post-kind-thought,
-.post-kind-note {
-  background:
-    linear-gradient(180deg, rgba(226, 246, 250, 0.92), rgba(205, 232, 238, 0.88)),
-    rgba(222, 243, 248, 0.9);
-}
-
-.post-kind-paper:hover,
-.post-kind-draft:hover,
-.post-kind-code:hover {
-  border-color: rgba(168, 103, 50, 0.22);
-  background:
-    linear-gradient(180deg, rgba(255, 253, 245, 0.97), rgba(247, 238, 214, 0.88)),
-    rgba(247, 238, 214, 0.92);
-}
-
-.post-kind-thought:hover,
-.post-kind-note:hover {
-  border-color: rgba(34, 121, 134, 0.22);
-  background:
-    linear-gradient(180deg, rgba(230, 248, 252, 0.96), rgba(210, 237, 243, 0.92)),
-    rgba(222, 243, 248, 0.94);
-}

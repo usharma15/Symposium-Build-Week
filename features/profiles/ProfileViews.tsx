@@ -55,6 +55,7 @@ import {
   ContentQuoteCard,
   type QuoteActionHandler
 } from "@/features/quotes/QuoteViews";
+import { postToneClassName, postToneForItem } from "@/lib/postTone";
 
 export type { ProfileTab } from "@/features/navigation/canonicalRoute";
 export type ProfileActivityKind = "authored" | "comments" | "fork" | "signal" | "save";
@@ -606,7 +607,7 @@ function ProfileCommentCard({
   return (
     <article
       ref={cardRef}
-      className="profile-comment-card"
+      className={`profile-comment-card ${postToneClassName(postToneForItem(activity.item))}`}
       role="button"
       tabIndex={0}
       onClick={openComment}

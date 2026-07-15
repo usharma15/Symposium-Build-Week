@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, Check, FolderInput, MoreHorizontal, Pencil, Trash2, Users } from "lucide-react";
 import { workspaceDocumentLabel, workspaceKindLabel } from "@/features/workspace/WorkspaceDocumentCard";
 import type { WorkspaceDocument, WorkspaceNotebook } from "@/lib/workspaceTypes";
+import { postToneClassName, postToneForWorkspaceDocument } from "@/lib/postTone";
 
 type DocumentMenu = "actions" | "move" | null;
 
@@ -59,7 +60,7 @@ export function WorkspaceNavigatorDocument({
 
   const title = document.title || "Untitled note";
   return (
-    <div className={`workspace-sidebar-document-row ${active ? "active" : ""} ${compact ? "compact" : ""}`}>
+    <div className={`workspace-sidebar-document-row ${active ? "active" : ""} ${compact ? "compact" : ""} ${postToneClassName(postToneForWorkspaceDocument(document))}`}>
       <button
         type="button"
         className="workspace-sidebar-document"

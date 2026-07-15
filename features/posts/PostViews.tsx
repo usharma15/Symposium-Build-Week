@@ -81,6 +81,7 @@ import { profileForHandle, profileInitials } from "@/features/identity/profilePr
 import { useQualifiedView } from "@/features/live-sync/useQualifiedView";
 import { CanonicalLink } from "@/features/navigation/CanonicalLink";
 import { canonicalRouteHref } from "@/features/navigation/canonicalRoute";
+import { postToneClassName, postToneForItem } from "@/lib/postTone";
 import {
   attachmentScribbleSource,
   postScribbleSource,
@@ -582,6 +583,7 @@ export function FeedPost({
 }) {
   const postRef = useRef<HTMLElement | null>(null);
   const scribble = useScribble();
+  const tone = postToneForItem(item);
   const openPost = () => onSelect(item.id);
   const openPostUnlessSelecting = () => {
     if (window.getSelection()?.toString().trim()) return;
@@ -602,7 +604,7 @@ export function FeedPost({
   return (
     <article
       ref={postRef}
-      className={`feed-post post-kind-${item.kind}${item.patronage ? " post-patronage-proposal" : ""}`}
+      className={`feed-post post-kind-${item.kind} ${postToneClassName(tone)}`}
       data-testid={`feed-card-${item.id}`}
       role="button"
       tabIndex={0}
@@ -844,6 +846,7 @@ export function DetailView({
 }) {
   const isPaper = item.kind === "paper";
   const isProposal = Boolean(item.patronage);
+  const tone = postToneForItem(item);
   const postDeleted = isDeletedPost(item);
   const detailRef = useRef<HTMLElement | null>(null);
   const doiSlug = item.id.replace(/[^a-z0-9]+/gi, ".").replace(/\.+/g, ".").replace(/\.$/, "");
@@ -888,7 +891,7 @@ export function DetailView({
   });
 
   return (
-    <article className={`detail-layout ${isPaper ? "paper-detail" : "simple-detail"}${isProposal ? " patronage-detail" : ""}`}>
+    <article className={`detail-layout ${isPaper ? "paper-detail" : "simple-detail"}${isProposal ? " patronage-detail" : ""} ${postToneClassName(tone)}`}>
       <button className="back-button" type="button" onClick={onBack}>
         <ArrowLeft size={17} />
         Back to {room.feedLabel}
@@ -975,6 +978,7 @@ export function DetailView({
           <CommentThread
             comments={item.comments}
             itemId={item.id}
+            tone={tone}
             profiles={profiles}
             selectedCommentId={threadSelectedCommentId}
             onOpenProfile={onOpenProfile}

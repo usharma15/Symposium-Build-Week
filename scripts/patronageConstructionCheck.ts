@@ -141,12 +141,13 @@ assert.match(localAttachmentStore, /record\.ownerType === "post" && input\.owner
 assert.match(composer, /proposal: "Patronage Proposal"/);
 assert.match(composer, /PatronageProposalFields/);
 assert.match(composer, /patronage-side-inline/);
-assert.match(composer, /post-patronage-proposal/);
+assert.match(composer, /postToneForItem/);
+assert.match(composer, /postToneClassName/);
 assert.doesNotMatch(composer, /<ScribbleActionButton[^>]*label="post"/);
 assert.match(patronageViews, /CircleDollarSign size=\{17\} \/>Contribute/);
 assert.match(patronageViews, /Private Capital <small>Coming soon<\/small>/);
 assert.match(patronageViews, /No contribution has been created or charged/);
-assert.match(patronageStyles, /\.feed-post\.post-patronage-proposal/);
+assert.match(patronageStyles, /\.post-tone-patronage \.patronage-feed-summary/);
 assert.match(patronageStyles, /\.paper-detail\.patronage-detail > \.patronage-side[\s\S]*position: fixed;[\s\S]*right: 24px;/);
 assert.match(patronageStyles, /@media \(max-width: 1439px\)/);
 assert.doesNotMatch(shell, /PatronageLobbyView|matchesPatronageMode|patronageMode/);

@@ -6,6 +6,7 @@ import { profileForHandle, profileInitials } from "@/features/identity/profilePr
 import type { ResearchProfile } from "@/lib/mockData";
 import { localDateTimeLabel, relativeTimeLabel } from "@/lib/symposiumCore";
 import type { WorkspaceDocument } from "@/lib/workspaceTypes";
+import { postToneClassName, postToneForWorkspaceDocument } from "@/lib/postTone";
 
 export const workspaceKindLabel: Record<WorkspaceDocument["kind"], string> = {
   note: "Note",
@@ -40,7 +41,7 @@ export function WorkspaceDocumentCard({
   const ownerName = owner?.name ?? document.ownerName ?? document.ownerHandle;
   return (
     <article
-      className={`feed-post workspace-document-card workspace-kind-${document.kind}`}
+      className={`feed-post workspace-document-card workspace-kind-${document.kind} ${postToneClassName(postToneForWorkspaceDocument(document))}`}
       data-testid={`workspace-card-${document.id}`}
       onClick={onOpen}
     >

@@ -52,6 +52,7 @@ import {
 } from "@/features/quotes/QuoteViews";
 import type { AttachedQuote, QuoteLinkResolver } from "@/features/quotes/quoteLinks";
 import { canonicalRouteHref } from "@/features/navigation/canonicalRoute";
+import { postToneClassName, type PostTone } from "@/lib/postTone";
 import {
   attachmentScribbleSource,
   commentScribbleSource,
@@ -256,6 +257,7 @@ export function CommentThread({
   onCommentSegmentStackChange,
   onVisibleCommentSegmentStackChange,
   options = {},
+  tone = null,
   depth = 0
 }: {
   comments: InquiryComment[];
@@ -279,10 +281,11 @@ export function CommentThread({
   onCommentSegmentStackChange: (key: string, stack: string[]) => void;
   onVisibleCommentSegmentStackChange: (key: string, stack: string[]) => void;
   options?: CommentThreadOptions;
+  tone?: PostTone | null;
   depth?: number;
 }) {
   return (
-    <div className={`comment-thread depth-${depth}`}>
+    <div className={`comment-thread depth-${depth} ${postToneClassName(tone)}`}>
       {comments.map((comment, index) => {
         const rootStackKey = commentRootStackKey(itemId, comment, index);
         return (

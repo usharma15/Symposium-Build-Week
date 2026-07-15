@@ -25,6 +25,7 @@ import {
   patronageDraftFieldsForProposal,
   patronageInputForDraft
 } from "@/features/patronage/patronageModel";
+import { postToneClassName, postToneForWorkspaceDocument } from "@/lib/postTone";
 
 type SaveDraft = {
   title: string;
@@ -139,6 +140,7 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
     attachments: document.attachments
   }));
   const discussion = useWorkspaceComments(document.id, actorHandle);
+  const tone = postToneForWorkspaceDocument(document);
 
   const currentDraft = useCallback(() => ({
     title: title.trim() || "Untitled note",
@@ -338,7 +340,7 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
         </div>
       </header>
 
-      <article className="feed-post workspace-detail-paper">
+      <article className={`feed-post workspace-detail-paper ${postToneClassName(tone)}`}>
         <div className="post-author workspace-document-author">
           <span className="avatar">{owner?.avatarUrl ? <img src={owner.avatarUrl} alt="" /> : profileInitials(ownerName)}</span>
           <span><strong>{ownerName}</strong><small>Created {relativeTimeLabel(document.createdAt, document.createdAt)}</small></span>
@@ -438,6 +440,7 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
             <CommentThread
               comments={discussion.comments}
               itemId={document.id}
+              tone={tone}
               profiles={profiles}
               selectedCommentId={selectedCommentId}
               onOpenProfile={onOpenProfile}
