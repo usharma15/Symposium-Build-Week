@@ -129,6 +129,7 @@ assert.match(source.editor, /setEditable\(!disabled, false\)/);
 assert.match(source.drawing, /setPointerCapture/);
 assert.match(source.posts, /ScribbleCitable/);
 assert.match(source.posts, /window\.getSelection\(\)\?\.toString\(\)\.trim\(\)/);
+assert.doesNotMatch(source.posts, /<ScribbleActionButton[^>]*label="post"/);
 assert.match(source.comments, /ScribbleCitable/);
 assert.match(source.attachmentWrapper, /locator\.kind === "whole"/);
 assert.match(source.attachmentWrapper, /scribble\.addCitation\(source, excerpt, locator\)/);

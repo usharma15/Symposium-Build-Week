@@ -102,6 +102,7 @@ const [
   localAttachmentStore,
   composer,
   patronageViews,
+  patronageStyles,
   shell,
   routeModel
 ] = await Promise.all([
@@ -117,6 +118,7 @@ const [
   read("lib/localAttachmentStore.ts"),
   read("features/posts/PostViews.tsx"),
   read("features/patronage/PatronageViews.tsx"),
+  read("styles/89-patronage.css"),
   read("components/SymposiumV0.tsx"),
   read("features/navigation/viewState.ts")
 ]);
@@ -139,9 +141,14 @@ assert.match(localAttachmentStore, /record\.ownerType === "post" && input\.owner
 assert.match(composer, /proposal: "Patronage Proposal"/);
 assert.match(composer, /PatronageProposalFields/);
 assert.match(composer, /patronage-side-inline/);
+assert.match(composer, /post-patronage-proposal/);
+assert.doesNotMatch(composer, /<ScribbleActionButton[^>]*label="post"/);
 assert.match(patronageViews, /CircleDollarSign size=\{17\} \/>Contribute/);
 assert.match(patronageViews, /Private Capital <small>Coming soon<\/small>/);
 assert.match(patronageViews, /No contribution has been created or charged/);
+assert.match(patronageStyles, /\.feed-post\.post-patronage-proposal/);
+assert.match(patronageStyles, /\.paper-detail\.patronage-detail > \.patronage-side[\s\S]*position: fixed;[\s\S]*right: 24px;/);
+assert.match(patronageStyles, /@media \(max-width: 1439px\)/);
 assert.doesNotMatch(shell, /PatronageLobbyView|matchesPatronageMode|patronageMode/);
 assert.doesNotMatch(routeModel, /PatronageMode/);
 
@@ -156,7 +163,9 @@ console.log(JSON.stringify({
     "canonical live proposal and provider ledger storage",
     "local and live draft persistence",
     "attachment staging across post and draft ownership",
-    "composer, feed and clicked-proposal UI",
+    "composer and sage proposal feed treatment",
+    "canonical post metrics without a post-level Scribble control",
+    "centered clicked proposal with right-margin funding rail",
     "honest payment and private-capital feature gates",
     "removed civic/private Patronage modes"
   ]

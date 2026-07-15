@@ -64,6 +64,20 @@
   line-height: 1.45;
 }
 
+.feed-post.post-patronage-proposal {
+  border-color: rgba(91, 125, 59, 0.4);
+  background:
+    linear-gradient(180deg, rgba(240, 246, 228, 0.9), rgba(228, 238, 210, 0.8)),
+    rgba(235, 242, 220, 0.84);
+}
+
+.feed-post.post-patronage-proposal:hover {
+  border-color: rgba(78, 113, 48, 0.58);
+  background:
+    linear-gradient(180deg, rgba(243, 248, 233, 0.94), rgba(232, 241, 216, 0.88)),
+    rgba(238, 245, 225, 0.9);
+}
+
 .patronage-feed-summary {
   display: grid;
   gap: 8px;
@@ -116,22 +130,34 @@
   background: linear-gradient(90deg, color-mix(in srgb, var(--aqua) 76%, #ffffff), var(--aqua));
 }
 
+.post-patronage-proposal .patronage-feed-summary {
+  border-color: rgba(91, 125, 59, 0.3);
+  background: rgba(247, 250, 239, 0.58);
+}
+
+.post-patronage-proposal .patronage-proposal-badge {
+  color: #4e7130;
+}
+
+.post-patronage-proposal .patronage-progress > i {
+  background: linear-gradient(90deg, #a9c77f, #648c45);
+}
+
 .detail-layout.paper-detail.patronage-detail {
-  grid-template-columns: minmax(0, var(--symposium-feed-width)) 276px;
-  column-gap: 16px;
+  grid-template-columns: minmax(0, var(--symposium-feed-width));
+  justify-content: center;
 }
 
 .patronage-detail > .back-button {
-  grid-column: 1 / -1;
+  grid-column: 1;
 }
 
 .paper-detail.patronage-detail > .patronage-side {
   display: grid;
-  grid-column: 2;
-  grid-row: 2;
   gap: 12px;
-  position: sticky;
-  right: auto;
+  position: fixed;
+  z-index: 4;
+  right: 24px;
   top: 120px;
   overflow-y: auto;
   width: 276px;
@@ -307,6 +333,29 @@
   background: color-mix(in srgb, var(--aqua) 10%, var(--document-surface-solid));
 }
 
+.symposium-shell.night .feed-post.post-patronage-proposal {
+  border-color: rgba(177, 204, 131, 0.28);
+  background:
+    linear-gradient(180deg, rgba(28, 44, 25, 0.95), rgba(15, 25, 17, 0.92)),
+    rgba(17, 29, 19, 0.95);
+}
+
+.symposium-shell.night .feed-post.post-patronage-proposal:hover {
+  border-color: rgba(189, 218, 139, 0.42);
+  background:
+    linear-gradient(180deg, rgba(33, 51, 29, 0.97), rgba(18, 29, 20, 0.94)),
+    rgba(20, 34, 22, 0.97);
+}
+
+.symposium-shell.night .post-patronage-proposal .patronage-feed-summary {
+  border-color: rgba(177, 204, 131, 0.3);
+  background: rgba(12, 20, 14, 0.42);
+}
+
+.symposium-shell.night .post-patronage-proposal .patronage-proposal-badge {
+  color: #bddb91;
+}
+
 .symposium-shell.night .patronage-status-open { color: #b9cf86; }
 .symposium-shell.night .patronage-status-funded { color: #83cbd1; }
 .symposium-shell.night .patronage-progress { background: rgba(255, 253, 245, 0.14); }
@@ -318,12 +367,7 @@
   .patronage-feed-summary strong { margin-left: 0; }
 }
 
-@media (max-width: 1100px) {
-  .detail-layout.paper-detail.patronage-detail {
-    grid-template-columns: minmax(0, 1fr);
-    width: min(var(--symposium-feed-width), calc(100vw - 28px));
-  }
-
+@media (max-width: 1439px) {
   .paper-detail.patronage-detail > .patronage-side {
     display: none;
   }
@@ -340,5 +384,12 @@
     overflow: visible;
     width: 100%;
     max-height: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .detail-layout.paper-detail.patronage-detail {
+    grid-template-columns: minmax(0, 1fr);
+    width: min(var(--symposium-feed-width), calc(100vw - 28px));
   }
 }

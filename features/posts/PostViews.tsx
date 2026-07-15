@@ -84,7 +84,6 @@ import { canonicalRouteHref } from "@/features/navigation/canonicalRoute";
 import {
   attachmentScribbleSource,
   postScribbleSource,
-  ScribbleActionButton,
   ScribbleCitable,
   useScribble
 } from "@/features/scribble/ScribbleContext";
@@ -603,7 +602,7 @@ export function FeedPost({
   return (
     <article
       ref={postRef}
-      className={`feed-post post-kind-${item.kind}`}
+      className={`feed-post post-kind-${item.kind}${item.patronage ? " post-patronage-proposal" : ""}`}
       data-testid={`feed-card-${item.id}`}
       role="button"
       tabIndex={0}
@@ -777,7 +776,6 @@ function SocialActions({
         );
       })}
       <QuoteActionButton disabled={postDeleted} label="post" onQuote={onQuote} />
-      <ScribbleActionButton disabled={postDeleted} label="post" source={postScribbleSource(item)} />
       <a
         className="content-link-action"
         href={canonicalRouteHref({ kind: "post", postId: item.id })}
