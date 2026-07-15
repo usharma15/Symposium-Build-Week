@@ -80,6 +80,13 @@ import { profileForHandle, profileInitials } from "@/features/identity/profilePr
 import { useQualifiedView } from "@/features/live-sync/useQualifiedView";
 import { CanonicalLink } from "@/features/navigation/CanonicalLink";
 import { canonicalRouteHref } from "@/features/navigation/canonicalRoute";
+import {
+  attachmentScribbleSource,
+  postScribbleSource,
+  ScribbleActionButton,
+  ScribbleCitable,
+  useScribble
+} from "@/features/scribble/ScribbleContext";
 
 export type PostDraft = {
   title: string;
@@ -523,7 +530,12 @@ export function FeedPost({
   surface?: ViewSurface;
 }) {
   const postRef = useRef<HTMLElement | null>(null);
+  const scribble = useScribble();
   const openPost = () => onSelect(item.id);
+  const openPostUnlessSelecting = () => {
+    if (window.getSelection()?.toString().trim()) return;
+    openPost();
+  };
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
@@ -543,7 +555,7 @@ export function FeedPost({
       data-testid={`feed-card-${item.id}`}
       role="button"
       tabIndex={0}
-      onClick={openPost}
+      onClick={openPostUnlessSelecting}
       onKeyDown={onKeyDown}
     >
       <PostOwnerControls item={item} actorHandle={actorHandle} onEditPost={onEditPost} onDeletePost={onDeletePost} />
@@ -563,15 +575,16 @@ export function FeedPost({
             {deletedPostContextTitle(item)}
           </CanonicalLink>
         </h2>
-        <SymposiumDocumentRenderer
+        <ScribbleCitable source={postScribbleSource(item)}><SymposiumDocumentRenderer
           document={item.document}
           body={item.body}
           attachments={item.attachments}
           profiles={profiles}
           mode="feed"
           onExpand={() => onAction(item.id, "read", { trigger: "expand", surface })}
-        />
-        <PostAttachmentCarousel item={item} onOpenPreview={onOpenAttachmentPreview} />
+          onCiteAttachment={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, postScribbleSource(item)))}
+        /></ScribbleCitable>
+        <PostAttachmentCarousel item={item} onOpenPreview={onOpenAttachmentPreview} onAddToScribble={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, postScribbleSource(item)))} />
         {item.quote ? (
           <ContentQuoteCard
             quote={item.quote}
@@ -711,6 +724,7 @@ function SocialActions({
         );
       })}
       <QuoteActionButton disabled={postDeleted} label="post" onQuote={onQuote} />
+      <ScribbleActionButton disabled={postDeleted} label="post" source={postScribbleSource(item)} />
       <a
         className="content-link-action"
         href={canonicalRouteHref({ kind: "post", postId: item.id })}
@@ -789,6 +803,7 @@ export function DetailView({
     document.getElementById(commentsSectionId)?.scrollIntoView({ block: "start", behavior: "smooth" });
   };
   const threadSelectedCommentId = selectedCommentId === commentsSectionTargetId ? null : selectedCommentId;
+  const scribble = useScribble();
 
   useEffect(() => {
     if (selectedCommentId !== commentsSectionTargetId) return;
@@ -853,16 +868,17 @@ export function DetailView({
             </span>
           </CanonicalLink>
         )}
-        <SymposiumDocumentRenderer
+        <ScribbleCitable source={postScribbleSource(item)}><SymposiumDocumentRenderer
           document={item.document}
           body={item.body}
           attachments={item.attachments}
           profiles={profiles}
           mode="detail"
           onOpenAttachment={(attachmentId) => onOpenAttachmentPreview(item, attachmentId)}
-        />
+          onCiteAttachment={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, postScribbleSource(item)))}
+        /></ScribbleCitable>
         {appendedContentAttachments(item.document, item.attachments ?? []).length ? (
-          <PostAttachmentCarousel item={{ ...item, attachments: appendedContentAttachments(item.document, item.attachments ?? []) }} onOpenPreview={onOpenAttachmentPreview} variant="detail" />
+          <PostAttachmentCarousel item={{ ...item, attachments: appendedContentAttachments(item.document, item.attachments ?? []) }} onOpenPreview={onOpenAttachmentPreview} onAddToScribble={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, postScribbleSource(item)))} variant="detail" />
         ) : null}
         {item.quote ? (
           <ContentQuoteCard

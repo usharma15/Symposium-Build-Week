@@ -38,6 +38,7 @@ import {
 } from "@/lib/attachmentRules";
 import { buildStructuredAttachmentMetadata } from "@/lib/structuredAttachmentPreview";
 import { StructuredAttachmentPreviewPane } from "@/features/attachments/StructuredAttachmentPreviews";
+import { AttachmentScribbleButton } from "@/features/attachments/AttachmentScribbleButton";
 import { feedPreviewAttachments } from "@/lib/documentModel";
 import { deletedPostContextTitle, isDeletedPost } from "@/lib/symposiumCore";
 import { isSafeExternalUrl } from "@/packages/contracts/src";
@@ -405,8 +406,6 @@ const startAttachmentDrag = (attachment: InquiryAttachment) => (event: React.Dra
   event.dataTransfer.effectAllowed = "copy";
   event.dataTransfer.setData("DownloadURL", `${attachment.contentType}:${attachment.fileName}:${url}`);
 };
-
-
 function postPreviewAttachments(item: InquiryItem) {
   if (isDeletedPost(item)) return [];
   return feedPreviewAttachments(item.document, item.attachments ?? [])
@@ -417,16 +416,12 @@ function postPreviewAttachments(item: InquiryItem) {
 const visibleAttachments = (attachments: InquiryAttachment[]) =>
   attachments.filter((attachment) => attachment.url).map(attachmentForRendering);
 
-export function AttachmentCarousel({
-  attachments: sourceAttachments,
-  label = "Attachments",
-  onOpenPreview,
-  variant = "feed"
-}: {
+export function AttachmentCarousel({ attachments: sourceAttachments, label = "Attachments", onOpenPreview, variant = "feed", onAddToScribble }: {
   attachments: InquiryAttachment[];
   label?: string;
   onOpenPreview: (attachmentId: string) => void;
   variant?: "feed" | "detail" | "comment";
+  onAddToScribble?: (attachment: InquiryAttachment) => void;
 }) {
   const attachments = visibleAttachments(sourceAttachments);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -484,6 +479,7 @@ export function AttachmentCarousel({
           <span>{activeAttachment.fileName}</span>
           <small>{formatAttachmentBytes(activeAttachment.byteSize)}</small>
         </button>
+        {onAddToScribble ? <AttachmentScribbleButton attachment={activeAttachment} onAdd={onAddToScribble} /> : null}
         {attachments.length > 1 ? (
           <div className="attachment-controls" aria-label="Attachment navigation">
             <button type="button" title="Previous attachment" onClick={(event) => move(event, -1)}>
@@ -503,10 +499,12 @@ export function AttachmentCarousel({
 export function PostAttachmentCarousel({
   item,
   onOpenPreview,
+  onAddToScribble,
   variant = "feed"
 }: {
   item: InquiryItem;
   onOpenPreview: AttachmentPreviewHandler;
+  onAddToScribble?: (attachment: InquiryAttachment) => void;
   variant?: "feed" | "detail";
 }) {
   return (
@@ -515,6 +513,7 @@ export function PostAttachmentCarousel({
       label="Post attachments"
       variant={variant}
       onOpenPreview={(attachmentId) => onOpenPreview(item, attachmentId)}
+      onAddToScribble={onAddToScribble}
     />
   );
 }

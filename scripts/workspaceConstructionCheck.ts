@@ -259,7 +259,8 @@ const main = async () => {
   assert.match(workspaceHook, /normalizeWorkspaceSnapshot/);
   assert.match(workspaceHook, /updateDocumentMetadata/);
   assert.match(workspaceView, /Search notes, authors, notebooks, content, comments, attachments/);
-  assert.match(workspaceView, /Quick Notes have a place/);
+  assert.match(workspaceView, /candidates\.filter\(\(document\) => document\.kind === "quick"\)/);
+  assert.match(workspaceView, /No filed Scribbles yet/);
   assert.match(workspaceView, /workspace-sidebar-scroll/);
   assert.match(workspaceView, /const creationKinds: WorkspaceDocument\["kind"\]\[\] = \["note", "thought", "paper"\]/);
   assert.match(workspaceNavigatorDocument, /toLocaleDateString\(undefined, \{ day: "2-digit", month: "2-digit", year: "2-digit" \}\)/);
@@ -331,7 +332,7 @@ const main = async () => {
     ok: true,
     checked: [
       "generic and destination-specific editor capability contracts",
-      "reserved Quick Notes destination",
+    "filed Scribbles in the Quick Notes destination",
       "revision-required workspace saves",
       "private workspace root and collaboration-ready grants",
       "immutable draft revision checkpoints",

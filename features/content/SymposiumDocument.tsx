@@ -10,6 +10,7 @@ import {
 } from "@/lib/documentModel";
 import { cleanHandle } from "@/lib/symposiumCore";
 import { AttachmentCarousel } from "@/features/attachments/AttachmentViews";
+import { DocumentDrawingPreview } from "@/features/content/DocumentDrawing";
 
 const runStyle = (run: SymposiumTextRun): CSSProperties => ({
   ...(run.font ? { fontFamily: `var(--document-font-${run.font})` } : {}),
@@ -70,6 +71,7 @@ export function SymposiumDocumentRenderer({
   profiles,
   mode = "detail",
   onOpenAttachment,
+  onCiteAttachment,
   onExpand
 }: {
   document?: VersionedDocumentContract;
@@ -78,6 +80,7 @@ export function SymposiumDocumentRenderer({
   profiles: Record<string, ResearchProfile>;
   mode?: "feed" | "detail" | "comment" | "editor";
   onOpenAttachment?: (attachmentId: string) => void;
+  onCiteAttachment?: (attachment: InquiryAttachment) => void;
   onExpand?: () => void;
 }) {
   const resolved = documentForContent(document, body);
@@ -106,33 +109,39 @@ export function SymposiumDocumentRenderer({
       const attachment = attachmentById.get(node.attachmentId);
       if (!attachment) return null;
       return (
-        <figure key={node.id} className="document-attachment-block">
+        <figure key={node.id} className="document-attachment-block" data-document-block-id={node.id}>
           <AttachmentCarousel
             attachments={[attachment]}
             label="Inline attachment"
             variant={mode === "comment" ? "comment" : "detail"}
             onOpenPreview={() => onOpenAttachment?.(attachment.id)}
+            onAddToScribble={onCiteAttachment}
           />
           {node.caption ? <figcaption>{node.caption}</figcaption> : null}
         </figure>
       );
     }
-    if (node.type === "equation") return <Equation key={node.id} source={node.source} display={node.display} />;
-    if (node.type === "code") return <pre key={node.id} className="document-code"><code>{node.code}</code></pre>;
+    if (node.type === "equation") return <div key={node.id} data-document-block-id={node.id}><Equation source={node.source} display={node.display} /></div>;
+    if (node.type === "code") return <pre key={node.id} className="document-code" data-document-block-id={node.id}><code>{node.code}</code></pre>;
+    if (node.type === "drawing") return <figure key={node.id} className="document-drawing" data-document-block-id={node.id}><DocumentDrawingPreview drawing={node.drawing} />{node.caption ? <figcaption>{node.caption}</figcaption> : null}</figure>;
     if (node.type === "list") {
       const Tag = node.style === "decimal" || node.style.includes("alpha") ? "ol" : "ul";
-      return <Tag key={node.id} className={`document-list document-list-${node.style}`} style={{ marginLeft: `${node.depth * 1.25}rem` }}>{node.items.map((item, index) => <li key={index}><TextRuns content={item} profiles={profiles} /></li>)}</Tag>;
+      return <Tag key={node.id} data-document-block-id={node.id} className={`document-list document-list-${node.style}`} style={{ marginLeft: `${node.depth * 1.25}rem` }}>{node.items.map((item, index) => <li key={index}><TextRuns content={item} profiles={profiles} /></li>)}</Tag>;
     }
-    if (node.type === "reference") return <a key={node.id} className="document-reference" href={`/${node.resource.type}s/${encodeURIComponent(node.resource.id)}`}>{node.resource.label ?? node.resource.id}</a>;
-    if (node.type === "citation") return node.href ? <a key={node.id} className="document-citation" href={node.href} target="_blank" rel="noopener noreferrer nofollow">{node.label}</a> : <span key={node.id} className="document-citation">{node.label}</span>;
+    if (node.type === "reference") return <a key={node.id} data-document-block-id={node.id} className="document-reference document-source-card" href={node.source?.canonicalPath ?? `/${node.resource.type}s/${encodeURIComponent(node.resource.id)}`}><small>{node.source?.kind ?? node.resource.type}{node.source?.author ? ` · ${node.source.author}` : ""}</small><strong>{node.source?.title ?? node.resource.label ?? node.resource.id}</strong>{node.source?.body ? <span>{node.source.body}</span> : null}</a>;
+    if (node.type === "citation") {
+      const content = <><small>Cited excerpt{node.source?.author ? ` · ${node.source.author}` : ""}</small><blockquote>{node.excerpt ?? node.label}</blockquote></>;
+      const href = node.source?.canonicalPath ?? node.href;
+      return href ? <a key={node.id} data-document-block-id={node.id} className="document-citation document-source-card" href={href} {...(href.startsWith("http") ? { target: "_blank", rel: "noopener noreferrer nofollow" } : {})}>{content}</a> : <span key={node.id} data-document-block-id={node.id} className="document-citation document-source-card">{content}</span>;
+    }
 
     const className = `document-text-block document-align-${node.type === "quote" ? "left" : node.align}${node.type === "paragraph" ? ` document-indent-${node.indent}` : ""}`;
     if (node.type === "heading") {
       const Heading = `h${Math.min(4, Math.max(1, node.level))}` as "h1" | "h2" | "h3" | "h4";
-      return <Heading key={node.id} className={className}><TextRuns content={node.content} profiles={profiles} /></Heading>;
+      return <Heading key={node.id} data-document-block-id={node.id} className={className}><TextRuns content={node.content} profiles={profiles} /></Heading>;
     }
-    if (node.type === "quote") return <blockquote key={node.id} className={className}><TextRuns content={node.content} profiles={profiles} /></blockquote>;
-    return <p key={node.id} className={className}><TextRuns content={node.content} profiles={profiles} /></p>;
+    if (node.type === "quote") return <blockquote key={node.id} data-document-block-id={node.id} className={className}><TextRuns content={node.content} profiles={profiles} /></blockquote>;
+    return <p key={node.id} data-document-block-id={node.id} className={className}><TextRuns content={node.content} profiles={profiles} /></p>;
   });
   const collapseStateClass = expanded ? "expanded" : `collapsed${collapsible ? " is-collapsible" : ""}`;
 
@@ -160,4 +169,4 @@ export function SymposiumDocumentRenderer({
   );
 }
 
-export { SymposiumDocumentEditor } from "@/features/content/SymposiumTiptapEditor";
+export { SymposiumDocumentEditor, type SymposiumDocumentEditorHandle } from "@/features/content/SymposiumTiptapEditor";

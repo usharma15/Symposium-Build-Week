@@ -657,6 +657,44 @@ export const notes = pgTable(
   ]
 );
 
+export const workspaceScribbles = pgTable(
+  "workspace_scribbles",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    ownerHandle: text("owner_handle").notNull().references(() => profiles.handle, { onDelete: "cascade" }),
+    body: text("body").default("").notNull(),
+    document: jsonb("content_document").$type<VersionedDocumentContract>().notNull(),
+    revision: integer("revision").default(1).notNull(),
+    createdAt: createdAtColumn(),
+    updatedAt: updatedAtColumn()
+  },
+  (table) => [
+    uniqueIndex("workspace_scribbles_owner_unique_idx").on(table.ownerHandle),
+    index("workspace_scribbles_workspace_idx").on(table.workspaceId),
+    check("workspace_scribbles_revision_check", sql`${table.revision} >= 1`)
+  ]
+);
+
+export const workspaceScribbleRevisions = pgTable(
+  "workspace_scribble_revisions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    scribbleId: uuid("scribble_id").notNull().references(() => workspaceScribbles.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull(),
+    editorHandle: text("editor_handle").references(() => profiles.handle, { onDelete: "set null" }),
+    body: text("body").notNull(),
+    document: jsonb("content_document").$type<VersionedDocumentContract>().notNull(),
+    reason: text("reason").default("autosave").notNull(),
+    createdAt: createdAtColumn()
+  },
+  (table) => [
+    uniqueIndex("workspace_scribble_revisions_scribble_revision_unique_idx").on(table.scribbleId, table.revision),
+    index("workspace_scribble_revisions_scribble_created_idx").on(table.scribbleId, table.createdAt),
+    check("workspace_scribble_revisions_reason_check", sql`${table.reason} IN ('created', 'autosave', 'filed', 'discarded', 'restored')`)
+  ]
+);
+
 export const workspaceNoteRevisions = pgTable(
   "workspace_note_revisions",
   {

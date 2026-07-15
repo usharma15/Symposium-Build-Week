@@ -28,7 +28,7 @@ type NoteBlockValue = {
 };
 
 export const assertExpectedRevision = (
-  resource: "note" | "note block",
+  resource: "note" | "note block" | "scribble",
   actualRevision: number,
   expectedRevision?: number
 ) => {

@@ -32,6 +32,13 @@ import {
   getWorkspaceComments,
   updateWorkspaceComment
 } from "../repository/workspaceComments";
+import {
+  discardScribble,
+  fileScribble,
+  getScribble,
+  restoreScribble,
+  updateScribble
+} from "../repository/workspaceScribbles";
 import { publishNote } from "../services/notePublishing";
 import { createPrivateDownloadUrl } from "../services/storage";
 
@@ -98,6 +105,67 @@ export const registerWorkspaceRoutes = (app: FastifyInstance) => {
       const actor = await withWriteActor(request);
       const workspace = await getWorkspaceDocuments(actor);
       return reply.send(workspace);
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.get("/v1/workspace/scribble", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      return reply.send(await getScribble(actor));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.patch("/v1/workspace/scribble", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      return reply.send(await updateScribble(
+        request.body,
+        actor,
+        mutationContextFromRequest(request, "workspace.scribble.update", request.body)
+      ));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.post("/v1/workspace/scribble/file", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      return reply.send(await fileScribble(
+        request.body,
+        actor,
+        mutationContextFromRequest(request, "workspace.scribble.file", request.body)
+      ));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.post("/v1/workspace/scribble/discard", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      return reply.send(await discardScribble(
+        request.body,
+        actor,
+        mutationContextFromRequest(request, "workspace.scribble.discard", request.body)
+      ));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.post("/v1/workspace/scribble/restore", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      return reply.send(await restoreScribble(
+        request.body,
+        actor,
+        mutationContextFromRequest(request, "workspace.scribble.restore", request.body)
+      ));
     } catch (error) {
       return sendError(app, reply, error);
     }

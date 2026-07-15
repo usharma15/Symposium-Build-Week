@@ -237,8 +237,8 @@ const mapDocument = (row: Record<string, unknown>) => {
       inheritedFromNotebook: Boolean(row.inheritedFromNotebook),
       canComment: roleRank[role] >= roleRank.commenter || owner,
       canEdit: owner || (collaborative && roleRank[role] >= roleRank.editor),
-      canPublish: owner || (collaborative && roleRank[role] >= roleRank.publisher),
-      canShare: owner || (collaborative && roleRank[role] >= roleRank.editor),
+      canPublish: kind !== "quick" && (owner || (collaborative && roleRank[role] >= roleRank.publisher)),
+      canShare: kind !== "quick" && (owner || (collaborative && roleRank[role] >= roleRank.editor)),
       canDelete: owner
     }
   };

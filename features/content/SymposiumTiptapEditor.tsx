@@ -4,9 +4,11 @@ import {
   createContext,
   useContext,
   useEffect,
+  useImperativeHandle,
   useMemo,
   useRef,
   useState,
+  forwardRef,
   type ChangeEvent,
   type CSSProperties
 } from "react";
@@ -15,6 +17,7 @@ import {
   AlignLeft,
   AlignRight,
   Bold,
+  Code2,
   FilePlus2,
   Heading1,
   Heading2,
@@ -24,6 +27,7 @@ import {
   List,
   ListOrdered,
   Paperclip,
+  PenLine,
   Pilcrow,
   Redo2,
   Sigma,
@@ -61,13 +65,16 @@ import {
   AttachmentPreviewModal,
   type AttachmentUploadHandler
 } from "@/features/attachments/AttachmentViews";
+import { DocumentDrawingDialog, DocumentDrawingPreview } from "@/features/content/DocumentDrawing";
+import type { DocumentDrawingContract } from "@/packages/contracts/src";
 
 type EditorContextValue = {
   attachments: InquiryAttachment[];
   openAttachment: (attachmentId: string) => void;
+  editDrawing: (blockId: string, drawing: DocumentDrawingContract) => void;
 };
 
-const EditorContext = createContext<EditorContextValue>({ attachments: [], openAttachment: () => undefined });
+const EditorContext = createContext<EditorContextValue>({ attachments: [], openAttachment: () => undefined, editDrawing: () => undefined });
 
 const equationSymbols = [
   ["α", "\\alpha"], ["β", "\\beta"], ["γ", "\\gamma"], ["Δ", "\\Delta"],
@@ -149,14 +156,18 @@ const marksFromJSON = (marks: JSONContent["marks"], capability: EditorCapability
       if (isOneOf(mark.attrs?.color, documentColors)) color = mark.attrs.color;
     }
   }
-  const allowedMarks = capability === "reduced" ? documentMarks.filter((mark) => ["bold", "italic", "underline"].includes(mark)) : documentMarks;
+  const allowedMarks = capability === "scribble"
+    ? documentMarks.filter((mark) => mark === "bold")
+    : capability === "reduced"
+      ? documentMarks.filter((mark) => ["bold", "italic", "underline"].includes(mark))
+      : documentMarks;
   return {
     ...(allowedMarks.length ? { marks: allowedMarks } : {}),
     ...(capability === "paper" && font ? { font } : {}),
     ...(capability === "paper" && size ? { size } : {}),
     ...(capability === "paper" && color ? { color } : {}),
-    ...(link ? { link } : {}),
-    ...(mentionHandle ? { mentionHandle } : {})
+    ...(capability !== "scribble" && link ? { link } : {}),
+    ...(capability !== "scribble" && mentionHandle ? { mentionHandle } : {})
   };
 };
 
@@ -183,10 +194,11 @@ const canonicalNodeToJSON = (node: SymposiumDocumentNode): JSONContent => {
     };
   }
   if (node.type === "code") return { type: "codeBlock", attrs: { blockId: node.id, language: node.language ?? null }, content: node.code ? [{ type: "text", text: node.code }] : [] };
+  if (node.type === "drawing") return { type: "symposiumDrawing", attrs: { blockId: node.id, drawing: node.drawing, caption: node.caption ?? null } };
   if (node.type === "equation") return { type: "symposiumEquation", attrs: { blockId: node.id, source: node.source, display: node.display, label: node.label ?? null } };
   if (node.type === "attachment") return { type: "symposiumAttachment", attrs: { blockId: node.id, attachmentId: node.attachmentId, caption: node.caption ?? null } };
-  if (node.type === "reference") return { type: "symposiumReference", attrs: { blockId: node.id, resource: node.resource } };
-  return { type: "symposiumCitation", attrs: { blockId: node.id, label: node.label, href: node.href ?? null } };
+  if (node.type === "reference") return { type: "symposiumReference", attrs: { blockId: node.id, resource: node.resource, source: node.source ?? null } };
+  return { type: "symposiumCitation", attrs: { blockId: node.id, label: node.label, href: node.href ?? null, excerpt: node.excerpt ?? null, source: node.source ?? null, locator: node.locator ?? null } };
 };
 
 export const symposiumDocumentToTiptap = (document: SymposiumDocument): JSONContent => ({
@@ -218,11 +230,20 @@ export const tiptapToSymposiumDocument = (
       });
       return capability === "paper" ? [{ id: blockId(node, "list"), type: "list", style, depth: Math.max(0, Math.min(8, Number(node.attrs?.depth) || 0)), items: items.length ? items : [[]] }] : items.map((content, index) => ({ id: `${blockId(node, "list")}-${index}`, type: "paragraph" as const, content, align: "left" as const, indent: 0 }));
     }
-    if (node.type === "codeBlock") return capability === "paper" ? [{ id: blockId(node, "code"), type: "code", ...(typeof node.attrs?.language === "string" ? { language: node.attrs.language } : {}), code: node.content?.map((child) => child.text ?? "").join("") ?? "" }] : [{ id: blockId(node), type: "paragraph", content: [{ text: node.content?.map((child) => child.text ?? "").join("") ?? "" }], align: "left", indent: 0 }];
+    if (node.type === "codeBlock") return capability === "paper" || capability === "scribble" ? [{ id: blockId(node, "code"), type: "code", ...(typeof node.attrs?.language === "string" ? { language: node.attrs.language } : {}), code: node.content?.map((child) => child.text ?? "").join("") ?? "" }] : [{ id: blockId(node), type: "paragraph", content: [{ text: node.content?.map((child) => child.text ?? "").join("") ?? "" }], align: "left", indent: 0 }];
+    if (node.type === "symposiumDrawing" && node.attrs?.drawing) return [{ id: blockId(node, "drawing"), type: "drawing", drawing: node.attrs.drawing, ...(typeof node.attrs?.caption === "string" && node.attrs.caption ? { caption: node.attrs.caption } : {}) }];
     if (node.type === "symposiumEquation") return [{ id: blockId(node, "equation"), type: "equation", source: typeof node.attrs?.source === "string" && node.attrs.source.trim() ? node.attrs.source : "x", display: node.attrs?.display !== false, ...(typeof node.attrs?.label === "string" && node.attrs.label ? { label: node.attrs.label } : {}) }];
     if (node.type === "symposiumAttachment" && typeof node.attrs?.attachmentId === "string") return [{ id: blockId(node, "asset"), type: "attachment", attachmentId: node.attrs.attachmentId, placement: "inline", ...(typeof node.attrs?.caption === "string" && node.attrs.caption ? { caption: node.attrs.caption } : {}) }];
-    if (node.type === "symposiumReference" && node.attrs?.resource) return [{ id: blockId(node, "reference"), type: "reference", resource: node.attrs.resource }];
-    if (node.type === "symposiumCitation" && typeof node.attrs?.label === "string") return [{ id: blockId(node, "citation"), type: "citation", label: node.attrs.label, ...(typeof node.attrs?.href === "string" && node.attrs.href ? { href: node.attrs.href } : {}) }];
+    if (node.type === "symposiumReference" && node.attrs?.resource) return [{ id: blockId(node, "reference"), type: "reference", resource: node.attrs.resource, ...(node.attrs.source ? { source: node.attrs.source } : {}) }];
+    if (node.type === "symposiumCitation" && typeof node.attrs?.label === "string") return [{
+      id: blockId(node, "citation"),
+      type: "citation",
+      label: node.attrs.label,
+      ...(typeof node.attrs?.href === "string" && node.attrs.href ? { href: node.attrs.href } : {}),
+      ...(typeof node.attrs?.excerpt === "string" && node.attrs.excerpt ? { excerpt: node.attrs.excerpt } : {}),
+      ...(node.attrs.source ? { source: node.attrs.source } : {}),
+      ...(node.attrs.locator ? { locator: node.attrs.locator } : {})
+    }];
     return [];
   });
   return { version: 1, nodes: nodes.length ? nodes : emptySymposiumDocument().nodes, settings };
@@ -245,7 +266,7 @@ const StableBlockIds = Extension.create({
         let changed = false;
         const seen = new Set<string>();
         newState.doc.descendants((node, pos) => {
-          if (!node.isBlock || !["paragraph", "heading", "blockquote", "bulletList", "orderedList", "codeBlock", "symposiumEquation", "symposiumAttachment", "symposiumReference", "symposiumCitation"].includes(node.type.name)) return;
+          if (!node.isBlock || !["paragraph", "heading", "blockquote", "bulletList", "orderedList", "codeBlock", "symposiumEquation", "symposiumAttachment", "symposiumDrawing", "symposiumReference", "symposiumCitation"].includes(node.type.name)) return;
           const currentId = typeof node.attrs.blockId === "string" ? node.attrs.blockId : "";
           if (!currentId || seen.has(currentId)) {
             const nextId = newDocumentBlockId();
@@ -458,6 +479,50 @@ function AttachmentNodeView({ node, updateAttributes, selected, deleteNode }: No
   );
 }
 
+function DrawingNodeView({ node, updateAttributes, selected, deleteNode }: NodeViewProps) {
+  const { editDrawing } = useContext(EditorContext);
+  const drawing = node.attrs.drawing as DocumentDrawingContract | null;
+  if (!drawing) return null;
+  return (
+    <NodeViewWrapper className={`document-drawing-editor document-atomic-node${selected ? " selected" : ""}`} data-drag-handle>
+      <button type="button" className="document-atomic-delete" title="Delete drawing" aria-label="Delete drawing" onClick={deleteNode}><Trash2 size={15} /></button>
+      <button type="button" className="document-drawing-edit" onClick={() => editDrawing(String(node.attrs.blockId ?? ""), drawing)}>
+        <DocumentDrawingPreview drawing={drawing} />
+        <span><PenLine size={15} />Edit drawing</span>
+      </button>
+      <input value={node.attrs.caption ?? ""} placeholder="Add a caption (optional)" onChange={(event) => updateAttributes({ caption: event.target.value || null })} />
+    </NodeViewWrapper>
+  );
+}
+
+function ReferenceNodeView({ node, selected, deleteNode }: NodeViewProps) {
+  const source = node.attrs.source as Record<string, unknown> | null;
+  const resource = node.attrs.resource as Record<string, unknown> | null;
+  const title = typeof source?.title === "string" ? source.title : typeof resource?.label === "string" ? resource.label : "Referenced source";
+  const body = typeof source?.body === "string" ? source.body : "";
+  const author = typeof source?.author === "string" ? source.author : "";
+  return (
+    <NodeViewWrapper className={`document-source-editor document-atomic-node${selected ? " selected" : ""}`}>
+      <button type="button" className="document-atomic-delete" title="Remove reference" aria-label="Remove reference" onClick={deleteNode}><Trash2 size={15} /></button>
+      <small>{typeof source?.kind === "string" ? source.kind : "source"}{author ? ` · ${author}` : ""}</small>
+      <strong>{title}</strong>
+      {body ? <p>{body}</p> : null}
+    </NodeViewWrapper>
+  );
+}
+
+function CitationNodeView({ node, selected, deleteNode }: NodeViewProps) {
+  const source = node.attrs.source as Record<string, unknown> | null;
+  const excerpt = typeof node.attrs.excerpt === "string" ? node.attrs.excerpt : typeof node.attrs.label === "string" ? node.attrs.label : "Citation";
+  return (
+    <NodeViewWrapper className={`document-source-editor document-citation-editor document-atomic-node${selected ? " selected" : ""}`}>
+      <button type="button" className="document-atomic-delete" title="Remove citation" aria-label="Remove citation" onClick={deleteNode}><Trash2 size={15} /></button>
+      <small>Cited excerpt{typeof source?.author === "string" ? ` · ${source.author}` : ""}</small>
+      <blockquote>{excerpt}</blockquote>
+    </NodeViewWrapper>
+  );
+}
+
 const SymposiumEquation = Node.create({
   name: "symposiumEquation", group: "block", atom: true, selectable: true, draggable: true,
   addAttributes() { return { blockId: { default: null }, source: { default: "E = mc^2" }, display: { default: true }, label: { default: null } }; },
@@ -474,18 +539,28 @@ const SymposiumAttachment = Node.create({
   addNodeView() { return ReactNodeViewRenderer(AttachmentNodeView); }
 });
 
+const SymposiumDrawing = Node.create({
+  name: "symposiumDrawing", group: "block", atom: true, selectable: true, draggable: true,
+  addAttributes() { return { blockId: { default: null }, drawing: { default: null }, caption: { default: null } }; },
+  parseHTML() { return [{ tag: "figure[data-symposium-drawing]" }]; },
+  renderHTML({ HTMLAttributes }) { return ["figure", mergeAttributes(HTMLAttributes, { "data-symposium-drawing": "true" })]; },
+  addNodeView() { return ReactNodeViewRenderer(DrawingNodeView); }
+});
+
 const SymposiumReference = Node.create({
   name: "symposiumReference", group: "block", atom: true, selectable: true,
-  addAttributes() { return { blockId: { default: null }, resource: { default: null } }; },
+  addAttributes() { return { blockId: { default: null }, resource: { default: null }, source: { default: null } }; },
   parseHTML() { return [{ tag: "div[data-symposium-reference]" }]; },
-  renderHTML({ HTMLAttributes }) { return ["div", mergeAttributes(HTMLAttributes, { "data-symposium-reference": "true", class: "document-reference" }), HTMLAttributes.resource?.label ?? HTMLAttributes.resource?.id ?? "Reference"]; }
+  renderHTML({ HTMLAttributes }) { return ["div", mergeAttributes(HTMLAttributes, { "data-symposium-reference": "true", class: "document-reference" }), HTMLAttributes.resource?.label ?? HTMLAttributes.resource?.id ?? "Reference"]; },
+  addNodeView() { return ReactNodeViewRenderer(ReferenceNodeView); }
 });
 
 const SymposiumCitation = Node.create({
   name: "symposiumCitation", group: "block", atom: true, selectable: true,
-  addAttributes() { return { blockId: { default: null }, label: { default: "Citation" }, href: { default: null } }; },
+  addAttributes() { return { blockId: { default: null }, label: { default: "Citation" }, href: { default: null }, excerpt: { default: null }, source: { default: null }, locator: { default: null } }; },
   parseHTML() { return [{ tag: "div[data-symposium-citation]" }]; },
-  renderHTML({ HTMLAttributes }) { return ["div", mergeAttributes(HTMLAttributes, { "data-symposium-citation": "true", class: "document-citation" }), HTMLAttributes.label]; }
+  renderHTML({ HTMLAttributes }) { return ["div", mergeAttributes(HTMLAttributes, { "data-symposium-citation": "true", class: "document-citation" }), HTMLAttributes.label]; },
+  addNodeView() { return ReactNodeViewRenderer(CitationNodeView); }
 });
 
 const editorExtensions = (placeholder: string, capability: EditorCapability) => [
@@ -494,13 +569,18 @@ const editorExtensions = (placeholder: string, capability: EditorCapability) => 
     bulletList: capability === "paper" ? { keepMarks: true, keepAttributes: true } : false,
     orderedList: capability === "paper" ? { keepMarks: true, keepAttributes: true } : false,
     listItem: capability === "paper" ? {} : false,
-    codeBlock: capability === "paper" ? {} : false,
+    codeBlock: capability === "paper" || capability === "scribble" ? {} : false,
     link: false,
     underline: false
   }),
   TextStyle,
   UnderlineExtension,
-  Link.configure({ openOnClick: false, autolink: true, linkOnPaste: true, HTMLAttributes: { rel: "noopener noreferrer nofollow" } }),
+  Link.configure({
+    openOnClick: false,
+    autolink: capability !== "scribble",
+    linkOnPaste: capability !== "scribble",
+    HTMLAttributes: { rel: "noopener noreferrer nofollow" }
+  }),
   TextAlign.configure({ types: ["heading", "paragraph"], alignments: ["left", "center", "right"], defaultAlignment: "left" }),
   Placeholder.configure({ placeholder, showOnlyCurrent: true, includeChildren: true }),
   StableBlockIds,
@@ -509,6 +589,7 @@ const editorExtensions = (placeholder: string, capability: EditorCapability) => 
   SymposiumMention,
   SymposiumEquation,
   SymposiumAttachment,
+  SymposiumDrawing,
   SymposiumReference,
   SymposiumCitation
 ];
@@ -596,12 +677,14 @@ function ToolbarButton({ active = false, disabled = false, title, onClick, child
   return <button type="button" title={title} aria-label={title} aria-pressed={active} className={active ? "active" : ""} disabled={disabled} onMouseDown={(event) => event.preventDefault()} onClick={onClick}>{children}</button>;
 }
 
-function EditorToolbar({ editor, capability, documentValue, onSettingsChange, onInsertEquation, onInsertAttachment, uploadDisabled }: {
+function EditorToolbar({ editor, capability, documentValue, onSettingsChange, onInsertEquation, onInsertDrawing, onInsertCode, onInsertAttachment, uploadDisabled }: {
   editor: Editor;
   capability: EditorCapability;
   documentValue: SymposiumDocument;
   onSettingsChange: (settings: NonNullable<SymposiumDocument["settings"]>) => void;
   onInsertEquation: () => void;
+  onInsertDrawing: () => void;
+  onInsertCode: () => void;
   onInsertAttachment: () => void;
   uploadDisabled: boolean;
 }) {
@@ -698,8 +781,8 @@ function EditorToolbar({ editor, capability, documentValue, onSettingsChange, on
       </div>
       <div>
         <ToolbarButton title="Bold" active={preferredMarks.bold} onClick={() => toggleInlineMark("bold")}><Bold size={16} /></ToolbarButton>
-        <ToolbarButton title="Italic" active={preferredMarks.italic} onClick={() => toggleInlineMark("italic")}><Italic size={16} /></ToolbarButton>
-        <ToolbarButton title="Underline" active={preferredMarks.underline} onClick={() => toggleInlineMark("underline")}><Underline size={16} /></ToolbarButton>
+        {capability !== "scribble" ? <ToolbarButton title="Italic" active={preferredMarks.italic} onClick={() => toggleInlineMark("italic")}><Italic size={16} /></ToolbarButton> : null}
+        {capability !== "scribble" ? <ToolbarButton title="Underline" active={preferredMarks.underline} onClick={() => toggleInlineMark("underline")}><Underline size={16} /></ToolbarButton> : null}
       </div>
       {capability === "paper" ? <>
         <div>
@@ -734,25 +817,20 @@ function EditorToolbar({ editor, capability, documentValue, onSettingsChange, on
       </> : null}
       <div>
         <ToolbarButton title="Insert equation" onClick={onInsertEquation}><Sigma size={17} /></ToolbarButton>
-        <ToolbarButton title="Insert attachment here" disabled={uploadDisabled} onClick={onInsertAttachment}><FilePlus2 size={17} /></ToolbarButton>
+        {capability === "scribble" ? <ToolbarButton title="Insert drawing" onClick={onInsertDrawing}><PenLine size={17} /></ToolbarButton> : null}
+        {capability === "scribble" ? <ToolbarButton title="Insert code block" onClick={onInsertCode}><Code2 size={17} /></ToolbarButton> : null}
+        {capability !== "scribble" ? <ToolbarButton title="Insert attachment here" disabled={uploadDisabled} onClick={onInsertAttachment}><FilePlus2 size={17} /></ToolbarButton> : null}
       </div>
     </div>
   );
 }
 
-export function SymposiumDocumentEditor({
-  value,
-  bodyFallback = "",
-  capability,
-  attachments,
-  profiles: _profiles,
-  disabled = false,
-  placeholder,
-  onChange,
-  onAttachmentsChange,
-  onBusyChange,
-  onUploadAttachment
-}: {
+export type SymposiumDocumentEditorHandle = {
+  insertNode: (node: SymposiumDocumentNode) => boolean;
+  focus: () => void;
+};
+
+type SymposiumDocumentEditorProps = {
   value?: SymposiumDocument;
   bodyFallback?: string;
   capability: EditorCapability;
@@ -764,13 +842,28 @@ export function SymposiumDocumentEditor({
   onAttachmentsChange: (attachments: InquiryAttachment[]) => void;
   onBusyChange?: (busy: boolean) => void;
   onUploadAttachment: AttachmentUploadHandler;
-}) {
+};
+
+export const SymposiumDocumentEditor = forwardRef<SymposiumDocumentEditorHandle, SymposiumDocumentEditorProps>(function SymposiumDocumentEditor({
+  value,
+  bodyFallback = "",
+  capability,
+  attachments,
+  profiles: _profiles,
+  disabled = false,
+  placeholder,
+  onChange,
+  onAttachmentsChange,
+  onBusyChange,
+  onUploadAttachment
+}, ref) {
   const documentValue = useMemo(() => normalizeDocumentAttachments(value ?? (bodyFallback ? documentForContent(undefined, bodyFallback) : emptySymposiumDocument()), attachments), [value, bodyFallback, attachments]);
   const settingsRef = useRef<NonNullable<SymposiumDocument["settings"]>>(documentValue.settings ?? defaultDocumentSettings);
   const lastEmittedRef = useRef("");
   const inlineInputRef = useRef<HTMLInputElement>(null);
   const [inlineUploading, setInlineUploading] = useState(false);
   const [previewAttachmentId, setPreviewAttachmentId] = useState<string | null>(null);
+  const [editingDrawing, setEditingDrawing] = useState<{ blockId: string | null; drawing?: DocumentDrawingContract } | null>(null);
   const [settings, setSettings] = useState(settingsRef.current);
   const attachmentsRef = useRef(attachments);
   const onChangeRef = useRef(onChange);
@@ -800,6 +893,11 @@ export function SymposiumDocumentEditor({
       onChangeRef.current(next, documentPlainText(next));
     }
   }, [capability, placeholder]);
+
+  useImperativeHandle(ref, () => ({
+    insertNode: (node) => Boolean(editor?.chain().focus().insertContent(canonicalNodeToJSON(node)).run()),
+    focus: () => { editor?.commands.focus(); }
+  }), [editor]);
 
   useEffect(() => editor?.setEditable(!disabled), [disabled, editor]);
 
@@ -831,6 +929,36 @@ export function SymposiumDocumentEditor({
       { type: "paragraph", attrs: paragraphAttributes }
     ]).run();
     applyPreferredStoredFormatting(editor);
+  };
+
+  const insertCode = () => {
+    if (!editor) return;
+    editor.chain().focus().insertContent([
+      { type: "codeBlock", attrs: { blockId: newDocumentBlockId("code"), language: null } },
+      { type: "paragraph", attrs: currentParagraphAttributes(editor) }
+    ]).run();
+  };
+
+  const saveDrawing = (drawing: DocumentDrawingContract) => {
+    if (!editor || !editingDrawing) return;
+    if (editingDrawing.blockId) {
+      editor.commands.command(({ state, tr }) => {
+        let changed = false;
+        state.doc.descendants((node, pos) => {
+          if (node.type.name !== "symposiumDrawing" || node.attrs.blockId !== editingDrawing.blockId) return;
+          tr.setNodeMarkup(pos, undefined, { ...node.attrs, drawing });
+          changed = true;
+          return false;
+        });
+        return changed;
+      });
+    } else {
+      editor.chain().focus().insertContent([
+        { type: "symposiumDrawing", attrs: { blockId: newDocumentBlockId("drawing"), drawing, caption: null } },
+        { type: "paragraph", attrs: currentParagraphAttributes(editor) }
+      ]).run();
+    }
+    setEditingDrawing(null);
   };
 
   const uploadInline = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -877,16 +1005,18 @@ export function SymposiumDocumentEditor({
         documentValue={{ ...currentDocument, settings }}
         onSettingsChange={emitSettings}
         onInsertEquation={insertEquation}
+        onInsertDrawing={() => setEditingDrawing({ blockId: null })}
+        onInsertCode={insertCode}
         onInsertAttachment={() => inlineInputRef.current?.click()}
         uploadDisabled={inlineUploading || disabled || attachments.length >= 100}
       /> : null}
       <input ref={inlineInputRef} className="document-hidden-input" type="file" multiple accept={postAttachmentAccept} disabled={inlineUploading || disabled} onChange={uploadInline} />
-      <EditorContext.Provider value={{ attachments, openAttachment: setPreviewAttachmentId }}>
+      <EditorContext.Provider value={{ attachments, openAttachment: setPreviewAttachmentId, editDrawing: (blockId, drawing) => setEditingDrawing({ blockId, drawing }) }}>
         <div className={`document-editor-canvas document-width-${settings.width} document-margin-${settings.margin}`}>
           <EditorContent editor={editor} />
         </div>
       </EditorContext.Provider>
-      <div className="document-appended-attachments">
+      {capability !== "scribble" ? <div className="document-appended-attachments">
         <div className="document-appended-label"><Paperclip size={16} /><span>Attachments after the text</span><small>These are shown first in feed previews.</small></div>
         <AttachmentComposerField
           attachments={appendedAttachments}
@@ -905,8 +1035,9 @@ export function SymposiumDocumentEditor({
           onBusyChange={onBusyChange}
           onUploadAttachment={onUploadAttachment}
         />
-      </div>
+      </div> : null}
       {fakePreviewItem && previewAttachmentId ? <AttachmentPreviewModal item={fakePreviewItem} attachmentId={previewAttachmentId} onClose={() => setPreviewAttachmentId(null)} /> : null}
+      {editingDrawing ? <DocumentDrawingDialog initial={editingDrawing.drawing} onCancel={() => setEditingDrawing(null)} onSave={saveDrawing} /> : null}
     </section>
   );
-}
+});

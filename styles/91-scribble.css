@@ -1,0 +1,123 @@
+/* Persistent site-wide Scribble surface, source capture, and compact filing controls. */
+
+.scribble-panel {
+  position: fixed;
+  z-index: 31;
+  inset: 104px auto 144px 0;
+  width: calc((100vw - min(var(--symposium-feed-width), calc(100vw - 28px))) / 2);
+  min-width: 0;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto auto auto;
+  overflow: hidden;
+  border: 1px solid rgba(255, 253, 245, 0.28);
+  border-left: 0;
+  border-radius: 0 10px 10px 0;
+  background: var(--document-surface-solid);
+  color: var(--ink);
+  box-shadow: 20px 28px 80px rgba(0, 0, 0, 0.3);
+}
+
+.scribble-header,
+.scribble-footer,
+.scribble-recovery,
+.scribble-filed,
+.scribble-conflict {
+  border-color: var(--line);
+  padding: 0.7rem;
+}
+
+.scribble-header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+}
+
+.scribble-header > div:first-child { display: grid; gap: 0.12rem; min-width: 0; }
+.scribble-header > div:first-child span { font-size: 1.05rem; font-weight: 900; }
+.scribble-header > div:first-child small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scribble-header > div:last-child { display: flex; gap: 0.35rem; }
+.scribble-header button { align-items: center; display: inline-flex; justify-content: center; min-height: 2.15rem; min-width: 2.15rem; }
+
+.scribble-source-shelf {
+  display: flex;
+  gap: 0.4rem;
+  overflow-x: auto;
+  padding: 0.55rem 0.7rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.scribble-source-shelf a {
+  flex: 0 0 min(12rem, 76%);
+  min-width: 0;
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 0.55rem;
+  background: var(--document-control-solid);
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.scribble-source-shelf small { color: var(--muted); font-size: 0.65rem; text-transform: capitalize; }
+.scribble-source-shelf strong { font-size: 0.76rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.scribble-editor-scroll { min-height: 0; overflow: auto; }
+.scribble-editor-scroll .symposium-document-editor { min-height: 100%; border: 0; border-radius: 0; box-shadow: none; }
+.scribble-editor-scroll .document-editor-toolbar { top: var(--document-editor-sticky-top); border-inline: 0; }
+.scribble-editor-scroll .document-editor-canvas { min-height: 100%; border: 0; border-radius: 0; }
+.scribble-editor-scroll .document-editor-canvas .tiptap { min-height: 20rem; padding: 0.9rem; }
+.scribble-editor-scroll .document-editor-toolbar > div { flex: 0 0 auto; }
+.scribble-loading { color: var(--muted); padding: 1rem; }
+
+.scribble-error { color: #a83d47; font-size: 0.76rem; padding: 0.45rem 0.7rem; }
+.scribble-conflict,
+.scribble-recovery,
+.scribble-filed { align-items: center; display: flex; gap: 0.5rem; border-top: 1px solid var(--line); font-size: 0.76rem; }
+.scribble-conflict { align-items: flex-start; background: color-mix(in srgb, #d49a2b 10%, var(--document-surface-solid)); }
+.scribble-conflict > div { display: flex; gap: 0.35rem; margin-left: auto; }
+.scribble-conflict button,
+.scribble-recovery button { align-items: center; display: inline-flex; gap: 0.3rem; white-space: nowrap; }
+.scribble-recovery button { margin-left: auto; }
+.scribble-filed { color: var(--muted); }
+
+.scribble-footer { display: grid; gap: 0.5rem; border-top: 1px solid var(--line); }
+.scribble-file-destination { align-items: center; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 0.4rem; }
+.scribble-file-destination select { min-width: 0; width: 100%; appearance: none; border: 0; background: transparent; color: var(--ink); font-weight: 760; }
+.scribble-footer > input { width: 100%; }
+.scribble-footer > button { width: 100%; }
+
+.scribble-launcher.active { background: rgba(196, 240, 238, 0.92); box-shadow: 0 0 0 2px rgba(196, 240, 238, 0.25), 0 18px 48px rgba(10, 16, 15, 0.22); }
+.scribble-source-action { min-width: 2rem !important; width: auto !important; }
+.attachment-scribble-action { align-items: center; display: inline-flex; flex: 0 0 auto; justify-content: center; min-height: 2rem; min-width: 2rem; padding: 0.3rem; }
+
+.scribble-selection-action {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.35rem;
+  position: fixed;
+  z-index: 110;
+  min-height: 2.25rem;
+  padding: 0 0.65rem;
+  border: 1px solid rgba(255, 253, 245, 0.28);
+  border-radius: 0.5rem;
+  background: #172322;
+  color: #fffdf5;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.3);
+  font-size: 0.74rem;
+  font-weight: 820;
+}
+
+@media (max-width: 1020px) {
+  .scribble-panel { width: 300px; }
+}
+
+@media (max-width: 760px) {
+  .scribble-panel {
+    inset: 88px 14px 86px 0;
+    width: auto;
+    min-width: 0;
+  }
+  .scribble-editor-scroll .document-editor-toolbar { flex-wrap: nowrap; overflow-x: auto; }
+}

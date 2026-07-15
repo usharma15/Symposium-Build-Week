@@ -115,6 +115,36 @@ export type WorkspaceSnapshot = {
   documents: WorkspaceDocument[];
 };
 
+export type WorkspaceScribble = {
+  id: string;
+  workspaceId: string;
+  ownerHandle: string;
+  body: string;
+  document: VersionedDocumentContract;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ScribbleNotebook = Pick<
+  WorkspaceNotebook,
+  "id" | "name" | "revision" | "collaboratorCount" | "createdAt" | "updatedAt"
+>;
+
+export type ScribbleSnapshot = {
+  scribble: WorkspaceScribble;
+  notebooks: ScribbleNotebook[];
+};
+
+export type FiledScribble = {
+  id: string;
+  title: string;
+  revision: number;
+  notebookId: string | null;
+  notebookName: string | null;
+  createdAt: string;
+};
+
 export type WorkspaceSearchResponse = {
   query: string;
   documents: WorkspaceDocument[];

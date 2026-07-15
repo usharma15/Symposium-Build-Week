@@ -112,6 +112,7 @@ import {
   type AttachmentUploadResponse
 } from "@/features/attachments/attachmentUploadClient";
 import { useDedicatedAttachmentViewer } from "@/features/attachments/useDedicatedAttachmentViewer";
+import { ScribbleLauncher, ScribbleProvider } from "@/features/scribble/ScribbleContext";
 import {
   EntrySequence,
   HallView,
@@ -1262,9 +1263,16 @@ function SymposiumExperience({
       event.kind.startsWith("profile.") ||
       event.kind.startsWith("community.") ||
       event.kind.startsWith("note.")
+      || event.kind.startsWith("scribble.")
     ) {
       if (event.kind.startsWith("note.")) {
         window.dispatchEvent(new Event("symposium-workspace-change"));
+      }
+      if (event.kind.startsWith("scribble.")) {
+        const scribbleRevision = (payload as Record<string, unknown>).revision;
+        window.dispatchEvent(new CustomEvent("symposium-scribble-change", {
+          detail: { revision: typeof scribbleRevision === "number" ? scribbleRevision : undefined }
+        }));
       }
       scheduleLiveRefresh();
     }
@@ -3128,6 +3136,7 @@ function SymposiumExperience({
   }
 
   return (
+    <ScribbleProvider actorHandle={currentProfile.handle} profiles={profiles}>
     <main
       className={`symposium-shell ${theme}`}
       data-room={activeRoom}
@@ -3366,17 +3375,7 @@ function SymposiumExperience({
         <span>New post</span>
       </button>
 
-      <button
-        className="pocket pocket-left bottom-action bottom-action-notebook"
-        type="button"
-        title="Notes workspace"
-        onClick={() => {
-          toggleOfficeMode("notes");
-        }}
-      >
-        <NotebookPen size={18} />
-        <span>Notes</span>
-      </button>
+      <ScribbleLauncher />
 
       <button
         className="pocket pocket-right bottom-action bottom-action-tablet"
@@ -3494,5 +3493,6 @@ function SymposiumExperience({
         />
       ) : null}
     </main>
+    </ScribbleProvider>
   );
 }

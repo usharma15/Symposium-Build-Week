@@ -49,7 +49,7 @@ const kindDescription: Record<WorkspaceDocument["kind"], string> = {
   thought: "A reduced-tooling draft destined for the Amphitheater",
   comment: "A reduced draft linked to a post",
   reply: "A reduced draft linked to a comment",
-  quick: "A light capture space reserved for the next pass"
+  quick: "Filed Scribbles kept as private Quick Notes"
 };
 
 export function WorkspaceView({
@@ -118,7 +118,7 @@ export function WorkspaceView({
         : candidates.filter((document) => Boolean(document.notebookId));
       return sortWorkspaceDocuments(notebookDocuments);
     }
-    if (section === "quick") return [];
+    if (section === "quick") return sortWorkspaceDocuments(candidates.filter((document) => document.kind === "quick"));
     return sortWorkspaceDocuments(candidates);
   }, [query, searchResults, section, selectedNotebookId, workspace.snapshot.documents]);
 
@@ -426,9 +426,7 @@ export function WorkspaceView({
             </section>
           ) : null}
 
-          {section === "notebooks" ? null : section === "quick" ? (
-            <div className="workspace-sidebar-empty"><StickyNote size={18} /><strong>Quick Notes</strong><span>Your quick-capture inbox will appear here.</span></div>
-          ) : visibleDocuments.length ? (
+          {section === "notebooks" ? null : visibleDocuments.length ? (
             <div className="workspace-sidebar-list">
               {visibleDocuments.map((document) => (
                 <WorkspaceNavigatorDocument
@@ -476,16 +474,10 @@ export function WorkspaceView({
             onUploadCommentAttachment={uploadDraftCommentAttachment}
             onOpenProfile={onOpenProfile}
           />
-        ) : section === "quick" ? (
-          <section className="workspace-quick-empty">
-            <StickyNote size={30} />
-            <h2>Quick Notes have a place.</h2>
-            <p>The filing destination is ready. Fast capture, inbox processing, and promotion into full drafts arrive in the next workspace pass.</p>
-          </section>
         ) : (
           <section className="feed-stream workspace-feed" aria-label="Workspace drafts">
             {workspace.loading && !visibleDocuments.length ? <div className="empty-feed"><strong>Opening your workspace…</strong><span>Checking the latest private revisions.</span></div> : null}
-            {!workspace.loading && !visibleDocuments.length ? <div className="empty-feed"><strong>{query ? "No workspace results." : selectedNotebookId ? "This notebook is ready." : "Your workspace is ready."}</strong><span>{query ? "Try a title, author, notebook, phrase, attachment, or equation." : "Create a generic Note or a destination-specific draft."}</span></div> : null}
+            {!workspace.loading && !visibleDocuments.length ? <div className="empty-feed"><strong>{query ? "No workspace results." : section === "quick" ? "No filed Scribbles yet." : selectedNotebookId ? "This notebook is ready." : "Your workspace is ready."}</strong><span>{query ? "Try a title, author, notebook, phrase, attachment, or equation." : section === "quick" ? "File the active Scribble to keep it here as a Quick Note." : "Create a generic Note or a destination-specific draft."}</span></div> : null}
             {visibleDocuments.map((document) => (
               <WorkspaceDocumentCard
                 key={document.id}

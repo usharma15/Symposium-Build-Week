@@ -31,7 +31,7 @@ const publicationTarget = (revision: PublishableWorkspaceRevision, input: Publis
     if (target === "paper" || target === "thought") return target;
     throw new TRPCError({ code: "BAD_REQUEST", message: "Choose whether this generic note becomes a Paper or a Thought." });
   }
-  throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Quick Notes are not publishable in this workspace pass." });
+  throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Develop this Quick Note into a Note or Paper before publishing it." });
 };
 
 export const publishNote = async (rawInput: unknown, actor: Actor, mutation?: MutationContext) => {

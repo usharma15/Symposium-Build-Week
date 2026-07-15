@@ -1455,6 +1455,45 @@ const migrations: Migration[] = [
           updated_at = now()
       WHERE lifecycle = 'published' AND deleted_at IS NULL;
     `
+  },
+  {
+    id: "0024_workspace_scribbles",
+    sql: `
+      CREATE TABLE IF NOT EXISTS workspace_scribbles (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        owner_handle TEXT NOT NULL REFERENCES profiles(handle) ON DELETE CASCADE,
+        body TEXT NOT NULL DEFAULT '',
+        content_document JSONB NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (owner_handle),
+        CHECK (
+          jsonb_typeof(content_document) = 'object'
+          AND content_document->>'version' = '1'
+          AND jsonb_typeof(content_document->'nodes') = 'array'
+          AND jsonb_array_length(content_document->'nodes') > 0
+        )
+      );
+      CREATE INDEX IF NOT EXISTS workspace_scribbles_workspace_idx
+        ON workspace_scribbles (workspace_id);
+
+      CREATE TABLE IF NOT EXISTS workspace_scribble_revisions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        scribble_id UUID NOT NULL REFERENCES workspace_scribbles(id) ON DELETE CASCADE,
+        revision INTEGER NOT NULL CHECK (revision >= 1),
+        editor_handle TEXT REFERENCES profiles(handle) ON DELETE SET NULL,
+        body TEXT NOT NULL,
+        content_document JSONB NOT NULL,
+        reason TEXT NOT NULL DEFAULT 'autosave'
+          CHECK (reason IN ('created', 'autosave', 'filed', 'discarded', 'restored')),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (scribble_id, revision)
+      );
+      CREATE INDEX IF NOT EXISTS workspace_scribble_revisions_scribble_created_idx
+        ON workspace_scribble_revisions (scribble_id, created_at DESC);
+    `
   }
 ];
 

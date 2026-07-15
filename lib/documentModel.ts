@@ -3,14 +3,24 @@ import type {
   InquiryAttachmentContract,
   VersionedDocumentContract
 } from "@/packages/contracts/src";
+import { documentPlainTextProjection } from "@/packages/contracts/src";
 
 export type SymposiumDocument = VersionedDocumentContract;
 export type SymposiumDocumentNode = SymposiumDocument["nodes"][number];
 export type SymposiumTextRun = Extract<SymposiumDocumentNode, { type: "paragraph" }>["content"][number];
-export type EditorCapability = "reduced" | "paper";
+export type EditorCapability = "reduced" | "paper" | "scribble";
 
 const makeId = (prefix = "block") =>
   `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
+
+const stableTextBlockId = (text: string, index: number) => {
+  let hash = 2166136261;
+  for (let offset = 0; offset < text.length; offset += 1) {
+    hash ^= text.charCodeAt(offset);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `plain-${index}-${(hash >>> 0).toString(36)}`;
+};
 
 export const newDocumentBlockId = makeId;
 
@@ -24,8 +34,8 @@ export const plainTextDocument = (body: string): SymposiumDocument => {
   const paragraphs = body.replace(/\r\n/g, "\n").split(/\n{2,}/);
   return {
     version: 1,
-    nodes: (paragraphs.length ? paragraphs : [""]).map((paragraph) => ({
-      id: makeId(),
+    nodes: (paragraphs.length ? paragraphs : [""]).map((paragraph, index) => ({
+      id: stableTextBlockId(paragraph, index),
       type: "paragraph" as const,
       content: paragraph ? [{ text: paragraph }] : [],
       align: "left" as const,
@@ -35,23 +45,9 @@ export const plainTextDocument = (body: string): SymposiumDocument => {
   };
 };
 
-const runText = (content: SymposiumTextRun[]) => content.map((run) => run.text).join("");
-
 export const documentPlainText = (document: SymposiumDocument | undefined, fallback = "") => {
   if (!document) return fallback;
-  return document.nodes
-    .map((node) => {
-      if (node.type === "paragraph" || node.type === "heading" || node.type === "quote") return runText(node.content);
-      if (node.type === "list") return node.items.map((item) => runText(item)).join("\n");
-      if (node.type === "code") return node.code;
-      if (node.type === "equation") return node.source;
-      if (node.type === "citation") return node.label;
-      if (node.type === "reference") return node.resource.label ?? "";
-      return node.caption ?? "";
-    })
-    .filter(Boolean)
-    .join("\n\n")
-    .trim();
+  return documentPlainTextProjection(document);
 };
 
 export const documentForContent = (document: SymposiumDocument | undefined, body: string) =>

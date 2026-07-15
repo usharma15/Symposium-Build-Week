@@ -124,6 +124,61 @@ export const documentTextSchema = z.object({
 
 const documentNodeIdSchema = z.string().trim().min(1).max(120);
 const documentTextContentSchema = z.array(documentTextSchema).max(5000).default([]);
+export const documentSourceSnapshotSchema = z.object({
+  kind: z.enum(["post", "comment", "attachment"]),
+  sourceId: z.string().trim().min(1).max(240),
+  sourcePostId: z.string().trim().min(1).max(240),
+  sourceCommentId: z.string().trim().min(1).max(240).optional(),
+  sourceRevision: z.number().int().positive().optional(),
+  author: z.string().trim().max(200).optional(),
+  authorHandle: z.string().trim().max(80).optional(),
+  title: z.string().trim().max(300).optional(),
+  body: z.string().max(4000).optional(),
+  createdAt: z.string().max(80).optional(),
+  canonicalPath: z.string().trim().startsWith("/").max(1000),
+  attachment: z.object({
+    id: z.string().trim().min(1).max(240),
+    fileName: z.string().trim().min(1).max(500),
+    contentType: z.string().trim().min(1).max(200),
+    kind: attachmentKindSchema,
+    byteSize: z.number().int().nonnegative().max(50 * 1024 * 1024)
+  }).optional()
+});
+export const documentCitationLocatorSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("text"),
+    startBlockId: documentNodeIdSchema.optional(),
+    endBlockId: documentNodeIdSchema.optional(),
+    startOffset: z.number().int().nonnegative().max(100000).optional(),
+    endOffset: z.number().int().nonnegative().max(100000).optional()
+  }),
+  z.object({ kind: z.literal("whole") }),
+  z.object({
+    kind: z.literal("image-region"),
+    x: z.number().min(0).max(1),
+    y: z.number().min(0).max(1),
+    width: z.number().positive().max(1),
+    height: z.number().positive().max(1)
+  }),
+  z.object({ kind: z.literal("pdf-text"), page: z.number().int().positive().max(100000), excerpt: z.string().max(4000) }),
+  z.object({ kind: z.literal("spreadsheet-range"), sheet: z.string().max(200), range: z.string().max(100) }),
+  z.object({ kind: z.literal("presentation-slide"), slide: z.number().int().positive().max(100000) })
+]);
+const drawingPointSchema = z.object({
+  x: z.number().min(0).max(1),
+  y: z.number().min(0).max(1),
+  pressure: z.number().min(0).max(1).optional()
+});
+export const documentDrawingSchema = z.object({
+  version: z.literal(1),
+  width: z.number().int().min(240).max(2400).default(960),
+  height: z.number().int().min(160).max(1600).default(540),
+  strokes: z.array(z.object({
+    color: z.enum(["ink", "blue", "crimson", "forest", "gold"]).default("ink"),
+    width: z.number().min(1).max(32).default(4),
+    points: z.array(drawingPointSchema).min(1).max(5000)
+  })).max(500)
+});
 export const documentNodeSchema = z.discriminatedUnion("type", [
   z.object({
     id: documentNodeIdSchema,
@@ -147,6 +202,7 @@ export const documentNodeSchema = z.discriminatedUnion("type", [
     items: z.array(documentTextContentSchema).min(1).max(200)
   }),
   z.object({ id: documentNodeIdSchema, type: z.literal("code"), language: z.string().max(80).optional(), code: z.string().max(100000) }),
+  z.object({ id: documentNodeIdSchema, type: z.literal("drawing"), drawing: documentDrawingSchema, caption: z.string().max(1000).optional() }),
   z.object({
     id: documentNodeIdSchema,
     type: z.literal("equation"),
@@ -162,8 +218,16 @@ export const documentNodeSchema = z.discriminatedUnion("type", [
     caption: z.string().max(1000).optional()
   }),
   z.object({ id: documentNodeIdSchema, type: z.literal("quote"), content: documentTextContentSchema, source: resourceReferenceSchema.optional() }),
-  z.object({ id: documentNodeIdSchema, type: z.literal("reference"), resource: resourceReferenceSchema }),
-  z.object({ id: documentNodeIdSchema, type: z.literal("citation"), label: z.string().max(120), href: safeExternalUrlSchema.optional() })
+  z.object({ id: documentNodeIdSchema, type: z.literal("reference"), resource: resourceReferenceSchema, source: documentSourceSnapshotSchema.optional() }),
+  z.object({
+    id: documentNodeIdSchema,
+    type: z.literal("citation"),
+    label: z.string().max(4000),
+    href: safeExternalUrlSchema.optional(),
+    excerpt: z.string().max(4000).optional(),
+    source: documentSourceSnapshotSchema.optional(),
+    locator: documentCitationLocatorSchema.optional()
+  })
 ]);
 
 export const versionedDocumentSchema = z.object({
@@ -231,6 +295,34 @@ export const documentFitsReducedEditor = (document: z.infer<typeof versionedDocu
     if (node.type !== "paragraph" && node.type !== "quote") return true;
     return node.content.every((run) => !run.font && !run.size && !run.color && !run.marks?.includes("code") && !run.marks?.includes("strikethrough"));
   });
+
+export const documentFitsScribbleEditor = (document: z.infer<typeof versionedDocumentSchema>) =>
+  document.nodes.every((node) => {
+    if (!["paragraph", "equation", "code", "drawing", "reference", "citation"].includes(node.type)) return false;
+    if (node.type !== "paragraph") return true;
+    return node.content.every((run) =>
+      !run.font && !run.size && !run.color && !run.link && !run.mentionHandle
+      && (run.marks ?? []).every((mark) => mark === "bold")
+    );
+  });
+
+export const documentPlainTextProjection = (document: z.infer<typeof versionedDocumentSchema>) =>
+  document.nodes
+    .map((node) => {
+      const runs = (content: z.infer<typeof documentTextContentSchema>) =>
+        content.map((run) => run.text).join("");
+      if (node.type === "paragraph" || node.type === "heading" || node.type === "quote") return runs(node.content);
+      if (node.type === "list") return node.items.map(runs).join("\n");
+      if (node.type === "code") return node.code;
+      if (node.type === "drawing") return node.caption ?? "Drawing";
+      if (node.type === "equation") return node.source;
+      if (node.type === "citation") return node.label;
+      if (node.type === "reference") return node.resource.label ?? "";
+      return node.caption ?? "";
+    })
+    .filter(Boolean)
+    .join("\n\n")
+    .trim();
 
 const validateDocumentAttachmentReferences = (
   document: z.infer<typeof versionedDocumentSchema> | undefined,
@@ -666,7 +758,7 @@ export const createWorkspaceDocumentInputSchema = workspaceDocumentFieldsSchema.
     context.addIssue({ code: "custom", path: ["document"], message: "This draft type uses the reduced editor formatting set." });
   }
   if (input.kind === "quick") {
-    context.addIssue({ code: "custom", path: ["kind"], message: "Quick Notes are reserved for the next workspace pass." });
+    context.addIssue({ code: "custom", path: ["kind"], message: "Quick Notes are created by filing the active Scribble." });
   }
 });
 
@@ -678,9 +770,37 @@ export const updateWorkspaceDocumentInputSchema = workspaceDocumentFieldsSchema.
   if (["thought", "comment", "reply"].includes(input.kind) && !documentFitsReducedEditor(input.document)) {
     context.addIssue({ code: "custom", path: ["document"], message: "This draft type uses the reduced editor formatting set." });
   }
-  if (input.kind === "quick") {
-    context.addIssue({ code: "custom", path: ["kind"], message: "Quick Notes are reserved for the next workspace pass." });
+  if (input.kind === "quick" && !documentFitsScribbleEditor(input.document)) {
+    context.addIssue({ code: "custom", path: ["document"], message: "Quick Notes use the Scribble formatting set." });
   }
+});
+
+export const updateScribbleInputSchema = z.object({
+  body: z.string().max(100000),
+  document: versionedDocumentSchema,
+  expectedRevision: z.number().int().positive()
+}).superRefine((input, context) => {
+  if (!documentFitsScribbleEditor(input.document)) {
+    context.addIssue({ code: "custom", path: ["document"], message: "Scribble content uses the compact formatting set." });
+  }
+  if (input.body !== documentPlainTextProjection(input.document)) {
+    context.addIssue({ code: "custom", path: ["body"], message: "Scribble plain text must match its structured document." });
+  }
+});
+
+export const fileScribbleInputSchema = z.object({
+  expectedRevision: z.number().int().positive(),
+  notebookId: z.string().uuid().nullable().default(null),
+  title: z.string().trim().min(1).max(240).optional()
+});
+
+export const discardScribbleInputSchema = z.object({
+  expectedRevision: z.number().int().positive()
+});
+
+export const restoreScribbleInputSchema = z.object({
+  discardedRevision: z.number().int().positive(),
+  expectedRevision: z.number().int().positive()
 });
 
 export const createWorkspaceCommentInputSchema = z.object({
@@ -890,6 +1010,13 @@ export type UpdateWorkspaceGrantInputContract = z.infer<typeof updateWorkspaceGr
 export type DeleteWorkspaceGrantInputContract = z.infer<typeof deleteWorkspaceGrantInputSchema>;
 export type WorkspaceCollaboratorSearchInputContract = z.infer<typeof workspaceCollaboratorSearchInputSchema>;
 export type WorkspaceSearchInputContract = z.infer<typeof workspaceSearchInputSchema>;
+export type DocumentSourceSnapshotContract = z.infer<typeof documentSourceSnapshotSchema>;
+export type DocumentCitationLocatorContract = z.infer<typeof documentCitationLocatorSchema>;
+export type DocumentDrawingContract = z.infer<typeof documentDrawingSchema>;
+export type UpdateScribbleInputContract = z.infer<typeof updateScribbleInputSchema>;
+export type FileScribbleInputContract = z.infer<typeof fileScribbleInputSchema>;
+export type DiscardScribbleInputContract = z.infer<typeof discardScribbleInputSchema>;
+export type RestoreScribbleInputContract = z.infer<typeof restoreScribbleInputSchema>;
 export type PublishNoteInputContract = z.infer<typeof publishNoteInputSchema>;
 export type AssistantMessageInputContract = z.infer<typeof assistantMessageInputSchema>;
 export type AssistantResponseContract = z.infer<typeof assistantResponseSchema>;

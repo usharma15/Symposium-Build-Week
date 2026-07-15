@@ -8,6 +8,10 @@ import {
   deleteWorkspaceGrantInputSchema,
   deleteWorkspaceDocumentInputSchema,
   deleteWorkspaceNotebookInputSchema,
+  discardScribbleInputSchema,
+  fileScribbleInputSchema,
+  restoreScribbleInputSchema,
+  updateScribbleInputSchema,
   updateWorkspaceDocumentInputSchema,
   updateWorkspaceGrantInputSchema,
   updateWorkspaceNotebookInputSchema,
@@ -42,6 +46,20 @@ type StoredRevision = Pick<
   StoredDocument,
   "revision" | "title" | "body" | "document" | "kind" | "publicationTarget" | "targetId" | "notebookId"
 > & { attachmentIds: string[]; checkpointId: string; reason: string; createdAt: string };
+type StoredScribble = {
+  id: string;
+  workspaceId: string;
+  ownerHandle: string;
+  body: string;
+  document: WorkspaceDocument["document"];
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+};
+type StoredScribbleRevision = Pick<StoredScribble, "revision" | "body" | "document"> & {
+  reason: "created" | "autosave" | "filed" | "discarded" | "restored";
+  createdAt: string;
+};
 type StoredGrant = {
   id: string;
   granteeHandle: string;
@@ -58,6 +76,8 @@ type StoredWorkspace = {
   revisions: Record<string, StoredRevision[]>;
   notebookGrants: Record<string, StoredGrant[]>;
   documentGrants: Record<string, StoredGrant[]>;
+  scribble: StoredScribble;
+  scribbleHistory: StoredScribbleRevision[];
 };
 type LocalWorkspaceStore = { version: 1; workspaces: Record<string, StoredWorkspace> };
 
@@ -118,17 +138,63 @@ const saveStore = async (store: LocalWorkspaceStore) => {
   }
 };
 
+const emptyScribbleDocument = (): WorkspaceDocument["document"] => ({
+  version: 1,
+  nodes: [{ id: `scribble-${randomUUID()}`, type: "paragraph", content: [], align: "left", indent: 0 }],
+  settings: { width: "standard", margin: "normal" }
+});
+
+const createStoredScribble = (workspaceId: string, handle: string): StoredScribble => {
+  const now = new Date().toISOString();
+  return {
+    id: randomUUID(),
+    workspaceId,
+    ownerHandle: handle,
+    body: "",
+    document: emptyScribbleDocument(),
+    revision: 1,
+    createdAt: now,
+    updatedAt: now
+  };
+};
+
+const recordScribbleRevision = (workspace: StoredWorkspace, reason: StoredScribbleRevision["reason"]) => {
+  workspace.scribbleHistory.push({
+    revision: workspace.scribble.revision,
+    body: workspace.scribble.body,
+    document: workspace.scribble.document,
+    reason,
+    createdAt: workspace.scribble.updatedAt
+  });
+  workspace.scribbleHistory = workspace.scribbleHistory.slice(-500);
+};
+
 const ensureWorkspace = (store: LocalWorkspaceStore, rawHandle: string) => {
   const handle = cleanHandle(rawHandle);
-  store.workspaces[handle] ??= {
-    workspace: { id: randomUUID(), name: "Notebook", ownerHandle: handle },
-    notebooks: [],
-    documents: [],
-    revisions: {},
-    notebookGrants: {},
-    documentGrants: {}
-  };
-  return store.workspaces[handle]!;
+  if (!store.workspaces[handle]) {
+    const workspaceId = randomUUID();
+    const scribble = createStoredScribble(workspaceId, handle);
+    store.workspaces[handle] = {
+      workspace: { id: workspaceId, name: "Notebook", ownerHandle: handle },
+      notebooks: [],
+      documents: [],
+      revisions: {},
+      notebookGrants: {},
+      documentGrants: {},
+      scribble,
+      scribbleHistory: [{ revision: 1, body: "", document: scribble.document, reason: "created", createdAt: scribble.createdAt }]
+    };
+  }
+  const workspace = store.workspaces[handle]!;
+  workspace.scribble ??= createStoredScribble(workspace.workspace.id, handle);
+  workspace.scribbleHistory ??= [{
+    revision: workspace.scribble.revision,
+    body: workspace.scribble.body,
+    document: workspace.scribble.document,
+    reason: "created",
+    createdAt: workspace.scribble.createdAt
+  }];
+  return workspace;
 };
 
 const roleFor = (workspace: StoredWorkspace, document: StoredDocument, handle: string): WorkspaceAccessRoleContract => {
@@ -167,8 +233,8 @@ const hydrateDocument = async (workspace: StoredWorkspace, document: StoredDocum
     inheritedFromNotebook: Boolean(document.notebookId && inheritedHandles.includes(handle)),
     canComment: owner || workspaceAccessRoleRank[role] >= workspaceAccessRoleRank.commenter,
     canEdit: owner || (collaborative && workspaceAccessRoleRank[role] >= workspaceAccessRoleRank.editor),
-    canPublish: owner || (collaborative && workspaceAccessRoleRank[role] >= workspaceAccessRoleRank.publisher),
-    canShare: owner || (collaborative && workspaceAccessRoleRank[role] >= workspaceAccessRoleRank.editor),
+    canPublish: document.kind !== "quick" && (owner || (collaborative && workspaceAccessRoleRank[role] >= workspaceAccessRoleRank.publisher)),
+    canShare: document.kind !== "quick" && (owner || (collaborative && workspaceAccessRoleRank[role] >= workspaceAccessRoleRank.editor)),
     canDelete: owner
   }
 };
@@ -276,6 +342,173 @@ export const getLocalWorkspace = async (actorHandle: string) => withStoreLock(as
   await saveStore(store);
   return snapshot(store, workspace, cleanHandle(actorHandle));
 });
+
+const localScribbleHasContent = (scribble: StoredScribble) =>
+  Boolean(scribble.body.trim()) || scribble.document.nodes.some((node) =>
+    node.type !== "paragraph" || node.content.some((run) => run.text.trim())
+  );
+
+const localScribbleTitle = (scribble: StoredScribble, preferred?: string) => {
+  if (preferred?.trim()) return preferred.trim();
+  const firstLine = scribble.body.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
+  if (firstLine) return firstLine.slice(0, 240);
+  const source = scribble.document.nodes.find((node) =>
+    (node.type === "reference" || node.type === "citation") && node.source?.title
+  );
+  if (source && (source.type === "reference" || source.type === "citation")) {
+    return `On ${source.source?.title}`.slice(0, 240);
+  }
+  return `Scribble · ${new Date().toISOString().slice(0, 10)}`;
+};
+
+const resetLocalScribble = (
+  workspace: StoredWorkspace,
+  reason: "filed" | "discarded"
+) => {
+  const now = new Date().toISOString();
+  workspace.scribble = {
+    ...workspace.scribble,
+    body: "",
+    document: emptyScribbleDocument(),
+    revision: workspace.scribble.revision + 1,
+    updatedAt: now
+  };
+  recordScribbleRevision(workspace, reason);
+};
+
+export const getLocalScribble = async (actorHandle: string) => withStoreLock(async () => {
+  const store = await loadStore();
+  const workspace = ensureWorkspace(store, actorHandle);
+  await saveStore(store);
+  return {
+    scribble: workspace.scribble,
+    notebooks: workspace.notebooks
+      .filter((notebook) => notebook.ownerHandle === cleanHandle(actorHandle))
+      .map((notebook) => ({
+        id: notebook.id,
+        name: notebook.name,
+        revision: notebook.revision,
+        collaboratorCount: notebook.collaboratorCount,
+        createdAt: notebook.createdAt,
+        updatedAt: notebook.updatedAt
+      }))
+  };
+});
+
+export const updateLocalScribble = async (rawInput: unknown, actorHandle: string) => {
+  const input = updateScribbleInputSchema.parse(rawInput);
+  return withStoreLock(async () => {
+    const store = await loadStore();
+    const workspace = ensureWorkspace(store, actorHandle);
+    if (workspace.scribble.revision !== input.expectedRevision) {
+      throw new LocalWorkspaceStoreError("This Scribble changed elsewhere before autosave completed.", 409);
+    }
+    workspace.scribble = {
+      ...workspace.scribble,
+      body: input.body,
+      document: input.document,
+      revision: workspace.scribble.revision + 1,
+      updatedAt: new Date().toISOString()
+    };
+    recordScribbleRevision(workspace, "autosave");
+    await saveStore(store);
+    return { scribble: workspace.scribble };
+  });
+};
+
+export const fileLocalScribble = async (rawInput: unknown, actorHandle: string) => {
+  const input = fileScribbleInputSchema.parse(rawInput);
+  return withStoreLock(async () => {
+    const store = await loadStore();
+    const handle = cleanHandle(actorHandle);
+    const workspace = ensureWorkspace(store, handle);
+    if (workspace.scribble.revision !== input.expectedRevision) {
+      throw new LocalWorkspaceStoreError("This Scribble changed elsewhere before filing completed.", 409);
+    }
+    if (!localScribbleHasContent(workspace.scribble)) {
+      throw new LocalWorkspaceStoreError("Write or add something before filing this Scribble.", 412);
+    }
+    const notebook = notebookFor(workspace, input.notebookId);
+    const now = new Date().toISOString();
+    const title = localScribbleTitle(workspace.scribble, input.title);
+    const document: StoredDocument = {
+      id: randomUUID(),
+      workspaceId: workspace.workspace.id,
+      notebookId: notebook?.id ?? null,
+      notebookName: notebook?.name ?? null,
+      ownerHandle: handle,
+      ownerName: handle.replace(/^@/, ""),
+      kind: "quick",
+      publicationTarget: "undecided",
+      targetId: null,
+      title,
+      body: workspace.scribble.body,
+      document: workspace.scribble.document,
+      lifecycle: "draft",
+      revision: 1,
+      publishedPostId: null,
+      createdAt: now,
+      updatedAt: now,
+      publishedAt: null
+    };
+    workspace.documents.push(document);
+    workspace.revisions[document.id] = [revisionFor(document, [], "created")];
+    resetLocalScribble(workspace, "filed");
+    await saveStore(store);
+    return {
+      scribble: workspace.scribble,
+      filed: {
+        id: document.id,
+        title,
+        revision: document.revision,
+        notebookId: document.notebookId,
+        notebookName: document.notebookName,
+        createdAt: document.createdAt
+      }
+    };
+  });
+};
+
+export const discardLocalScribble = async (rawInput: unknown, actorHandle: string) => {
+  const input = discardScribbleInputSchema.parse(rawInput);
+  return withStoreLock(async () => {
+    const store = await loadStore();
+    const workspace = ensureWorkspace(store, actorHandle);
+    if (workspace.scribble.revision !== input.expectedRevision) {
+      throw new LocalWorkspaceStoreError("This Scribble changed elsewhere before discard completed.", 409);
+    }
+    const discardedRevision = workspace.scribble.revision;
+    resetLocalScribble(workspace, "discarded");
+    await saveStore(store);
+    return { scribble: workspace.scribble, discardedRevision };
+  });
+};
+
+export const restoreLocalScribble = async (rawInput: unknown, actorHandle: string) => {
+  const input = restoreScribbleInputSchema.parse(rawInput);
+  return withStoreLock(async () => {
+    const store = await loadStore();
+    const workspace = ensureWorkspace(store, actorHandle);
+    if (workspace.scribble.revision !== input.expectedRevision) {
+      throw new LocalWorkspaceStoreError("This Scribble changed elsewhere before recovery completed.", 409);
+    }
+    if (localScribbleHasContent(workspace.scribble)) {
+      throw new LocalWorkspaceStoreError("The new Scribble already has content and cannot be replaced.", 409);
+    }
+    const snapshot = workspace.scribbleHistory.find((revision) => revision.revision === input.discardedRevision);
+    if (!snapshot) throw new LocalWorkspaceStoreError("That discarded Scribble is no longer recoverable.", 404);
+    workspace.scribble = {
+      ...workspace.scribble,
+      body: snapshot.body,
+      document: snapshot.document,
+      revision: workspace.scribble.revision + 1,
+      updatedAt: new Date().toISOString()
+    };
+    recordScribbleRevision(workspace, "restored");
+    await saveStore(store);
+    return { scribble: workspace.scribble };
+  });
+};
 
 export const createLocalWorkspaceDocument = async (rawInput: unknown, actorHandle: string) => {
   const input = createWorkspaceDocumentInputSchema.parse(rawInput);

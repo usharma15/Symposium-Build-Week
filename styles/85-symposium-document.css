@@ -219,6 +219,50 @@
 .document-appended-label small { color: var(--muted); margin-left: auto; }
 .document-appended-attachments .composer-attachments { margin: 0; }
 .document-missing-attachment { color: var(--muted); font-size: 0.85rem; }
+.document-drawing,
+.document-drawing-editor,
+.document-source-editor,
+.document-source-card {
+  border: 1px solid var(--line);
+  border-radius: 0.65rem;
+  background: var(--document-control-solid);
+}
+.document-drawing { margin: 1rem 0; overflow: hidden; padding: 0.6rem; }
+.document-drawing figcaption { color: var(--muted); font-size: 0.78rem; padding: 0.4rem 0.25rem 0; }
+.document-drawing-svg { display: block; width: 100%; height: auto; max-height: 32rem; }
+.document-drawing-editor { padding: 0.6rem; }
+.document-drawing-edit { display: grid; width: 100%; gap: 0.45rem; padding: 0; overflow: hidden; background: transparent; border: 0; color: var(--ink); }
+.document-drawing-edit > span { display: inline-flex; align-items: center; justify-content: center; gap: 0.35rem; min-height: 2rem; color: var(--muted); font-size: 0.78rem; }
+.document-drawing-editor > input { margin-top: 0.45rem; }
+.document-source-editor { display: grid; gap: 0.35rem; padding: 0.8rem 2.8rem 0.8rem 0.8rem; }
+.document-source-editor small,
+.document-source-card small { color: var(--muted); font-size: 0.7rem; font-weight: 760; letter-spacing: 0.04em; text-transform: capitalize; }
+.document-source-editor p,
+.document-source-editor blockquote { color: var(--muted); margin: 0; line-height: 1.45; }
+.document-source-card { color: var(--ink); display: grid; gap: 0.28rem; margin: 0.75rem 0; padding: 0.75rem; text-decoration: none; }
+.document-source-card > span { color: var(--muted); display: -webkit-box; font-size: 0.8rem; line-height: 1.4; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.document-source-card blockquote { border-left: 3px solid var(--aqua); color: var(--ink); margin: 0; padding-left: 0.7rem; }
+
+.drawing-dialog-backdrop { align-items: center; background: rgba(4, 9, 10, 0.68); display: flex; inset: 0; justify-content: center; padding: 1rem; position: fixed; z-index: 120; }
+.drawing-dialog { background: var(--document-surface-solid); border: 1px solid var(--line); border-radius: 0.8rem; box-shadow: 0 30px 100px rgba(0, 0, 0, 0.38); display: grid; gap: 0.75rem; max-height: calc(100vh - 2rem); max-width: 980px; overflow: auto; padding: 0.85rem; width: min(980px, calc(100vw - 2rem)); }
+.drawing-dialog > header,
+.drawing-dialog > footer,
+.drawing-controls { align-items: center; display: flex; gap: 0.5rem; }
+.drawing-dialog > header { justify-content: space-between; }
+.drawing-dialog > header div { display: grid; gap: 0.18rem; }
+.drawing-dialog > header span { font-weight: 850; }
+.drawing-dialog > header small { color: var(--muted); }
+.drawing-dialog > footer { justify-content: flex-end; }
+.drawing-dialog > footer button { align-items: center; display: inline-flex; gap: 0.35rem; }
+.drawing-controls { flex-wrap: wrap; }
+.drawing-controls > button { min-height: 2.2rem; min-width: 2.2rem; }
+.drawing-controls label { align-items: center; color: var(--muted); display: flex; font-size: 0.76rem; gap: 0.4rem; margin-left: auto; }
+.drawing-controls label input { width: 8rem; }
+.drawing-control-divider { align-self: stretch; border-left: 1px solid var(--line); }
+.drawing-color { background: var(--drawing-color) !important; border: 2px solid var(--document-surface-solid) !important; border-radius: 999px !important; box-shadow: 0 0 0 1px var(--line); min-height: 1.35rem !important; min-width: 1.35rem !important; padding: 0 !important; }
+.drawing-color.active { box-shadow: 0 0 0 2px var(--aqua); }
+.drawing-canvas-shell { aspect-ratio: 16 / 9; background: #fffdf8; border: 1px solid var(--line); border-radius: 0.65rem; overflow: hidden; }
+.drawing-canvas { cursor: crosshair; display: block; height: 100%; touch-action: none; user-select: none; width: 100%; }
 
 .post-composer-modal,
 .post-edit-modal,

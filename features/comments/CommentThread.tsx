@@ -52,6 +52,13 @@ import {
 } from "@/features/quotes/QuoteViews";
 import type { AttachedQuote, QuoteLinkResolver } from "@/features/quotes/quoteLinks";
 import { canonicalRouteHref } from "@/features/navigation/canonicalRoute";
+import {
+  attachmentScribbleSource,
+  commentScribbleSource,
+  ScribbleActionButton,
+  ScribbleCitable,
+  useScribble
+} from "@/features/scribble/ScribbleContext";
 
 export type CommentSegmentStacks = Record<string, string[]>;
 export type CommentThreadOptions = {
@@ -515,6 +522,7 @@ function CommentNode({
   leadingAction?: ReactNode;
 }) {
   const [replyOpen, setReplyOpen] = useState(false);
+  const scribble = useScribble();
   const replies = comment.replies ?? [];
   const nodeRef = useRef<HTMLElement | null>(null);
   const commentDeleted = isDeletedComment(comment);
@@ -575,19 +583,20 @@ function CommentNode({
           onEditComment={onEditComment}
           onDeleteComment={onDeleteComment}
         />
-        <SymposiumDocumentRenderer
+        <ScribbleCitable source={commentScribbleSource(comment, itemId)}><SymposiumDocumentRenderer
           document={comment.document}
           body={comment.body}
           attachments={comment.attachments}
           profiles={profiles}
           mode="comment"
           onOpenAttachment={(attachmentId) => comment.id && onOpenAttachmentPreview(itemId, comment.id, attachmentId)}
+          onCiteAttachment={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, commentScribbleSource(comment, itemId)))}
           onExpand={() => {
             if (comment.id && !commentDeleted) {
               onCommentAction(itemId, comment.id, "read", { trigger: "expand", surface: "thread" });
             }
           }}
-        />
+        /></ScribbleCitable>
         {comment.id && !commentDeleted && appendedContentAttachments(comment.document, comment.attachments ?? []).length ? (
           <AttachmentCarousel
             attachments={appendedContentAttachments(comment.document, comment.attachments ?? [])}
@@ -596,6 +605,7 @@ function CommentNode({
             onOpenPreview={(attachmentId) =>
               onOpenAttachmentPreview(itemId, comment.id as string, attachmentId)
             }
+            onAddToScribble={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, commentScribbleSource(comment, itemId)))}
           />
         ) : null}
         {options.allowQuotes !== false && comment.quote && onOpenQuote ? (
@@ -759,6 +769,7 @@ export function CommentActions({
         );
       })}
       {options.allowQuotes !== false && onQuote ? <QuoteActionButton disabled={deleted} label="comment" onQuote={onQuote} /> : null}
+      <ScribbleActionButton disabled={deleted} label="comment" source={commentScribbleSource(comment, itemId)} />
       {commentHref ? (
         <a
           className="content-link-action"

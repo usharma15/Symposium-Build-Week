@@ -271,7 +271,7 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
   const owner = profileForHandle(profiles, document.ownerHandle);
   const ownerName = owner?.name ?? document.ownerName ?? document.ownerHandle;
   const compatibleNotebooks = notebooks.filter((notebook) => notebook.ownerHandle === document.ownerHandle);
-  const capability = document.kind === "note" || document.kind === "paper" ? "paper" : "reduced";
+  const capability = document.kind === "quick" ? "scribble" : document.kind === "note" || document.kind === "paper" ? "paper" : "reduced";
   const targetLinked = document.kind !== "comment" && document.kind !== "reply" || Boolean(targetId.trim());
   const publicationChosen = document.kind !== "note" || publicationTarget !== "undecided";
   const editingComment = editingCommentId ? findCommentInTree(discussion.comments, editingCommentId) ?? null : null;
@@ -301,7 +301,7 @@ export const WorkspaceDocumentDetail = forwardRef<WorkspaceDocumentDetailHandle,
           {saveState}
         </div>
         <div className="workspace-detail-actions">
-          <button type="button" className="workspace-sharing-trigger" aria-label={`Sharing and access for ${document.title}`} onClick={onShare}><Users size={15} />{document.collaboratorCount ? `Shared · ${document.collaboratorCount}` : "Share"}</button>
+          {document.access.canShare ? <button type="button" className="workspace-sharing-trigger" aria-label={`Sharing and access for ${document.title}`} onClick={onShare}><Users size={15} />{document.collaboratorCount ? `Shared · ${document.collaboratorCount}` : "Share"}</button> : null}
           {!editing && document.access.canEdit ? <button type="button" onClick={() => setEditing(true)}><Pencil size={15} />Edit</button> : null}
           {document.access.canDelete ? <button type="button" className="danger" onClick={() => {
             if (window.confirm(`Delete “${document.title}”? This cannot be undone.`)) {
