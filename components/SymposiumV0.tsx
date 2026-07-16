@@ -1140,7 +1140,8 @@ function SymposiumExperience({
         ?? Object.values(profilesRef.current).find((person) => person.name === selectedKey)
         ?? getProfileForName(selectedKey)
       : null;
-    return [refreshData(handle), refreshFollowing(handle), ...(selected?.handle ? [refreshProfileFollows(selected.handle)] : [])];
+    return [refreshData(handle), refreshFollowing(handle), refreshProfileActivity(handle, handle),
+      ...(selected?.handle ? [refreshProfileFollows(selected.handle), refreshProfileActivity(selected.handle, handle)] : [])];
   });
 
   const invalidateLiveQuotedSource = (source: QuoteSelection) => {
@@ -2069,6 +2070,7 @@ function SymposiumExperience({
     clearRetryMutationKey,
     persist: () => persistLocalSnapshot(itemsRef.current, profilesRef.current),
     openCommunity,
+    refresh: scheduleLiveRefresh,
     setStatus: setSyncStatus
   });
 
@@ -3261,7 +3263,7 @@ function SymposiumExperience({
         ) : selectedProfile ? (
           <ProfileView
             person={selectedProfile}
-            items={items.filter(communityPostIsExternallyDiscoverable)}
+            items={items}
             isOwnProfile={selectedProfile.handle === currentProfile.handle}
             isFollowing={followingHandles.includes(selectedProfile.handle)}
             onSelect={openPost}
@@ -3357,7 +3359,7 @@ function SymposiumExperience({
             state={{ selectedCommunity, communities, items, calls: selectedCommunity ? communityCalls[selectedCommunity.id] ?? [] : [], currentProfile, profiles, membershipBusy: communityMembershipBusy }}
             directory={{ query: communityQuery, onQuery: setCommunityQuery, expanded: communitiesExpanded, onExpanded: setCommunitiesExpanded }}
             actions={{
-              onBack: closeCommunity, onMembership: communityController.changeMembership,
+              onBack: closeCommunity, onMembership: communityController.changeMembership, onVisibility: communityController.changeVisibility,
               onCreatePost: () => { if (selectedCommunity) { setComposerCommunityId(selectedCommunity.id); setComposerOpen(true); } },
               onCreateCall: communityController.createCall, onJoinCall: communityController.joinCall,
               onInvite: communityController.invite, onMessageModerator: (handle) => { const normalized = cleanHandle(handle); setMessageRecipientHandle(normalized); navigateView({ messagesOpen: true, selectedConversationId: `direct:${normalized}` }, null); },

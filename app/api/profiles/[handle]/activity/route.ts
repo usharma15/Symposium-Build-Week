@@ -2,7 +2,7 @@ import { getSnapshot } from "@/lib/dataStore";
 import { proxyLiveBackend } from "@/lib/liveBackendClient";
 import { cleanHandle } from "@/lib/symposiumCore";
 import type { ToggleActionContract } from "@/packages/contracts/src";
-import { hiddenCommunityActivityCounts, profileCommentsArePubliclyListable, profileItemIsPubliclyListable } from "@/lib/profileActivity";
+import { emptyProfileActivityCounts, hiddenCommunityActivityCounts, profileCommentsArePubliclyListable, profileItemIsPubliclyListable } from "@/lib/profileActivity";
 import { listLocalCommunities } from "@/lib/localCommunityStore";
 
 export const runtime = "nodejs";
@@ -59,11 +59,11 @@ export async function GET(request: Request, context: Context) {
         cleanHandle(activity.actorHandle) === targetHandle &&
         allowed.has(activity.action) &&
         (ownProfile || activity.active) &&
-        Boolean(itemById.get(activity.postId) && (
+        Boolean(itemById.get(activity.postId) && (ownProfile || (
           activity.subjectType === "comment"
             ? profileCommentsArePubliclyListable(itemById.get(activity.postId)!, communities)
             : profileItemIsPubliclyListable(itemById.get(activity.postId)!, communities)
-        ))
+        )))
     )
     .sort((a, b) => {
       const timestampDelta = Date.parse(b.occurredAt) - Date.parse(a.occurredAt);
@@ -81,6 +81,8 @@ export async function GET(request: Request, context: Context) {
       nextOffset < entries.length
         ? Buffer.from(JSON.stringify({ offset: nextOffset })).toString("base64url")
         : null,
-    hiddenCommunityCounts: hiddenCommunityActivityCounts(snapshot.items, communities, targetHandle, allowedActions)
+    hiddenCommunityCounts: ownProfile
+      ? emptyProfileActivityCounts()
+      : hiddenCommunityActivityCounts(snapshot.items, communities, targetHandle, allowedActions)
   });
 }

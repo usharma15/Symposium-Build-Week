@@ -4,6 +4,7 @@ import {
   createCommunityInputSchema,
   createPostInputSchema,
   researchCommunitySchema,
+  updateCommunityVisibilityInputSchema,
   type InquiryItemContract,
 } from "../packages/contracts/src";
 import {
@@ -125,6 +126,40 @@ const projected = projectCommunityItemsForViewer([privateThought, publicPaper], 
 assert.deepEqual(projected.map((entry) => entry.id), [privateThought.id, publicPaper.id], "A paper-cited private source must remain directly available.");
 assert.equal(projected[0]?.communityAccess, "citation-only", "Private cited sources must be non-interactive projections.");
 assert.equal(projected[1]?.communityAccess, "full", "Papers must retain full public access.");
+assert.equal(projected[1]?.comments.length, 0, "Private-community paper discussion must stay private even though the paper is public.");
+
+const ownerProjected = projectCommunityItemsForViewer([privateThought, publicPaper], [community], "@researcher");
+assert.equal(ownerProjected.find((entry) => entry.id === privateThought.id)?.communityAccess, "activity-only", "Users must retain their own private-community profile activity.");
+assert.equal(projectCommunityItemsForViewer([privateThought], [{ ...community, visibility: "public" }])[0]?.communityAccess, "full", "Current public visibility must immediately restore normal access.");
+assert.equal(projectCommunityItemsForViewer([privateThought], [{ ...community, visibility: "private" }]).length, 0, "Current private visibility must immediately remove external profile activity.");
+
+const externalQuoteOwner = item({
+  id: "external-quote-owner",
+  kind: "thought",
+  postType: "thought",
+  room: "amphitheater",
+  title: "External quote owner",
+  comments: [{
+    id: "external-private-quote",
+    author: "External Commenter",
+    authorHandle: "@external",
+    body: "A comment quoting private community content.",
+    stance: "comment",
+    quote: { sourceType: "post", sourceId: privateThought.id, sourcePostId: privateThought.id, available: true, attachmentCount: 0 },
+    replies: []
+  }, {
+    id: "external-paper-quote",
+    author: "External Commenter",
+    authorHandle: "@external",
+    body: "A comment quoting a permanently public paper.",
+    stance: "comment",
+    quote: { sourceType: "post", sourceId: publicPaper.id, sourcePostId: publicPaper.id, available: true, attachmentCount: 0 },
+    replies: []
+  }]
+});
+const externalQuoteProjection = projectCommunityItemsForViewer([privateThought, publicPaper, externalQuoteOwner], [community]);
+assert.equal(externalQuoteProjection.find((entry) => entry.id === externalQuoteOwner.id)?.comments[0]?.quote?.available, false, "Comments must flatten quotes from current private non-paper community content.");
+assert.equal(externalQuoteProjection.find((entry) => entry.id === externalQuoteOwner.id)?.comments[1]?.quote?.available, true, "Quoted papers must remain available regardless of community visibility.");
 
 const commentProjected = projectCommunityItemsForViewer([privateCommentSource, commentCitingPaper], [community]);
 const citedCommentSource = commentProjected.find((entry) => entry.id === privateCommentSource.id);
@@ -140,6 +175,7 @@ assert.equal(createCommunityInputSchema.safeParse({
   summary: "A place to test instruments together.",
   visibility: "public"
 }).success, true);
+assert.equal(updateCommunityVisibilityInputSchema.safeParse({ communityId: community.id, visibility: "public", expectedRevision: 1 }).success, true);
 
 const basePost = {
   title: "Community paper",
@@ -215,9 +251,10 @@ const sources = await Promise.all([
   readFile(new URL("../features/posts/PostViews.tsx", import.meta.url), "utf8"),
   readFile(new URL("../styles/89-communities.css", import.meta.url), "utf8"),
   readFile(new URL("../lib/localCommunityStore.ts", import.meta.url), "utf8"),
-  readFile(new URL("../apps/api/src/services/contentQuotes.ts", import.meta.url), "utf8")
+  readFile(new URL("../apps/api/src/services/contentQuotes.ts", import.meta.url), "utf8"),
+  readFile(new URL("../app/api/communities/[id]/route.ts", import.meta.url), "utf8")
 ]);
-const [views, filterModal, peopleModal, repository, foundation, membershipRoute, shell, postViews, communityStyles, localStore, quoteService] = sources;
+const [views, filterModal, peopleModal, repository, foundation, membershipRoute, shell, postViews, communityStyles, localStore, quoteService, communityRoute] = sources;
 assert.match(views, /communityMembershipLabel/, "The selected view must use one canonical membership control.");
 assert.match(views, /Create community/, "The directory must expose community creation.");
 assert.match(views, /Events & calls/, "The active right rail must expose events and calls.");
@@ -229,7 +266,7 @@ assert.match(peopleModal, /Quick search members/, "The member directory must exp
 assert.match(filterModal, /Hot right now/, "Community feed filtering must expose a real heat ranking.");
 assert.match(repository, /assertCommunityParticipation/, "Community writes must enforce active participation.");
 assert.match(repository, /last_accessed_at/, "Recent community access must persist server-side.");
-assert.match(foundation, /citationOnlyItemProjection/, "Bootstrap delivery must enforce citation-only private source projection.");
+assert.match(foundation, /projectCommunityItemsForViewer/, "Bootstrap delivery must use the canonical current-state community projection.");
 assert.match(foundation, /syncCommunityActivityFixtures/, "Community activity fixtures must hydrate the durable live backend.");
 assert.match(foundation, /fixture_revisions/, "Community activity enrichment must not rerun on every backend cold start.");
 assert.match(foundation, /communityCalls/, "Canonical bootstrap refreshes must reconcile community calls.");
@@ -240,6 +277,11 @@ assert.match(shell, /selectedCommunity && canParticipateInCommunity/, "The globa
 assert.match(postViews, /Post destination/, "The global composer must allow switching between community and global publication.");
 assert.doesNotMatch(communityStyles, /data-room=\"communities\"[^}]+display:\s*none/, "Communities must never hide the global bottom launchers.");
 assert.match(localStore, /version: 4/, "Existing local community state must migrate to recency-aware memberships.");
+assert.match(localStore, /updateLocalCommunityVisibility/, "Local community visibility must persist through the canonical store.");
+assert.match(repository, /community\.visibility\.update/, "Live community visibility changes must be audited.");
+assert.match(repository, /community\.visibility\.updated/, "Live community visibility changes must invalidate every connected projection.");
+assert.match(communityRoute, /export async function PATCH/, "Community visibility needs a revision-guarded Next route.");
+assert.match(views, /community-visibility-modal/, "Owners and moderators need explicit current-state visibility controls.");
 assert.match(quoteService, /Private community content can only be quoted inside that community or cited by a public paper/, "Private quote sources need one canonical destination boundary.");
 
 console.log("community construction checks passed");

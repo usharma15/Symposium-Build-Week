@@ -7,7 +7,8 @@ import type {
   CommunityMemberQueryContract,
   CommunityMembershipStatusContract,
   CreateCommunityInputContract,
-  CreateCommunityCallInputContract
+  CreateCommunityCallInputContract,
+  UpdateCommunityVisibilityInputContract
 } from "@/packages/contracts/src";
 import { profile, profilesByName, researchCommunities, type ResearchCommunity, type ResearchProfile } from "@/lib/mockData";
 import { seededCommunityCallMap } from "@/lib/communityFixtures";
@@ -45,9 +46,11 @@ const seedState = (): LocalCommunityState => ({
     community.id,
     Object.fromEntries(community.memberHandles.map((handle, index) => [cleanHandle(handle), {
       status: "active" as const,
-      role: (community.moderatorHandles ?? []).map(cleanHandle).includes(cleanHandle(handle))
-        ? index === 0 ? "owner" as const : "moderator" as const
-        : "member" as const,
+      role: index === 0
+        ? "owner" as const
+        : (community.moderatorHandles ?? []).map(cleanHandle).includes(cleanHandle(handle))
+          ? "moderator" as const
+          : "member" as const,
       joinedAt: new Date(Date.UTC(2026, 6, 15 - Math.floor(index / 18), 18 - (communityIndex % 5), index % 60)).toISOString(),
       lastAccessedAt: cleanHandle(handle) === "@udayan"
         ? new Date(Date.UTC(2026, 6, 16, 12 - communityIndex, 0)).toISOString()
@@ -120,11 +123,13 @@ const projectCommunity = (state: LocalCommunityState, community: ResearchCommuni
     : "none";
   return {
     ...community,
+    revision: community.revision ?? 1,
     online: community.visibility === "private" && status !== "active" ? 0 : community.online,
     memberHandles: community.visibility === "private" && status !== "active" ? [] : activeMembers.slice(0, 50),
     memberCount: community.visibility === "private" && status !== "active" ? 0 : activeMembers.length,
     monthlyActive: community.visibility === "private" && status !== "active" ? 0 : Math.max(community.online, Math.round(activeMembers.length * 0.72)),
     membershipStatus: status,
+    viewerRole: status === "active" ? membership?.role : undefined,
     lastAccessedAt: membership?.lastAccessedAt,
     moderatorHandles: community.visibility === "private" && status !== "active" ? [] : community.moderatorHandles ?? activeMembers.slice(0, 2),
     guidelines: community.visibility === "private" && status !== "active" ? undefined : community.guidelines ?? "Keep criticism attached to the work. Preserve sources and leave a legible trail when a claim changes.",
@@ -147,6 +152,7 @@ export const createLocalCommunity = (input: CreateCommunityInputContract, rawOwn
     const now = new Date().toISOString();
     const community: ResearchCommunity = {
       id,
+      revision: 1,
       name: input.name,
       field: input.field,
       summary: input.summary,
@@ -159,6 +165,7 @@ export const createLocalCommunity = (input: CreateCommunityInputContract, rawOwn
       memberCount: 1,
       monthlyActive: 1,
       membershipStatus: "active",
+      viewerRole: "owner",
       lastAccessedAt: now,
       moderatorHandles: Array.from(new Set([owner, ...input.moderatorHandles.map(cleanHandle)])),
       guidelines: input.guidelines || "Keep criticism attached to the work. Preserve sources and leave a legible trail when a claim changes.",
@@ -169,6 +176,30 @@ export const createLocalCommunity = (input: CreateCommunityInputContract, rawOwn
     await writeState(state);
     return community;
   });
+
+export const updateLocalCommunityVisibility = (
+  input: UpdateCommunityVisibilityInputContract,
+  rawActorHandle: string
+) => withLock(async () => {
+  const state = await readState();
+  const handle = cleanHandle(rawActorHandle);
+  const community = state.communities.find((candidate) => candidate.id === input.communityId);
+  if (!community) throw new Error("Community not found.");
+  const membership = state.memberships[community.id]?.[handle];
+  if (membership?.status !== "active" || (membership.role !== "owner" && membership.role !== "moderator")) {
+    throw new Error("Only community owners and moderators can change visibility.");
+  }
+  const revision = community.revision ?? 1;
+  if (revision !== input.expectedRevision) {
+    throw new Error("This community changed after it was loaded. Refresh before changing its visibility.");
+  }
+  if (community.visibility !== input.visibility) {
+    community.visibility = input.visibility;
+    community.revision = revision + 1;
+    await writeState(state);
+  }
+  return projectCommunity(state, community, handle);
+});
 
 export const mutateLocalCommunityMembership = (
   communityId: string,

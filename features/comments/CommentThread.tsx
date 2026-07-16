@@ -66,6 +66,7 @@ export type CommentThreadOptions = {
   allowReplies?: boolean;
   allowReshares?: boolean;
   commentHref?: (itemId: string, commentId: string) => string | null;
+  disabled?: boolean;
 };
 export type AddCommentHandler = (
   itemId: string,
@@ -766,10 +767,10 @@ export function CommentActions({
             type="button"
             title={action.label}
             className={`${action.active ? "active" : ""}${deleted ? " disabled" : ""}`}
-            disabled={deleted || !action.action}
+            disabled={deleted || options.disabled || !action.action}
             onClick={(event) => {
               event.stopPropagation();
-              if (!deleted && action.action) onAction(itemId, comment.id as string, action.action);
+              if (!deleted && !options.disabled && action.action) onAction(itemId, comment.id as string, action.action);
             }}
           >
             <Icon size={15} fill={fillActiveIcon ? "currentColor" : "none"} />
@@ -778,7 +779,7 @@ export function CommentActions({
           </button>
         );
       })}
-      {options.allowQuotes !== false && onQuote ? <QuoteActionButton disabled={deleted} label="comment" onQuote={onQuote} /> : null}
+      {options.allowQuotes !== false && onQuote ? <QuoteActionButton disabled={deleted || options.disabled} label="comment" onQuote={onQuote} /> : null}
       {commentHref ? (
         <a
           className="content-link-action"

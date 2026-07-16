@@ -74,6 +74,7 @@ export function CommunitiesStage({
   actions: {
     onBack: () => void;
     onMembership: () => void;
+    onVisibility: (visibility: ResearchCommunity["visibility"]) => Promise<{ ok: boolean; error?: string }>;
     onCreatePost: () => void;
     onCreateCall: (input: Omit<CreateCommunityCallInputContract, "communityId">) => Promise<{ ok: boolean; error?: string }>;
     onJoinCall: (callId: string) => Promise<void>;
@@ -113,6 +114,7 @@ export function CommunitiesStage({
     membershipBusy={state.membershipBusy}
     onBack={actions.onBack}
     onMembership={actions.onMembership}
+    onVisibility={actions.onVisibility}
     onCreatePost={actions.onCreatePost}
     onCreateCall={actions.onCreateCall}
     onJoinCall={actions.onJoinCall}
@@ -445,6 +447,7 @@ export function SelectedCommunityView({
   membershipBusy,
   onBack,
   onMembership,
+  onVisibility,
   onCreatePost,
   onCreateCall,
   onJoinCall,
@@ -467,6 +470,7 @@ export function SelectedCommunityView({
   membershipBusy: boolean;
   onBack: () => void;
   onMembership: () => void;
+  onVisibility: (visibility: ResearchCommunity["visibility"]) => Promise<{ ok: boolean; error?: string }>;
   onCreatePost: () => void;
   onCreateCall: (input: Omit<CreateCommunityCallInputContract, "communityId">) => Promise<{ ok: boolean; error?: string }>;
   onJoinCall: (callId: string) => Promise<void>;
@@ -485,6 +489,9 @@ export function SelectedCommunityView({
   const [feedQuery, setFeedQuery] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
+  const [visibilityOpen, setVisibilityOpen] = useState(false);
+  const [visibilityBusy, setVisibilityBusy] = useState(false);
+  const [visibilityError, setVisibilityError] = useState("");
   const [callComposerOpen, setCallComposerOpen] = useState(false);
   const [peopleOpen, setPeopleOpen] = useState<"members" | "moderators" | null>(null);
   const [announcementsExpanded, setAnnouncementsExpanded] = useState(false);
@@ -492,6 +499,7 @@ export function SelectedCommunityView({
   const isMember = isActiveCommunityMember(community, currentProfile);
   const mayView = canViewCommunity(community, currentProfile);
   const mayParticipate = canParticipateInCommunity(community, currentProfile);
+  const mayManageVisibility = community.viewerRole === "owner" || community.viewerRole === "moderator";
   const relatedItems = useMemo(() => {
     const term = normalizeSearchPhrase(feedQuery);
     const matching = getCommunityItems(items, community).filter((item) => {
@@ -514,7 +522,12 @@ export function SelectedCommunityView({
           <ArrowLeft size={16} /> Communities
         </CanonicalLink>
         <header className="selected-community-header">
-          <p className="eyebrow">{community.visibility} community</p>
+          {mayManageVisibility ? (
+            <button className="community-visibility-trigger eyebrow" type="button" onClick={() => setVisibilityOpen(true)}>
+              {community.visibility === "private" ? <LockKeyhole size={12} /> : <UsersRound size={12} />}
+              {community.visibility} community
+            </button>
+          ) : <p className="eyebrow">{community.visibility} community</p>}
           <h1>{community.name}</h1>
           <p>{community.summary}</p>
         </header>
@@ -614,6 +627,30 @@ export function SelectedCommunityView({
           <section className="community-rules-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
             <header><div><span>Guidelines</span><strong>{community.name}</strong></div><button type="button" title="Close guidelines" onClick={() => setRulesOpen(false)}><X size={18} /></button></header>
             <p>{community.guidelines || "Keep criticism attached to the work. Preserve sources and leave a legible trail when a claim changes."}</p>
+          </section>
+        </div>
+      ) : null}
+      {visibilityOpen ? (
+        <div className="community-modal-backdrop" role="presentation" onClick={() => !visibilityBusy && setVisibilityOpen(false)}>
+          <section className="community-visibility-modal" role="dialog" aria-modal="true" aria-labelledby="community-visibility-title" onClick={(event) => event.stopPropagation()}>
+            <header><div><span>Community access</span><strong id="community-visibility-title">{community.name}</strong></div><button type="button" title="Close visibility settings" disabled={visibilityBusy} onClick={() => setVisibilityOpen(false)}><X size={18} /></button></header>
+            <p>Current visibility controls every non-paper community post, comment, quote, and profile activity immediately. Papers always remain public.</p>
+            <div className="community-visibility-options">
+              {(["public", "private"] as const).map((visibility) => (
+                <button key={visibility} type="button" disabled={visibilityBusy || visibility === community.visibility} onClick={async () => {
+                  setVisibilityBusy(true);
+                  setVisibilityError("");
+                  const result = await onVisibility(visibility);
+                  setVisibilityBusy(false);
+                  if (result.ok) setVisibilityOpen(false);
+                  else setVisibilityError(result.error ?? "Community visibility could not be changed.");
+                }}>
+                  {visibility === "public" ? <UsersRound size={18} /> : <LockKeyhole size={18} />}
+                  <span><strong>{visibility === "public" ? "Public" : "Private"}</strong><small>{visibility === "public" ? "Profile activity becomes visible and normally interactive for everyone." : "Only members and each activity owner retain access; aggregate counts and papers remain public."}</small></span>
+                </button>
+              ))}
+            </div>
+            {visibilityError ? <p className="community-form-status" role="alert">{visibilityError}</p> : null}
           </section>
         </div>
       ) : null}

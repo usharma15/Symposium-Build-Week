@@ -28,7 +28,7 @@ export const toggleActionSchema = z.enum(["signal", "save", "fork"]);
 export const actionSubjectTypeSchema = z.enum(["post", "comment"]);
 export const communityVisibilitySchema = z.enum(["public", "private"]);
 export const communityMembershipStatusSchema = z.enum(["none", "requested", "invited", "active"]);
-export const communityContentAccessSchema = z.enum(["full", "citation-only"]);
+export const communityContentAccessSchema = z.enum(["full", "activity-only", "citation-only"]);
 export const callStatusSchema = z.enum(["quiet", "voice live", "video live"]);
 export const liveCallStatusSchema = z.enum(["scheduled", "live", "ended", "cancelled"]);
 export const liveCallKindSchema = z.enum(["voice", "video"]);
@@ -641,6 +641,7 @@ export const inquiryItemSchema = z.object({
 
 export const researchCommunitySchema = z.object({
   id: z.string(),
+  revision: z.number().int().positive().optional(),
   name: z.string(),
   field: z.string(),
   summary: z.string(),
@@ -657,6 +658,7 @@ export const researchCommunitySchema = z.object({
   memberCount: z.number().int().nonnegative().optional(),
   monthlyActive: z.number().int().nonnegative().optional(),
   membershipStatus: communityMembershipStatusSchema.optional(),
+  viewerRole: z.enum(["owner", "moderator", "member"]).optional(),
   lastAccessedAt: z.string().datetime().optional(),
   moderatorHandles: z.array(z.string()).optional(),
   guidelines: z.string().max(12000).optional(),
@@ -857,6 +859,12 @@ export const createCommunityInputSchema = z.object({
   guidelines: z.string().trim().max(12000).optional(),
   moderatorHandles: z.array(z.string().trim().min(1).max(80)).max(20).default([]),
   keywords: z.array(z.string().trim().min(1).max(50)).max(20).default([])
+});
+
+export const updateCommunityVisibilityInputSchema = z.object({
+  communityId: z.string().trim().min(1).max(120),
+  visibility: communityVisibilitySchema,
+  expectedRevision: z.number().int().positive()
 });
 
 export const communityMembershipActionInputSchema = z.object({
@@ -1233,6 +1241,7 @@ export type ResearchCommunityContract = z.infer<typeof researchCommunitySchema>;
 export type CommunityMembershipStatusContract = z.infer<typeof communityMembershipStatusSchema>;
 export type CommunityContentAccessContract = z.infer<typeof communityContentAccessSchema>;
 export type CreateCommunityInputContract = z.infer<typeof createCommunityInputSchema>;
+export type UpdateCommunityVisibilityInputContract = z.infer<typeof updateCommunityVisibilityInputSchema>;
 export type CommunityMembershipActionInputContract = z.infer<typeof communityMembershipActionInputSchema>;
 export type CreatePostInputContract = z.infer<typeof createPostInputSchema>;
 export type CreateCommentInputContract = z.infer<typeof createCommentInputSchema>;

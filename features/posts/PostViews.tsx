@@ -566,17 +566,19 @@ function PostOwnerControls({
   item,
   actorHandle,
   onEditPost,
-  onDeletePost
+  onDeletePost,
+  inline = false
 }: {
   item: InquiryItem;
   actorHandle: string;
   onEditPost: (item: InquiryItem) => void;
   onDeletePost: (itemId: string) => void;
+  inline?: boolean;
 }) {
   if (isDeletedPost(item) || cleanHandle(item.authorHandle ?? item.author) !== actorHandle) return null;
 
   return (
-    <div className="post-owner-actions" aria-label="Post owner actions">
+    <div className={`post-owner-actions${inline ? " inline" : ""}`} aria-label="Post owner actions">
       <button
         type="button"
         title="Edit post"
@@ -665,20 +667,21 @@ export function FeedPost({
       onClick={openPostUnlessSelecting}
       onKeyDown={onKeyDown}
     >
-      {!interactionLocked ? <PostOwnerControls item={item} actorHandle={actorHandle} onEditPost={onEditPost} onDeletePost={onDeletePost} /> : null}
-      <PostAuthor
-        item={item}
-        profiles={profiles}
-        onOpenProfile={onOpenProfile}
-        onClickStop={(event) => event.stopPropagation()}
-      />
-      {showCommunityContext && community && onOpenCommunity ? (
-        <CommunityActivityBadge
-          community={community}
-          onOpenCommunity={onOpenCommunity}
-          onClick={(event) => event.stopPropagation()}
-        />
-      ) : null}
+      {surface === "profile" ? (
+        <div className="profile-post-card-header">
+          <PostAuthor item={item} profiles={profiles} onOpenProfile={onOpenProfile} onClickStop={(event) => event.stopPropagation()} />
+          <div className="profile-post-header-actions">
+            {showCommunityContext && community && onOpenCommunity ? <CommunityActivityBadge community={community} onOpenCommunity={onOpenCommunity} onClick={(event) => event.stopPropagation()} compact /> : null}
+            {!interactionLocked ? <PostOwnerControls item={item} actorHandle={actorHandle} onEditPost={onEditPost} onDeletePost={onDeletePost} inline /> : null}
+          </div>
+        </div>
+      ) : (
+        <>
+          {!interactionLocked ? <PostOwnerControls item={item} actorHandle={actorHandle} onEditPost={onEditPost} onDeletePost={onDeletePost} /> : null}
+          <PostAuthor item={item} profiles={profiles} onOpenProfile={onOpenProfile} onClickStop={(event) => event.stopPropagation()} />
+          {showCommunityContext && community && onOpenCommunity ? <CommunityActivityBadge community={community} onOpenCommunity={onOpenCommunity} onClick={(event) => event.stopPropagation()} /> : null}
+        </>
+      )}
       <div className="post-body">
         <h2>
           <CanonicalLink
@@ -979,7 +982,9 @@ export function DetailView({
       <section className="detail-main" ref={detailRef}>
         {interactionLocked ? (
           <div className="community-citation-only-notice">
-            This source now belongs to a private community. Only the cited content and its author remain visible; community context and interactions are unavailable.
+            {item.communityAccess === "activity-only"
+              ? "This private-community activity remains visible because it is yours. Community context and interactions are unavailable until access returns."
+              : "This source now belongs to a private community. Only the cited content and its author remain visible; community context and interactions are unavailable."}
           </div>
         ) : <PostOwnerControls item={item} actorHandle={actorHandle} onEditPost={onEditPost} onDeletePost={onDeletePost} />}
         <p className="eyebrow">{isProposal ? "Patronage Proposal" : isOpportunity ? "Opportunity" : kindLabels[item.kind]}</p>

@@ -9,7 +9,7 @@ import {
 import { canManageComment, findCommentInTree, isDeletedComment } from "@/lib/symposiumCore";
 import { ContentQuoteError, resolveLocalContentQuote } from "@/lib/contentQuotes";
 import { contentQuoteSourceSchema, versionedDocumentSchema } from "@/packages/contracts/src";
-import { localCommunityReadAllowed, localQuoteSourceItems } from "@/lib/localCommunityAuthorization";
+import { assertLocalQuoteDestination, localCommunityReadAllowed, localQuoteSourceItems } from "@/lib/localCommunityAuthorization";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -93,6 +93,11 @@ export async function PATCH(request: Request, context: Context) {
           ownerType: "comment"
         })
       : undefined;
+    await assertLocalQuoteDestination(snapshot.items, actorHandle ?? "", parsedQuoteSource ?? undefined, {
+      ownerType: "comment",
+      communityId: existing.communityId,
+      postType: existing.postType
+    });
     const quote = body.quoteSource === undefined
       ? undefined
       : parsedQuoteSource === null

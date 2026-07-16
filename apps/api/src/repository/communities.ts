@@ -7,16 +7,18 @@ import {
   createCommunityInputSchema,
   createCommunityCallInputSchema,
   joinCommunityInputSchema,
+  updateCommunityVisibilityInputSchema,
   type CommunityCallContract,
   type CommunityMemberContract,
   type CommunityMemberPageContract,
-  type ResearchCommunityContract
+  type ResearchCommunityContract,
+  type UpdateCommunityVisibilityInputContract
 } from "../../../../packages/contracts/src";
 import { cleanHandle } from "@/lib/symposiumCore";
 import { getPool, hasDatabase } from "../db/client";
 import type { Actor } from "../services/auth";
 import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
-import { stageEvent } from "../services/events";
+import { stageEvent, type StoredLiveEvent } from "../services/events";
 import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
 import { runAtomic } from "../services/transactions";
 import {
@@ -78,6 +80,7 @@ export const createCommunity = async (rawInput: unknown, actor: Actor, mutation?
   const baseId = communitySlug(input.name);
   const seeded: ResearchCommunityContract = {
     id: baseId,
+    revision: 1,
     name: input.name,
     field: input.field,
     summary: input.summary,
@@ -90,6 +93,7 @@ export const createCommunity = async (rawInput: unknown, actor: Actor, mutation?
     memberCount: 1,
     monthlyActive: 1,
     membershipStatus: "active",
+    viewerRole: "owner",
     lastAccessedAt: new Date().toISOString(),
     moderatorHandles,
     guidelines: input.guidelines || "Keep criticism attached to the work, preserve sources, and leave a legible trail when claims change.",
@@ -156,6 +160,86 @@ export const createCommunity = async (rawInput: unknown, actor: Actor, mutation?
       payload: { community }
     });
     return { value: community, events: [event] };
+  });
+};
+
+export const updateCommunityVisibility = async (rawInput: unknown, actor: Actor, mutation?: MutationContext) => {
+  const input: UpdateCommunityVisibilityInputContract = updateCommunityVisibilityInputSchema.parse(rawInput);
+  const handle = await ensureProfileHandle(actorHandle(actor));
+  const community = await getCommunity(input.communityId);
+  if (!hasDatabase()) {
+    const managers = new Set((community.moderatorHandles ?? []).map(cleanHandle));
+    if (cleanHandle(community.memberHandles[0] ?? "") !== handle && !managers.has(handle)) {
+      throw new TRPCError({ code: "FORBIDDEN", message: "Only community owners and moderators can change visibility." });
+    }
+    if ((community.revision ?? 1) !== input.expectedRevision) {
+      throw new TRPCError({ code: "CONFLICT", message: "This community changed after it was loaded. Refresh before changing its visibility." });
+    }
+    return publicCommunity({
+      ...community,
+      visibility: input.visibility,
+      revision: community.visibility === input.visibility ? input.expectedRevision : input.expectedRevision + 1,
+      viewerRole: "owner"
+    }, "active");
+  }
+  await ensureLiveData();
+  return runAtomic(async (client) => {
+    const claim = await claimMutation<ResearchCommunityContract>(client, handle, mutation);
+    if (claim.replayed) return { value: claim.response };
+    const membership = await client.query<{ role: string; revision: number; visibility: ResearchCommunityContract["visibility"] }>(
+      `SELECT membership.role, community.revision, community.visibility
+       FROM community_memberships membership
+       JOIN communities community ON community.id = membership.community_id
+       WHERE membership.community_id = $1 AND membership.profile_handle = $2 AND membership.status = 'active'
+       FOR UPDATE OF community`,
+      [community.id, handle]
+    );
+    const role = membership.rows[0]?.role;
+    if (role !== "owner" && role !== "moderator") {
+      throw new TRPCError({ code: "FORBIDDEN", message: "Only community owners and moderators can change visibility." });
+    }
+    const currentRevision = membership.rows[0]?.revision ?? community.revision ?? 1;
+    const currentVisibility = membership.rows[0]?.visibility ?? community.visibility;
+    if (currentRevision !== input.expectedRevision) {
+      throw new TRPCError({ code: "CONFLICT", message: "This community changed after it was loaded. Refresh before changing its visibility." });
+    }
+    let revision = currentRevision;
+    if (currentVisibility !== input.visibility) {
+      const updated = await client.query<{ revision: number }>(
+        `UPDATE communities
+         SET visibility = $2, revision = revision + 1, updated_at = now()
+         WHERE id = $1 AND revision = $3
+         RETURNING revision`,
+        [community.id, input.visibility, input.expectedRevision]
+      );
+      if (!updated.rows[0]) {
+        throw new TRPCError({ code: "CONFLICT", message: "This community changed before the visibility update committed." });
+      }
+      revision = updated.rows[0].revision;
+    }
+    const value = publicCommunity({
+      ...community,
+      visibility: input.visibility,
+      revision,
+      viewerRole: role
+    }, "active");
+    await stageAuditLog(client, {
+      actorHandle: handle,
+      action: "community.visibility.update",
+      subjectType: "community",
+      subjectId: community.id,
+      metadata: mutationAuditMetadata(mutation, { previousVisibility: currentVisibility, visibility: input.visibility, revision })
+    });
+    await completeMutation(client, handle, mutation, value);
+    const event = await stageEvent(client, {
+      kind: "community.visibility.updated",
+      actorHandle: handle,
+      subjectType: "community",
+      subjectId: community.id,
+      visibility: "public",
+      payload: { communityId: community.id, visibility: input.visibility, revision }
+    });
+    return { value, events: [event] };
   });
 };
 
@@ -492,6 +576,22 @@ export const communityEventScope = async (client: PoolClient, communityId?: stri
     visibility: "community" as const,
     audienceHandles: await communityAudienceHandles(client, communityId)
   };
+};
+
+export const stageCommunityProfileInvalidation = async (
+  client: PoolClient,
+  profileHandle: string,
+  privateCommunity: boolean,
+  stagedEvents: StoredLiveEvent[]
+) => {
+  if (!privateCommunity) return;
+  stagedEvents.push(await stageEvent(client, {
+    kind: "profile.activity-counts.changed",
+    subjectType: "profile",
+    subjectId: cleanHandle(profileHandle),
+    visibility: "public",
+    payload: { profileHandle: cleanHandle(profileHandle) }
+  }));
 };
 
 export const createCommunityCall = async (rawInput: unknown, actor: Actor, mutation?: MutationContext) => {

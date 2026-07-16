@@ -130,7 +130,7 @@ export const communityPostIsExternallyDiscoverable = (item: InquiryItem) =>
   !item.communityId || itemHasPostType(item, "paper");
 
 export const communityPostIsInteractive = (item: InquiryItem) =>
-  item.communityAccess !== "citation-only";
+  item.communityAccess === undefined || item.communityAccess === "full";
 
 export const communityRecencyScore = (community: ResearchCommunity) => {
   const parsed = Date.parse(community.lastAccessedAt ?? "");

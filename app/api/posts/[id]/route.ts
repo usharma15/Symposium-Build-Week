@@ -10,7 +10,7 @@ import {
 import { cleanHandle, isDeletedPost } from "@/lib/symposiumCore";
 import { ContentQuoteError, resolveLocalContentQuote } from "@/lib/contentQuotes";
 import { contentQuoteSourceSchema, opportunityPostInputSchema, patronageProposalInputSchema, versionedDocumentSchema } from "@/packages/contracts/src";
-import { localCommunityReadAllowed, localQuoteSourceItems } from "@/lib/localCommunityAuthorization";
+import { assertLocalQuoteDestination, localCommunityReadAllowed, localQuoteSourceItems } from "@/lib/localCommunityAuthorization";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -94,6 +94,11 @@ export async function PATCH(request: Request, context: Context) {
     const attachments = attachmentIds
       ? await replaceLocalOwnerAttachments({ actorHandle, attachmentIds, ownerId: id, ownerType: "post" })
       : undefined;
+    await assertLocalQuoteDestination(snapshot.items, actorHandle ?? "", parsedQuoteSource ?? undefined, {
+      ownerType: "post",
+      communityId: existing.communityId,
+      postType: existing.postType
+    });
     const quote = body.quoteSource === undefined
       ? undefined
       : parsedQuoteSource === null

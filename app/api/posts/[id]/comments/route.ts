@@ -10,7 +10,7 @@ import {
 import { findCommentInTree, isDeletedPost } from "@/lib/symposiumCore";
 import { ContentQuoteError, resolveLocalContentQuote } from "@/lib/contentQuotes";
 import { contentQuoteSourceSchema, versionedDocumentSchema } from "@/packages/contracts/src";
-import { localCommunityParticipationAllowed, localQuoteSourceItems } from "@/lib/localCommunityAuthorization";
+import { assertLocalQuoteDestination, localCommunityParticipationAllowed, localQuoteSourceItems } from "@/lib/localCommunityAuthorization";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -80,6 +80,11 @@ export async function POST(request: Request, context: Context) {
       attachmentIds,
       ownerId: commentId,
       ownerType: "comment"
+    });
+    await assertLocalQuoteDestination(snapshot.items, actorHandle, quoteSource?.data, {
+      ownerType: "comment",
+      communityId: existing.communityId,
+      postType: existing.postType
     });
     const quote = resolveLocalContentQuote(await localQuoteSourceItems(snapshot.items, actorHandle), quoteSource?.data, {
       ownerId: commentId,

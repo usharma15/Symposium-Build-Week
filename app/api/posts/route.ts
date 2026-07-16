@@ -12,7 +12,7 @@ import {
 } from "@/lib/localAttachmentStore";
 import { listLocalCommunities } from "@/lib/localCommunityStore";
 import { projectCommunityItemsForViewer } from "@/lib/communityContentProjection";
-import { localQuoteSourceItems } from "@/lib/localCommunityAuthorization";
+import { assertLocalQuoteDestination, localQuoteSourceItems } from "@/lib/localCommunityAuthorization";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,7 +25,7 @@ export async function GET(request: Request) {
   const snapshot = await getSnapshot();
   const communities = await listLocalCommunities(actorHandle);
   return Response.json({
-    items: projectCommunityItemsForViewer(snapshot.items, communities)
+    items: projectCommunityItemsForViewer(snapshot.items, communities, actorHandle)
       .filter((item) => !item.communityId || item.postType === "paper")
   });
 }
@@ -135,6 +135,11 @@ export async function POST(request: Request) {
     const localAttachments = attachmentIds.length
       ? await resolveLocalPostAttachments(attachmentIds, String(body.authorHandle ?? ""))
       : [];
+    await assertLocalQuoteDestination(snapshot.items, String(body.authorHandle ?? ""), quoteSource?.data, {
+      ownerType: "post",
+      communityId: input.communityId,
+      postType: input.postType
+    });
     const quote = resolveLocalContentQuote(
       await localQuoteSourceItems(snapshot.items, String(body.authorHandle ?? "")),
       quoteSource?.data

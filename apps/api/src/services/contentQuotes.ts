@@ -56,14 +56,15 @@ const unavailableSource = () =>
 const attachmentCount = (value: string | number) => Math.min(Math.max(Number(value) || 0, 0), 10);
 
 const assertPrivateSourceDestination = (
-  source: Pick<PostQuoteSourceRow, "sourceCommunityId" | "sourceCommunityVisibility">,
+  source: Pick<PostQuoteSourceRow, "postType" | "sourceCommunityId" | "sourceCommunityVisibility">,
+  sourceType: ContentQuoteSourceContract["sourceType"],
   owner?: QuoteOwner
 ) => {
   if (source.sourceCommunityVisibility !== "private") return;
+  if (sourceType === "post" && source.postType === "paper") return;
   const staysInsideCommunity = Boolean(
     source.sourceCommunityId &&
-    owner?.targetCommunityId === source.sourceCommunityId &&
-    owner.targetPostType !== "paper"
+    owner?.targetCommunityId === source.sourceCommunityId
   );
   const becomesPublicPaperCitation = owner?.ownerType === "post" && owner.targetPostType === "paper";
   if (!staysInsideCommunity && !becomesPublicPaperCitation) {
@@ -130,7 +131,7 @@ export const resolveContentQuote = async (
     );
     const row = result.rows[0];
     if (!row) throw unavailableSource();
-    assertPrivateSourceDestination(row, owner);
+    assertPrivateSourceDestination(row, "post", owner);
     return {
       sourceType: "post",
       sourceId: row.id,
@@ -195,7 +196,7 @@ export const resolveContentQuote = async (
   );
   const row = result.rows[0];
   if (!row) throw unavailableSource();
-  assertPrivateSourceDestination(row, owner);
+  assertPrivateSourceDestination(row, "comment", owner);
   return {
     sourceType: "comment",
     sourceId: row.id,

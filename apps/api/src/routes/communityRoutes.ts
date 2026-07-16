@@ -12,7 +12,8 @@ import {
   leaveCommunity,
   listCommunityCalls,
   listCommunityMembers,
-  recordCommunityAccess
+  recordCommunityAccess,
+  updateCommunityVisibility
 } from "../repository/communities";
 import { getPublicCommunity, listPublicCommunities } from "../repository/foundation";
 import type { RouteParams } from "./types";
@@ -46,6 +47,21 @@ export const registerCommunityRoutes = (app: FastifyInstance) => {
     try {
       const actor = await getActorFromRequest(request);
       const community = await getPublicCommunity(request.params.id, actor.handle);
+      return reply.send({ community });
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.patch<{ Params: RouteParams }>("/v1/communities/:id", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      const payload = { ...(request.body ?? {}), communityId: request.params.id };
+      const community = await updateCommunityVisibility(
+        payload,
+        actor,
+        mutationContextFromRequest(request, "community.visibility.update", payload)
+      );
       return reply.send({ community });
     } catch (error) {
       return sendError(app, reply, error);

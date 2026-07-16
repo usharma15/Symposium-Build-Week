@@ -23,6 +23,7 @@ import {
 } from "@/lib/mockData";
 import { cleanHandle } from "@/lib/symposiumCore";
 import { seededCommunityCallMap } from "@/lib/communityFixtures";
+import { projectCommunityItemsForViewer } from "@/lib/communityContentProjection";
 import { postTypeForItem } from "@/lib/postSemantics";
 import { env } from "../config/env";
 import { getPool, hasDatabase } from "../db/client";
@@ -1291,7 +1292,8 @@ export const publicCommunity = (
     memberCount: privateHidden ? 0 : community.memberCount,
     monthlyActive: privateHidden ? 0 : community.monthlyActive,
     callStatus: privateHidden ? "quiet" : community.callStatus,
-    membershipStatus
+    membershipStatus,
+    viewerRole: membershipStatus === "active" ? community.viewerRole : undefined
   };
 };
 
@@ -1334,64 +1336,9 @@ const publicItemProjection = (
   };
 };
 
-const findComment = (comments: InquiryCommentContract[], commentId: string): InquiryCommentContract | null => {
-  for (const comment of comments) {
-    if (comment.id === commentId) return { ...comment, replies: [] };
-    const reply = findComment(comment.replies ?? [], commentId);
-    if (reply) return reply;
-  }
-  return null;
-};
-
-const citationOnlyItemProjection = (
-  item: InquiryItemContract,
-  citation: { postCited: boolean; commentIds: Set<string> }
-): InquiryItemContract => {
-  const citedComments = [...citation.commentIds]
-    .flatMap((commentId) => findComment(item.comments ?? [], commentId) ?? [])
-    .map((comment) => ({
-      ...comment,
-      metrics: { signal: "—", forks: "—", saves: "—", reads: "—" },
-      savedBy: [],
-      signaledBy: [],
-      forkedBy: [],
-      replies: []
-    }));
-  const primaryComment = citedComments[0];
-  return {
-    ...item,
-    ...(!citation.postCited && primaryComment ? {
-      title: "Cited community comment",
-      author: primaryComment.author,
-      authorHandle: primaryComment.authorHandle,
-      body: "",
-      excerpt: "",
-      document: undefined,
-      createdAt: primaryComment.createdAt
-    } : {}),
-    communityAccess: "citation-only",
-    metrics: { signal: "—", critiques: "—", forks: "—", saves: "—", reads: "—" },
-    tags: [],
-    signals: [],
-    claims: [],
-    objections: [],
-    evidence: [],
-    tests: [],
-    forks: [],
-    comments: citedComments,
-    attachments: undefined,
-    quote: undefined,
-    patronage: undefined,
-    opportunity: undefined,
-    saved: false,
-    savedBy: [],
-    signaledBy: [],
-    forkedBy: []
-  };
-};
-
 type CommunityViewerState = {
   status: ResearchCommunityContract["membershipStatus"];
+  role?: ResearchCommunityContract["viewerRole"];
   lastAccessedAt?: string;
   memberCount: number;
   monthlyActive: number;
@@ -1406,6 +1353,13 @@ const communityViewerState = async (
       const active = Boolean(requesterHandle && community.memberHandles.some((handle) => cleanHandle(handle) === requesterHandle));
       return [community.id, {
         status: active ? "active" as const : "none" as const,
+        role: active
+          ? cleanHandle(community.memberHandles[0] ?? "") === requesterHandle
+            ? "owner" as const
+            : (community.moderatorHandles ?? []).some((handle) => cleanHandle(handle) === requesterHandle)
+              ? "moderator" as const
+              : "member" as const
+          : undefined,
         lastAccessedAt: undefined,
         memberCount: community.memberHandles.length,
         monthlyActive: Math.max(community.online, Math.round(community.memberHandles.length * 0.72))
@@ -1416,6 +1370,7 @@ const communityViewerState = async (
   const result = await getPool().query<{
     communityId: string;
     membershipStatus: string | null;
+    viewerRole: string | null;
     lastAccessedAt: Date | string | null;
     memberCount: number;
     monthlyActive: number;
@@ -1423,6 +1378,7 @@ const communityViewerState = async (
     `SELECT
        community.id AS "communityId",
        viewer.status AS "membershipStatus",
+       viewer.role AS "viewerRole",
        viewer.last_accessed_at AS "lastAccessedAt",
        COUNT(membership.profile_handle) FILTER (WHERE membership.status = 'active')::int AS "memberCount",
        COUNT(membership.profile_handle) FILTER (
@@ -1435,7 +1391,7 @@ const communityViewerState = async (
       ON viewer.community_id = community.id
      AND viewer.profile_handle = $1
      WHERE community.id = ANY($2::text[])
-     GROUP BY community.id, viewer.status, viewer.last_accessed_at`,
+     GROUP BY community.id, viewer.status, viewer.role, viewer.last_accessed_at`,
     [requesterHandle, communities.map((community) => community.id)]
   );
   return new Map(result.rows.map((row) => {
@@ -1444,6 +1400,9 @@ const communityViewerState = async (
       : "none";
     return [row.communityId, {
       status,
+      role: status === "active" && (row.viewerRole === "owner" || row.viewerRole === "moderator")
+        ? row.viewerRole
+        : status === "active" ? "member" : undefined,
       lastAccessedAt: row.lastAccessedAt ? new Date(row.lastAccessedAt).toISOString() : undefined,
       memberCount: Number(row.memberCount ?? 0),
       monthlyActive: Number(row.monthlyActive ?? 0)
@@ -1455,54 +1414,29 @@ export const getPublicInitialState = async (rawRequesterHandle?: string | null) 
   const state = await getInitialState();
   const requesterHandle = rawRequesterHandle ? cleanHandle(rawRequesterHandle) : null;
   const communities = state.communities ?? [];
-  const communityById = new Map(communities.map((community) => [community.id, community]));
   const viewerState = await communityViewerState(communities, requesterHandle);
-  const citedCommunitySources = new Map<string, { postCited: boolean; commentIds: Set<string> }>();
-  for (const item of state.items) {
-    if (item.postType !== "paper" || !item.quote?.available) continue;
-    const source = state.items.find((candidate) => candidate.id === item.quote?.sourcePostId);
-    if (!source?.communityId) continue;
-    const citation = citedCommunitySources.get(source.id) ?? { postCited: false, commentIds: new Set<string>() };
-    if (item.quote.sourceType === "comment") citation.commentIds.add(item.quote.sourceId);
-    else citation.postCited = true;
-    citedCommunitySources.set(source.id, citation);
-  }
+  const viewerCommunities = communities.map((community) => {
+    const viewer = viewerState.get(community.id) ?? { status: "none" as const, role: undefined, lastAccessedAt: undefined, memberCount: 0, monthlyActive: 0 };
+    return publicCommunity({
+      ...community,
+      viewerRole: viewer.role,
+      memberCount: viewer.memberCount,
+      monthlyActive: viewer.monthlyActive,
+      lastAccessedAt: viewer.lastAccessedAt
+    }, viewer.status);
+  });
+  const readableItems = state.items.filter((item) =>
+    item.room !== "office" && item.kind !== "draft"
+    || Boolean(requesterHandle && item.authorHandle && cleanHandle(item.authorHandle) === requesterHandle)
+  );
   return {
     ...state,
     profiles: Object.fromEntries(
       Object.entries(state.profiles).map(([handle, person]) => [handle, publicProfile(person)])
     ),
-    items: state.items
-      .filter((item) => {
-        if (item.room === "office" || item.kind === "draft") {
-          return Boolean(requesterHandle && item.authorHandle && cleanHandle(item.authorHandle) === requesterHandle);
-        }
-        if (!item.communityId || item.postType === "paper") return true;
-        const community = communityById.get(item.communityId);
-        if (!community || community.visibility === "public") return true;
-        if (viewerState.get(community.id)?.status === "active") return true;
-        return citedCommunitySources.has(item.id);
-      })
-      .map((item) => {
-        const community = item.communityId ? communityById.get(item.communityId) : null;
-        if (
-          community?.visibility === "private" &&
-          item.postType !== "paper" &&
-          viewerState.get(community.id)?.status !== "active"
-        ) {
-          return citationOnlyItemProjection(item, citedCommunitySources.get(item.id) ?? { postCited: false, commentIds: new Set() });
-        }
-        return publicItemProjection({ ...item, communityAccess: "full" }, state.profiles, requesterHandle);
-      }),
-    communities: communities.map((community) => {
-      const viewer = viewerState.get(community.id) ?? { status: "none" as const, lastAccessedAt: undefined, memberCount: 0, monthlyActive: 0 };
-      return publicCommunity({
-        ...community,
-        memberCount: viewer.memberCount,
-        monthlyActive: viewer.monthlyActive,
-        lastAccessedAt: viewer.lastAccessedAt
-      }, viewer.status);
-    }),
+    items: projectCommunityItemsForViewer(readableItems, viewerCommunities, requesterHandle)
+      .map((item) => publicItemProjection(item, state.profiles, requesterHandle)),
+    communities: viewerCommunities,
     communityCalls: Object.fromEntries(communities.map((community) => [
       community.id,
       community.visibility === "public" || viewerState.get(community.id)?.status === "active"
@@ -1547,9 +1481,10 @@ export const getCommunity = async (communityId: string) => {
 export const getPublicCommunity = async (communityId: string, requesterHandle?: string | null) => {
   const community = await getCommunity(communityId);
   const viewer = (await communityViewerState([community], requesterHandle ? cleanHandle(requesterHandle) : null)).get(community.id)
-    ?? { status: "none" as const, lastAccessedAt: undefined, memberCount: community.memberHandles.length, monthlyActive: community.online };
+    ?? { status: "none" as const, role: undefined, lastAccessedAt: undefined, memberCount: community.memberHandles.length, monthlyActive: community.online };
   return publicCommunity({
     ...community,
+    viewerRole: viewer.role,
     memberCount: viewer.memberCount,
     monthlyActive: viewer.monthlyActive,
     lastAccessedAt: viewer.lastAccessedAt

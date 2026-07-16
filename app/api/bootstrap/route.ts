@@ -19,7 +19,7 @@ export async function GET(request: Request) {
   ]);
   return Response.json({
     ...snapshot,
-    items: projectCommunityItemsForViewer(snapshot.items, communities),
+    items: projectCommunityItemsForViewer(snapshot.items, communities, actorHandle),
     communities,
     communityCalls,
     defaultProfile: profile

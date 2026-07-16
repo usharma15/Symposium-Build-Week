@@ -33,19 +33,14 @@ import { claimMutation, completeMutation, type MutationContext } from "../servic
 import { markQuotedCommentUnavailable, resolveContentQuote, resolveUpdatedContentQuote } from "../services/contentQuotes";
 import { queueAttachmentsForOwnerStorageDeletion, triggerStorageDeletion } from "../services/storageDeletion";
 import { transitionCommentAction } from "./actions";
-import { assertCommunityParticipation, assertCommunityReadAccess, communityEventScope } from "./communities";
+import { assertCommunityParticipation, assertCommunityReadAccess, communityEventScope, stageCommunityProfileInvalidation } from "./communities";
 import { recordContentView, recordMemoryContentView } from "./contentViews";
 import { actorHandle, commentTreesFromRows, ensureLiveData, getInitialState, getPostConversationAttachments, newId, rowToAttachment, rowToItem, type CommentRow, type SnapshotRow } from "./foundation";
 type ActionMutationResult = {
   item: InquiryItemContract;
   activity?: CanonicalActionActivityContract;
 };
-export const addComment = async (
-  postId: string,
-  rawInput: unknown,
-  actor: Actor,
-  mutation?: MutationContext
-) => {
+export const addComment = async (postId: string, rawInput: unknown, actor: Actor, mutation?: MutationContext) => {
   const input = createCommentInputSchema.parse(rawInput);
   const requestedAttachmentIds = canonicalAttachmentIds(input);
   assertUniqueAttachmentIds(requestedAttachmentIds, "comment");
@@ -115,7 +110,7 @@ export const addComment = async (
   await ensureLiveData();
   const client = await getPool().connect();
   let updatedItem: InquiryItemContract | null = null;
-  let stagedEvent: StoredLiveEvent | undefined;
+  const stagedEvents: StoredLiveEvent[] = [];
 
   try {
     await client.query("BEGIN");
@@ -279,8 +274,8 @@ export const addComment = async (
       })
     });
     await completeMutation(client, handle, mutation, { comment, item: updatedItem });
-    const eventScope = await communityEventScope(client, existing.postType === "paper" ? null : existing.communityId);
-    stagedEvent = await stageEvent(client, {
+    const eventScope = await communityEventScope(client, existing.communityId);
+    stagedEvents.push(await stageEvent(client, {
       kind: "comment.created",
       actorHandle: comment.authorHandle,
       subjectType: "post",
@@ -291,7 +286,8 @@ export const addComment = async (
         existing.room === "office" || existing.kind === "draft"
           ? { comment, item: updatedItem, commentId: comment.id, parentId: comment.parentId }
           : { commentId: comment.id, itemId: postId, parentId: comment.parentId }
-    });
+    }));
+    await stageCommunityProfileInvalidation(client, handle, eventScope.visibility === "community", stagedEvents);
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
@@ -300,7 +296,7 @@ export const addComment = async (
     client.release();
   }
 
-  if (stagedEvent) await publishStoredEvent(stagedEvent);
+  for (const event of stagedEvents) await publishStoredEvent(event);
 
   return { comment, item: updatedItem };
 };
@@ -349,7 +345,7 @@ export const updateComment = async (
   const client = await getPool().connect();
   let updatedItem: InquiryItemContract;
   let removedAttachmentIds: string[] = [];
-  let stagedEvent: StoredLiveEvent | undefined;
+  const stagedEvents: StoredLiveEvent[] = [];
 
   try {
     await client.query("BEGIN");
@@ -474,8 +470,8 @@ export const updateComment = async (
       }
     });
     await completeMutation(client, handle, mutation, updatedItem);
-    const eventScope = await communityEventScope(client, updatedItem.postType === "paper" ? null : updatedItem.communityId);
-    stagedEvent = await stageEvent(client, {
+    const eventScope = await communityEventScope(client, updatedItem.communityId);
+    stagedEvents.push(await stageEvent(client, {
       kind: "comment.updated",
       actorHandle: handle,
       subjectType: "comment",
@@ -486,7 +482,8 @@ export const updateComment = async (
         updatedItem.room === "office" || updatedItem.kind === "draft"
           ? { item: updatedItem, commentId }
           : { itemId: postId, commentId }
-    });
+    }));
+    await stageCommunityProfileInvalidation(client, handle, eventScope.visibility === "community", stagedEvents);
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
@@ -495,7 +492,7 @@ export const updateComment = async (
     client.release();
   }
 
-  if (stagedEvent) await publishStoredEvent(stagedEvent);
+  for (const event of stagedEvents) await publishStoredEvent(event);
   if (removedAttachmentIds.length) await triggerStorageDeletion(removedAttachmentIds);
 
   return updatedItem;
@@ -543,7 +540,7 @@ export const deleteComment = async (
   let updatedItem: InquiryItemContract;
   let didDelete = false;
   let storageAttachmentIds: string[] = [];
-  let stagedEvent: StoredLiveEvent | undefined;
+  const stagedEvents: StoredLiveEvent[] = [];
 
   try {
     await client.query("BEGIN");
@@ -679,8 +676,8 @@ export const deleteComment = async (
         subjectId: commentId,
         metadata: { deletedAt, postId, storageAttachmentCount: storageAttachmentIds.length }
       });
-      const eventScope = await communityEventScope(client, updatedItem.postType === "paper" ? null : updatedItem.communityId);
-      stagedEvent = await stageEvent(client, {
+      const eventScope = await communityEventScope(client, updatedItem.communityId);
+      stagedEvents.push(await stageEvent(client, {
         kind: "comment.deleted",
         actorHandle: handle,
         subjectType: "comment",
@@ -691,7 +688,8 @@ export const deleteComment = async (
           updatedItem.room === "office" || updatedItem.kind === "draft"
             ? { item: updatedItem, commentId }
             : { itemId: postId, commentId }
-      });
+      }));
+      await stageCommunityProfileInvalidation(client, handle, eventScope.visibility === "community", stagedEvents);
       await completeMutation(client, handle, mutation, updatedItem);
       await client.query("COMMIT");
     }
@@ -702,7 +700,7 @@ export const deleteComment = async (
     client.release();
   }
 
-  if (didDelete && stagedEvent) await publishStoredEvent(stagedEvent);
+  if (didDelete) for (const event of stagedEvents) await publishStoredEvent(event);
   if (storageAttachmentIds.length) await triggerStorageDeletion(storageAttachmentIds);
 
   return updatedItem;
@@ -882,7 +880,10 @@ export const applyCommentAction = async (
     }
     await completeMutation(client, handle, mutation, { item: updatedItem, activity });
     const privatePost = updatedItem.room === "office" || updatedItem.kind === "draft";
-    const eventScope = await communityEventScope(client, updatedItem.postType === "paper" ? null : updatedItem.communityId);
+    const eventScope = await communityEventScope(client, updatedItem.communityId);
+    if (input.action !== "read") {
+      await stageCommunityProfileInvalidation(client, handle, eventScope.visibility === "community", stagedEvents);
+    }
     if (!privatePost) {
       stagedEvents.push(
         await stageEvent(client, {

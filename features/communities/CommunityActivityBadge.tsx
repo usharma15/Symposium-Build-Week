@@ -8,16 +8,18 @@ import { CanonicalLink } from "@/features/navigation/CanonicalLink";
 export function CommunityActivityBadge({
   community,
   onOpenCommunity,
-  onClick
+  onClick,
+  compact = false
 }: {
   community: ResearchCommunity;
   onOpenCommunity: (communityId: string) => void;
   onClick?: (event: MouseEvent<HTMLAnchorElement>) => void;
+  compact?: boolean;
 }) {
   const Icon = community.visibility === "private" ? LockKeyhole : UsersRound;
   return (
     <CanonicalLink
-      className="community-activity-badge"
+      className={`community-activity-badge${compact ? " compact" : ""}`}
       route={{ kind: "community", communityId: community.id }}
       onNavigate={() => onOpenCommunity(community.id)}
       onClick={onClick}

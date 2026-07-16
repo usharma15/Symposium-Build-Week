@@ -30,6 +30,7 @@ import {
 } from "@/lib/symposiumCore";
 import {
   canonicalActionState,
+  emptyProfileActivityCounts,
   itemMatchesProfilePostAction,
   profileCommentsArePubliclyListable,
   profileItemIsPubliclyListable,
@@ -38,6 +39,7 @@ import {
   uniqueProfileActivityEntries
 } from "@/lib/profileActivity";
 import { CommunityActivityBadge } from "@/features/communities/CommunityActivityBadge";
+import { communityPostIsInteractive } from "@/features/communities/communityPolicy";
 import type { CommentActionHandler, PostActionHandler } from "@/features/actions/actionTypes";
 import {
   AttachmentCarousel,
@@ -261,8 +263,12 @@ export function ProfileView({
 }) {
   const [visibleSlots, setVisibleSlots] = useState<ProfileActivitySlot[]>([]);
   const visibleSlotContextRef = useRef("");
-  const profileItems = items.filter((item) => profileItemIsPubliclyListable(item, communities));
-  const profileCommentItems = profileItems.filter((item) => profileCommentsArePubliclyListable(item, communities));
+  const profileItems = isOwnProfile
+    ? items
+    : items.filter((item) => profileItemIsPubliclyListable(item, communities));
+  const profileCommentItems = isOwnProfile
+    ? profileItems
+    : profileItems.filter((item) => profileCommentsArePubliclyListable(item, communities));
   const communityById = new Map(communities.map((community) => [community.id, community]));
   const byPublishedRecency = (nextItems: InquiryItem[]) =>
     [...nextItems].sort((a, b) => getProfileRecency(b, person.handle, "authored") - getProfileRecency(a, person.handle, "authored"));
@@ -390,16 +396,17 @@ export function ProfileView({
     saved: sortEntries([...savedEntries, ...commentSavedEntries])
   };
 
+  const hiddenCounts = isOwnProfile ? emptyProfileActivityCounts() : hiddenCommunityCounts;
   const tabCounts: Record<ProfileTab, number> = {
-    all: allActivity.length + hiddenCommunityCounts.all,
-    papers: papers.length + hiddenCommunityCounts.papers,
-    thoughts: thoughts.length + hiddenCommunityCounts.thoughts,
-    proposals: proposals.length + hiddenCommunityCounts.proposals,
-    opportunities: opportunities.length + hiddenCommunityCounts.opportunities,
-    comments: commentActivities.length + hiddenCommunityCounts.comments,
-    reshares: reshareTabEntries.length + hiddenCommunityCounts.reshares,
-    likes: likeEntries.length + commentLikeEntries.length + hiddenCommunityCounts.likes,
-    saved: savedEntries.length + commentSavedEntries.length + hiddenCommunityCounts.saved
+    all: allActivity.length + hiddenCounts.all,
+    papers: papers.length + hiddenCounts.papers,
+    thoughts: thoughts.length + hiddenCounts.thoughts,
+    proposals: proposals.length + hiddenCounts.proposals,
+    opportunities: opportunities.length + hiddenCounts.opportunities,
+    comments: commentActivities.length + hiddenCounts.comments,
+    reshares: reshareTabEntries.length + hiddenCounts.reshares,
+    likes: likeEntries.length + commentLikeEntries.length + hiddenCounts.likes,
+    saved: savedEntries.length + commentSavedEntries.length + hiddenCounts.saved
   };
 
   const tabs: Array<{ id: ProfileTab; label: string }> = [
@@ -620,15 +627,16 @@ function ProfileCommentCard({
   const authorProfile = profileForHandle(profiles, activity.comment.authorHandle ?? activity.comment.author);
   const authorName = authorProfile?.name ?? activity.comment.author;
   const commentDeleted = isDeletedComment(activity.comment);
+  const interactionLocked = !communityPostIsInteractive(activity.item);
   const openComment = () => {
-    if (activity.comment.id && !commentDeleted) {
+    if (activity.comment.id && !commentDeleted && !interactionLocked) {
       onCommentAction(activity.item.id, activity.comment.id, "read", { trigger: "click", surface: "profile" });
     }
     onSelect(activity.item.id, activity.comment.id ?? null);
   };
 
   useQualifiedView(cardRef, {
-    disabled: commentDeleted || !activity.comment.id,
+    disabled: commentDeleted || interactionLocked || !activity.comment.id,
     targetKey: activity.comment.id,
     onView: () => {
       if (activity.comment.id) {
@@ -668,26 +676,27 @@ function ProfileCommentCard({
           </span>
         </CanonicalLink>
         <div className="profile-comment-header-actions">
+          {community ? (
+            <CommunityActivityBadge
+              community={community}
+              onOpenCommunity={onOpenCommunity}
+              onClick={(event) => event.stopPropagation()}
+              compact
+            />
+          ) : null}
           <span>
             <MessageCircle size={15} />
             {activity.label}
           </span>
-          <CommentOwnerControls
+          {!interactionLocked ? <CommentOwnerControls
             itemId={activity.item.id}
             comment={activity.comment}
             actorHandle={actorHandle}
             onEditComment={onEditComment}
             onDeleteComment={onDeleteComment}
-          />
+          /> : null}
         </div>
       </header>
-      {community ? (
-        <CommunityActivityBadge
-          community={community}
-          onOpenCommunity={onOpenCommunity}
-          onClick={(event) => event.stopPropagation()}
-        />
-      ) : null}
       <SymposiumDocumentRenderer
         document={activity.comment.document}
         body={activity.comment.body}
@@ -700,7 +709,7 @@ function ProfileCommentCard({
           }
         }}
         onExpand={() => {
-          if (activity.comment.id) {
+          if (activity.comment.id && !interactionLocked) {
             onCommentAction(activity.item.id, activity.comment.id, "read", { trigger: "expand", surface: "profile" });
           }
         }}
@@ -736,6 +745,7 @@ function ProfileCommentCard({
           sourceId: activity.comment.id,
           sourcePostId: activity.item.id
         })}
+        options={{ disabled: interactionLocked }}
       />
       <footer>
         <span>On</span>

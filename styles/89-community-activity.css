@@ -38,8 +38,35 @@
   background: color-mix(in srgb, var(--aqua-soft) 88%, var(--panel));
 }
 
-.profile-comment-card > .community-activity-badge {
-  margin: 8px 0 8px;
+.community-activity-badge.compact {
+  max-width: 250px;
+  margin: 0;
+  padding: 4px 7px;
+  font-size: 0.67rem;
+}
+
+.profile-post-card-header,
+.profile-post-header-actions,
+.profile-comment-header-actions {
+  display: flex;
+  align-items: flex-start;
+}
+
+.profile-post-card-header {
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.profile-post-header-actions,
+.profile-comment-header-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.post-owner-actions.inline {
+  position: static;
+  flex: 0 0 auto;
 }
 
 .symposium-shell.night .community-activity-badge {

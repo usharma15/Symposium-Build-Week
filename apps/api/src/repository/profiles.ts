@@ -6,7 +6,7 @@ import {
   type ProfileActivityResponseContract,
   type ToggleActionContract
 } from "../../../../packages/contracts/src";
-import { buildLegacyProfileActivity, hiddenCommunityActivityCounts, profileItemIsPubliclyListable } from "@/lib/profileActivity";
+import { buildLegacyProfileActivity, emptyProfileActivityCounts, hiddenCommunityActivityCounts, profileItemIsPubliclyListable } from "@/lib/profileActivity";
 import { researchCommunities } from "@/lib/mockData";
 import { cleanHandle } from "@/lib/symposiumCore";
 import { getPool, hasDatabase } from "../db/client";
@@ -43,12 +43,14 @@ export const listProfileActivity = async (
     ];
     return {
       entries: buildLegacyProfileActivity(
-        snapshot.items.filter((item) => profileItemIsPubliclyListable(item, researchCommunities)),
+        snapshot.items.filter((item) => ownProfile || profileItemIsPubliclyListable(item, researchCommunities)),
         handle,
         allowedActions
       ).slice(0, query.limit),
       nextCursor: null,
-      hiddenCommunityCounts: hiddenCommunityActivityCounts(snapshot.items, researchCommunities, handle, allowedActions)
+      hiddenCommunityCounts: ownProfile
+        ? emptyProfileActivityCounts()
+        : hiddenCommunityActivityCounts(snapshot.items, researchCommunities, handle, allowedActions)
     };
   }
 

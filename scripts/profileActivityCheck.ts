@@ -110,6 +110,10 @@ assert.ok(
   PROFILE_ACTIVITY_SQL.includes("post.post_type = 'paper' OR community.visibility = 'public'"),
   "Profile activity rows must hide current private-community activity while retaining papers."
 );
+assert.ok(
+  PROFILE_ACTIVITY_SQL.includes("$8::boolean OR post.community_id IS NULL"),
+  "A profile owner must receive their complete private-community activity ledger."
+);
 
 console.log(
   JSON.stringify(

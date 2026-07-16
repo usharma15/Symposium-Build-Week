@@ -334,7 +334,7 @@ export const PROFILE_ACTIVITY_SQL = `WITH profile_activity AS (
          AND ($8::boolean OR post_action.active = true)
          AND post.deleted_at IS NULL
          AND ($8::boolean OR (post.room <> 'office' AND post.kind <> 'draft'))
-         AND (post.community_id IS NULL OR post.post_type = 'paper' OR community.visibility = 'public')
+         AND ($8::boolean OR post.community_id IS NULL OR post.post_type = 'paper' OR community.visibility = 'public')
        UNION ALL
        SELECT
          'comment'::text AS "subjectType",
@@ -354,7 +354,7 @@ export const PROFILE_ACTIVITY_SQL = `WITH profile_activity AS (
          AND ($8::boolean OR comment_action.active = true)
          AND post.deleted_at IS NULL
          AND ($8::boolean OR (post.room <> 'office' AND post.kind <> 'draft'))
-         AND (post.community_id IS NULL OR community.visibility = 'public')
+         AND ($8::boolean OR post.community_id IS NULL OR community.visibility = 'public')
      )
      SELECT *
      FROM profile_activity
@@ -372,7 +372,9 @@ export const listCanonicalProfileActivity = async (
   query: ProfileActivityQueryContract,
   includeInactive: boolean
 ): Promise<ProfileActivityResponseContract> => {
-  const hiddenCommunityCounts = await hiddenCommunityActivityCounts(client, actorHandle, allowedActions);
+  const hiddenCommunityCounts = includeInactive
+    ? { all: 0, papers: 0, thoughts: 0, proposals: 0, opportunities: 0, comments: 0, reshares: 0, likes: 0, saved: 0 }
+    : await hiddenCommunityActivityCounts(client, actorHandle, allowedActions);
   if (!allowedActions.length) return { entries: [], nextCursor: null, hiddenCommunityCounts };
   const cursor = decodeActivityCursor(query.cursor);
   const result = await client.query<ProfileActivityRow>(

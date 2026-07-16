@@ -28,6 +28,38 @@ export const profileCommentsArePubliclyListable = (
   communities: ResearchCommunity[]
 ) => !item.communityId || communities.find((community) => community.id === item.communityId)?.visibility === "public";
 
+export const commentHasProfileActivity = (comment: InquiryComment, rawActorHandle: string): boolean => {
+  const actorHandle = cleanHandle(rawActorHandle);
+  return cleanHandle(comment.authorHandle ?? comment.author) === actorHandle
+    || hasHandle(comment.savedBy, actorHandle)
+    || hasHandle(comment.signaledBy, actorHandle)
+    || hasHandle(comment.forkedBy, actorHandle)
+    || (comment.replies ?? []).some((reply) => commentHasProfileActivity(reply, actorHandle));
+};
+
+export const profileActivityComments = (
+  comments: InquiryComment[],
+  rawActorHandle: string
+): InquiryComment[] => comments.flatMap((comment) => {
+  const replies = profileActivityComments(comment.replies ?? [], rawActorHandle);
+  const actorHandle = cleanHandle(rawActorHandle);
+  const directlyMatches = cleanHandle(comment.authorHandle ?? comment.author) === actorHandle
+    || hasHandle(comment.savedBy, actorHandle)
+    || hasHandle(comment.signaledBy, actorHandle)
+    || hasHandle(comment.forkedBy, actorHandle);
+  if (directlyMatches) return [{ ...comment, replies }];
+  return replies;
+});
+
+export const itemHasProfileActivity = (item: InquiryItem, rawActorHandle: string) => {
+  const actorHandle = cleanHandle(rawActorHandle);
+  return cleanHandle(item.authorHandle ?? item.author) === actorHandle
+    || hasHandle(item.savedBy, actorHandle)
+    || hasHandle(item.signaledBy, actorHandle)
+    || hasHandle(item.forkedBy, actorHandle)
+    || (item.comments ?? []).some((comment) => commentHasProfileActivity(comment, actorHandle));
+};
+
 export const hiddenCommunityActivityCounts = (
   items: InquiryItem[],
   communities: ResearchCommunity[],

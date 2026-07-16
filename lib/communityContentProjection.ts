@@ -1,4 +1,7 @@
+import type { ContentQuoteContract } from "@/packages/contracts/src";
 import type { InquiryComment, InquiryItem, ResearchCommunity } from "@/lib/mockData";
+import { unavailableContentQuote } from "@/lib/contentQuotes";
+import { itemHasProfileActivity, profileActivityComments } from "@/lib/profileActivity";
 
 const findComment = (comments: InquiryComment[], commentId: string): InquiryComment | null => {
   for (const comment of comments) {
@@ -18,6 +21,7 @@ const citationOnlyProjection = (item: InquiryItem, citation: { postCited: boolea
       savedBy: [],
       signaledBy: [],
       forkedBy: [],
+      quote: undefined,
       replies: []
     }] : [];
   });
@@ -54,11 +58,54 @@ const citationOnlyProjection = (item: InquiryItem, citation: { postCited: boolea
   };
 };
 
+const projectQuoteForViewer = (
+  quote: ContentQuoteContract | undefined,
+  ownerIsPaper: boolean,
+  itemById: Map<string, InquiryItem>,
+  communityById: Map<string, ResearchCommunity>
+) => {
+  if (!quote?.available) return quote;
+  const source = itemById.get(quote.sourcePostId);
+  if (!source) return unavailableContentQuote(quote);
+  const sourceIsPaper = quote.sourceType === "post" && source.postType === "paper";
+  if (!source.communityId || sourceIsPaper || ownerIsPaper) return quote;
+  const community = communityById.get(source.communityId);
+  return community?.visibility === "public" || community?.membershipStatus === "active"
+    ? quote
+    : unavailableContentQuote(quote);
+};
+
+const projectCommentQuotes = (
+  comments: InquiryComment[],
+  itemById: Map<string, InquiryItem>,
+  communityById: Map<string, ResearchCommunity>
+): InquiryComment[] => comments.map((comment) => ({
+  ...comment,
+  quote: projectQuoteForViewer(comment.quote, false, itemById, communityById),
+  replies: projectCommentQuotes(comment.replies ?? [], itemById, communityById)
+}));
+
+const projectFullItem = (
+  item: InquiryItem,
+  comments: InquiryComment[],
+  access: "full" | "activity-only",
+  itemById: Map<string, InquiryItem>,
+  communityById: Map<string, ResearchCommunity>
+): InquiryItem => ({
+  ...item,
+  communityAccess: access,
+  quote: projectQuoteForViewer(item.quote, item.postType === "paper", itemById, communityById),
+  comments: projectCommentQuotes(comments, itemById, communityById)
+});
+
 export const projectCommunityItemsForViewer = (
   items: InquiryItem[],
-  communities: ResearchCommunity[]
+  communities: ResearchCommunity[],
+  rawViewerHandle?: string | null
 ) => {
   const communityById = new Map(communities.map((community) => [community.id, community]));
+  const itemById = new Map(items.map((item) => [item.id, item]));
+  const viewerHandle = rawViewerHandle ?? "";
   const citedSources = new Map<string, { postCited: boolean; commentIds: Set<string> }>();
   for (const item of items) {
     if (item.postType !== "paper" || !item.quote?.available) continue;
@@ -71,10 +118,17 @@ export const projectCommunityItemsForViewer = (
   }
 
   return items.flatMap((item) => {
-    if (!item.communityId || item.postType === "paper") return [{ ...item, communityAccess: "full" as const }];
+    if (!item.communityId) return [projectFullItem(item, item.comments, "full", itemById, communityById)];
     const community = communityById.get(item.communityId);
-    if (!community || community.visibility === "public" || community.membershipStatus === "active") {
-      return [{ ...item, communityAccess: "full" as const }];
+    if (community?.visibility === "public" || community?.membershipStatus === "active") {
+      return [projectFullItem(item, item.comments, "full", itemById, communityById)];
+    }
+    const activityComments = viewerHandle ? profileActivityComments(item.comments, viewerHandle) : [];
+    if (item.postType === "paper") {
+      return [projectFullItem(item, activityComments, "full", itemById, communityById)];
+    }
+    if (viewerHandle && itemHasProfileActivity(item, viewerHandle)) {
+      return [projectFullItem(item, activityComments, "activity-only", itemById, communityById)];
     }
     const citation = citedSources.get(item.id);
     return citation ? [citationOnlyProjection(item, citation)] : [];

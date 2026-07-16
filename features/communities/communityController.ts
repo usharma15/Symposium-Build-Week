@@ -25,6 +25,7 @@ export const createCommunityController = (input: {
   clearRetryMutationKey: (fingerprintKey: string) => void;
   persist: () => void;
   openCommunity: (communityId: string) => void;
+  refresh: () => void;
   setStatus: (status: string) => void;
 }) => {
   const mergeCommunity = (community: ResearchCommunity) => {
@@ -87,6 +88,33 @@ export const createCommunityController = (input: {
     }
   };
 
+  const changeVisibility = async (visibility: ResearchCommunity["visibility"]) => {
+    const community = input.selectedCommunity;
+    if (!community) return { ok: false, error: "Community not found." };
+    if (visibility === community.visibility) return { ok: true };
+    const payload = { communityId: community.id, visibility, expectedRevision: community.revision ?? 1 };
+    const mutation = input.retryMutationKey("community-visibility", JSON.stringify(payload));
+    input.setStatus(`Making community ${visibility}`);
+    try {
+      const data = await symposiumApi.request<{ community: ResearchCommunity }>(
+        `/api/communities/${encodeURIComponent(community.id)}`,
+        { method: "PATCH", idempotencyKey: mutation.idempotencyKey, body: { ...payload, actorHandle: input.currentProfileHandle } }
+      );
+      input.clearRetryMutationKey(mutation.fingerprintKey);
+      mergeCommunity(data.community);
+      window.setTimeout(input.persist, 0);
+      input.refresh();
+      input.setStatus(`Community is now ${visibility}`);
+      return { ok: true };
+    } catch (error) {
+      if (!shouldRetainRetryMutation(error)) input.clearRetryMutationKey(mutation.fingerprintKey);
+      const message = error instanceof Error ? error.message : "Community visibility could not be changed";
+      input.setStatus(message);
+      if (message.includes("changed")) input.refresh();
+      return { ok: false, error: message };
+    }
+  };
+
   const createCall = async (callInput: Omit<CreateCommunityCallInputContract, "communityId">) => {
     const community = input.selectedCommunity;
     if (!community) return { ok: false, error: "Community not found." };
@@ -145,5 +173,5 @@ export const createCommunityController = (input: {
     }
   };
 
-  return { changeMembership, createCall, createCommunity, invite, joinCall };
+  return { changeMembership, changeVisibility, createCall, createCommunity, invite, joinCall };
 };
