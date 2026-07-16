@@ -3,6 +3,8 @@ import { buildApp } from "@/apps/api/src/server";
 import { latestMigrationId, migrationIds } from "@/apps/api/src/db/migrate";
 import {
   comments,
+  communities,
+  communityMemberships,
   events,
   noteBlocks,
   notes,
@@ -25,7 +27,7 @@ import { parseEventCursor } from "@/apps/api/src/services/events";
 import { clerkSecretMode } from "@/apps/api/src/config/preflight";
 
 const main = async () => {
-  assert.equal(latestMigrationId, "0027_semantic_post_types");
+  assert.equal(latestMigrationId, "0028_communities_foundation");
   assert.equal(clerkSecretMode("sk_test_example"), "development");
   assert.equal(clerkSecretMode("sk_live_example"), "production");
   assert.equal(clerkSecretMode(undefined), "missing");
@@ -40,6 +42,9 @@ const main = async () => {
   assert.ok("revision" in notes);
   assert.ok("patronage" in posts);
   assert.ok("opportunity" in posts);
+  assert.ok("communityId" in posts);
+  assert.ok("moderatorHandles" in communities);
+  assert.ok("lastAccessedAt" in communityMemberships);
   assert.ok("shortlisted" in opportunityApplications);
   assert.ok("revision" in opportunityApplications);
   assert.ok("applicationId" in opportunityApplicationComments);

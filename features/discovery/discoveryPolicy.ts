@@ -53,10 +53,8 @@ export const searchableContentText = (item: InquiryItem) =>
     .join(" ")
     .toLowerCase();
 
-const matchesCommunity = (item: InquiryItem, community: ResearchCommunity) => {
-  const text = searchableText(item);
-  return community.keywords.some((keyword) => text.includes(normalizeSearchPhrase(keyword)));
-};
+const matchesCommunity = (item: InquiryItem, community: ResearchCommunity) =>
+  item.communityId === community.id;
 
 export const getCommunityItems = (items: InquiryItem[], community: ResearchCommunity) =>
   items.filter((item) => !isDeletedPost(item) && matchesCommunity(item, community));

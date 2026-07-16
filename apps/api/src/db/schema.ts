@@ -113,6 +113,10 @@ export const communities = pgTable(
     keywords: jsonb("keywords").$type<string[]>().default(jsonArray).notNull(),
     seedCounts: jsonb("seed_counts").$type<ResearchCommunityContract["seedCounts"]>().default(jsonObject).notNull(),
     callStatus: text("call_status").default("quiet").notNull(),
+    moderatorHandles: jsonb("moderator_handles").$type<string[]>().default(jsonArray).notNull(),
+    guidelines: text("guidelines").default("").notNull(),
+    announcements: jsonb("announcements").$type<NonNullable<ResearchCommunityContract["announcements"]>>().default(jsonArray).notNull(),
+    revision: integer("revision").default(1).notNull(),
     createdAt: createdAtColumn(),
     updatedAt: updatedAtColumn()
   },
@@ -133,11 +137,14 @@ export const communityMemberships = pgTable(
       .references(() => profiles.handle, { onDelete: "cascade" }),
     role: text("role").default("member").notNull(),
     status: text("status").default("active").notNull(),
-    createdAt: createdAtColumn()
+    lastAccessedAt: timestamp("last_accessed_at", { withTimezone: true }),
+    createdAt: createdAtColumn(),
+    updatedAt: updatedAtColumn()
   },
   (table) => [
     primaryKey({ columns: [table.communityId, table.profileHandle] }),
     index("community_memberships_profile_idx").on(table.profileHandle),
+    index("community_memberships_recent_idx").on(table.profileHandle, table.lastAccessedAt),
     check(
       "community_memberships_status_check",
       sql`${table.status} IN ('active', 'requested', 'invited', 'rejected', 'blocked', 'removed')`

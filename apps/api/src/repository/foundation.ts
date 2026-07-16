@@ -413,9 +413,10 @@ const seedDatabase = async () => {
     for (const community of researchCommunities) {
       await client.query(
         `INSERT INTO communities (
-          id, name, field, summary, visibility, online, member_handles, keywords, seed_counts, call_status
+          id, name, field, summary, visibility, online, member_handles, keywords, seed_counts, call_status,
+          moderator_handles, guidelines, announcements
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         ON CONFLICT (id) DO UPDATE SET
           name = EXCLUDED.name,
           field = EXCLUDED.field,
@@ -426,6 +427,9 @@ const seedDatabase = async () => {
           keywords = EXCLUDED.keywords,
           seed_counts = EXCLUDED.seed_counts,
           call_status = EXCLUDED.call_status,
+          moderator_handles = EXCLUDED.moderator_handles,
+          guidelines = EXCLUDED.guidelines,
+          announcements = EXCLUDED.announcements,
           updated_at = now()`,
         [
           community.id,
@@ -437,7 +441,10 @@ const seedDatabase = async () => {
           JSON.stringify(community.memberHandles),
           JSON.stringify(community.keywords),
           JSON.stringify(community.seedCounts),
-          community.callStatus
+          community.callStatus,
+          JSON.stringify(community.moderatorHandles ?? community.memberHandles.slice(0, 2)),
+          community.guidelines ?? "Keep criticism attached to the work. Preserve sources, explain edits, and leave a legible trail when a claim changes.",
+          JSON.stringify(community.announcements ?? [])
         ]
       );
 
@@ -465,14 +472,14 @@ const seedDatabase = async () => {
       const comments = normalizeComments(item.comments, item.id, itemIndex);
       await client.query(
         `INSERT INTO posts (
-          id, kind, post_type, room, title, author_handle, author_name, affiliation, date_label, created_at, status,
+          id, kind, post_type, room, community_id, title, author_handle, author_name, affiliation, date_label, created_at, status,
           metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
-          tests, forks, saved, saved_by, signaled_by, forked_by, patronage, opportunity, search_text
+          tests, forks, saved, saved_by, signaled_by, forked_by, patronage, opportunity, search_text, visibility
         )
         VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
           $11, $12, $13, $14, $15, $16, $17, $18, $19,
-          $20, $21, $22, $23, $24, $25, $26, $27, $28, $29
+          $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31
         )
         ON CONFLICT (id) DO NOTHING`,
         [
@@ -480,6 +487,7 @@ const seedDatabase = async () => {
           item.kind,
           postTypeForItem(item),
           item.room,
+          item.communityId ?? null,
           item.title,
           item.authorHandle ?? author.handle,
           item.author,
@@ -504,7 +512,8 @@ const seedDatabase = async () => {
           JSON.stringify(item.forkedBy ?? []),
           item.patronage ? JSON.stringify(item.patronage) : null,
           item.opportunity ? JSON.stringify(item.opportunity) : null,
-          searchablePostText({ ...item, authorName: item.author })
+          searchablePostText({ ...item, authorName: item.author }),
+          item.communityId && postTypeForItem(item) !== "paper" ? "community" : "public"
         ]
       );
       if (item.patronage) {
@@ -695,6 +704,7 @@ export const rowToItem = (
     kind: row.kind,
     postType: row.postType ?? postTypeForItem(row) ?? undefined,
     room: row.room,
+    communityId: row.communityId ?? undefined,
     title: row.title,
     author: row.authorName,
     authorHandle: row.authorHandle ?? undefined,
@@ -772,6 +782,7 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
           kind,
           post_type AS "postType",
           room,
+          community_id AS "communityId",
           title,
           author_handle AS "authorHandle",
           author_name AS "authorName",
@@ -853,7 +864,11 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
           member_handles AS "memberHandles",
           keywords,
           seed_counts AS "seedCounts",
-          call_status AS "callStatus"
+          call_status AS "callStatus",
+          moderator_handles AS "moderatorHandles",
+          guidelines,
+          announcements,
+          revision
          FROM communities
          ORDER BY name ASC`
       ),
@@ -911,7 +926,9 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
         ...community,
         memberHandles: json(community.memberHandles, []),
         keywords: json(community.keywords, []),
-        seedCounts: json(community.seedCounts, { papers: 0, thoughts: 0, opportunities: 0 })
+        seedCounts: json(community.seedCounts, { papers: 0, thoughts: 0, opportunities: 0 }),
+        moderatorHandles: json(community.moderatorHandles, []),
+        announcements: json(community.announcements, [])
       })),
       defaultProfile
     };
@@ -932,8 +949,24 @@ export const publicProfile = (person: ResearchProfileContract): ResearchProfileC
   return profile;
 };
 
-export const publicCommunity = (community: ResearchCommunityContract): ResearchCommunityContract =>
-  community.visibility === "private" ? { ...community, memberHandles: [] } : community;
+export const publicCommunity = (
+  community: ResearchCommunityContract,
+  membershipStatus: ResearchCommunityContract["membershipStatus"] = community.membershipStatus ?? "none"
+): ResearchCommunityContract => {
+  const privateHidden = community.visibility === "private" && membershipStatus !== "active";
+  return {
+    ...community,
+    online: privateHidden ? 0 : community.online,
+    memberHandles: privateHidden ? [] : community.memberHandles,
+    moderatorHandles: privateHidden ? [] : community.moderatorHandles ?? [],
+    guidelines: privateHidden ? undefined : community.guidelines,
+    announcements: privateHidden ? [] : community.announcements ?? [],
+    memberCount: privateHidden ? 0 : community.memberCount,
+    monthlyActive: privateHidden ? 0 : community.monthlyActive,
+    callStatus: privateHidden ? "quiet" : community.callStatus,
+    membershipStatus
+  };
+};
 
 const visibleActionHandles = (
   handles: string[] | undefined,
@@ -974,9 +1007,138 @@ const publicItemProjection = (
   };
 };
 
+const findComment = (comments: InquiryCommentContract[], commentId: string): InquiryCommentContract | null => {
+  for (const comment of comments) {
+    if (comment.id === commentId) return { ...comment, replies: [] };
+    const reply = findComment(comment.replies ?? [], commentId);
+    if (reply) return reply;
+  }
+  return null;
+};
+
+const citationOnlyItemProjection = (
+  item: InquiryItemContract,
+  citation: { postCited: boolean; commentIds: Set<string> }
+): InquiryItemContract => {
+  const citedComments = [...citation.commentIds]
+    .flatMap((commentId) => findComment(item.comments ?? [], commentId) ?? [])
+    .map((comment) => ({
+      ...comment,
+      metrics: { signal: "—", forks: "—", saves: "—", reads: "—" },
+      savedBy: [],
+      signaledBy: [],
+      forkedBy: [],
+      replies: []
+    }));
+  const primaryComment = citedComments[0];
+  return {
+    ...item,
+    ...(!citation.postCited && primaryComment ? {
+      title: "Cited community comment",
+      author: primaryComment.author,
+      authorHandle: primaryComment.authorHandle,
+      body: "",
+      excerpt: "",
+      document: undefined,
+      createdAt: primaryComment.createdAt
+    } : {}),
+    communityAccess: "citation-only",
+    metrics: { signal: "—", critiques: "—", forks: "—", saves: "—", reads: "—" },
+    tags: [],
+    signals: [],
+    claims: [],
+    objections: [],
+    evidence: [],
+    tests: [],
+    forks: [],
+    comments: citedComments,
+    attachments: undefined,
+    quote: undefined,
+    patronage: undefined,
+    opportunity: undefined,
+    saved: false,
+    savedBy: [],
+    signaledBy: [],
+    forkedBy: []
+  };
+};
+
+type CommunityViewerState = {
+  status: ResearchCommunityContract["membershipStatus"];
+  lastAccessedAt?: string;
+  memberCount: number;
+  monthlyActive: number;
+};
+
+const communityViewerState = async (
+  communities: ResearchCommunityContract[],
+  requesterHandle: string | null
+) => {
+  if (!hasDatabase()) {
+    return new Map(communities.map((community) => {
+      const active = Boolean(requesterHandle && community.memberHandles.some((handle) => cleanHandle(handle) === requesterHandle));
+      return [community.id, {
+        status: active ? "active" as const : "none" as const,
+        lastAccessedAt: undefined,
+        memberCount: community.memberHandles.length,
+        monthlyActive: Math.max(community.online, Math.round(community.memberHandles.length * 0.72))
+      }];
+    }));
+  }
+
+  const result = await getPool().query<{
+    communityId: string;
+    membershipStatus: string | null;
+    lastAccessedAt: Date | string | null;
+    memberCount: number;
+    monthlyActive: number;
+  }>(
+    `SELECT
+       community.id AS "communityId",
+       viewer.status AS "membershipStatus",
+       viewer.last_accessed_at AS "lastAccessedAt",
+       COUNT(membership.profile_handle) FILTER (WHERE membership.status = 'active')::int AS "memberCount",
+       COUNT(membership.profile_handle) FILTER (
+         WHERE membership.status = 'active'
+           AND COALESCE(membership.last_accessed_at, membership.updated_at, membership.created_at) >= now() - interval '30 days'
+       )::int AS "monthlyActive"
+     FROM communities community
+     LEFT JOIN community_memberships membership ON membership.community_id = community.id
+     LEFT JOIN community_memberships viewer
+       ON viewer.community_id = community.id
+      AND viewer.profile_handle = $1
+     GROUP BY community.id, viewer.status, viewer.last_accessed_at`,
+    [requesterHandle]
+  );
+  return new Map(result.rows.map((row) => {
+    const status = row.membershipStatus === "active" || row.membershipStatus === "requested" || row.membershipStatus === "invited"
+      ? row.membershipStatus
+      : "none";
+    return [row.communityId, {
+      status,
+      lastAccessedAt: row.lastAccessedAt ? new Date(row.lastAccessedAt).toISOString() : undefined,
+      memberCount: Number(row.memberCount ?? 0),
+      monthlyActive: Number(row.monthlyActive ?? 0)
+    } satisfies CommunityViewerState];
+  }));
+};
+
 export const getPublicInitialState = async (rawRequesterHandle?: string | null) => {
   const state = await getInitialState();
   const requesterHandle = rawRequesterHandle ? cleanHandle(rawRequesterHandle) : null;
+  const communities = state.communities ?? [];
+  const communityById = new Map(communities.map((community) => [community.id, community]));
+  const viewerState = await communityViewerState(communities, requesterHandle);
+  const citedCommunitySources = new Map<string, { postCited: boolean; commentIds: Set<string> }>();
+  for (const item of state.items) {
+    if (item.postType !== "paper" || !item.quote?.available) continue;
+    const source = state.items.find((candidate) => candidate.id === item.quote?.sourcePostId);
+    if (!source?.communityId) continue;
+    const citation = citedCommunitySources.get(source.id) ?? { postCited: false, commentIds: new Set<string>() };
+    if (item.quote.sourceType === "comment") citation.commentIds.add(item.quote.sourceId);
+    else citation.postCited = true;
+    citedCommunitySources.set(source.id, citation);
+  }
   return {
     ...state,
     profiles: Object.fromEntries(
@@ -984,16 +1146,41 @@ export const getPublicInitialState = async (rawRequesterHandle?: string | null) 
     ),
     items: state.items
       .filter((item) => {
-        if (item.room !== "office" && item.kind !== "draft") return true;
-        return Boolean(requesterHandle && item.authorHandle && cleanHandle(item.authorHandle) === requesterHandle);
+        if (item.room === "office" || item.kind === "draft") {
+          return Boolean(requesterHandle && item.authorHandle && cleanHandle(item.authorHandle) === requesterHandle);
+        }
+        if (!item.communityId || item.postType === "paper") return true;
+        const community = communityById.get(item.communityId);
+        if (!community || community.visibility === "public") return true;
+        if (viewerState.get(community.id)?.status === "active") return true;
+        return citedCommunitySources.has(item.id);
       })
-      .map((item) => publicItemProjection(item, state.profiles, requesterHandle)),
-    communities: (state.communities ?? []).map(publicCommunity),
+      .map((item) => {
+        const community = item.communityId ? communityById.get(item.communityId) : null;
+        if (
+          community?.visibility === "private" &&
+          item.postType !== "paper" &&
+          viewerState.get(community.id)?.status !== "active"
+        ) {
+          return citationOnlyItemProjection(item, citedCommunitySources.get(item.id) ?? { postCited: false, commentIds: new Set() });
+        }
+        return publicItemProjection({ ...item, communityAccess: "full" }, state.profiles, requesterHandle);
+      }),
+    communities: communities.map((community) => {
+      const viewer = viewerState.get(community.id) ?? { status: "none" as const, lastAccessedAt: undefined, memberCount: 0, monthlyActive: 0 };
+      return publicCommunity({
+        ...community,
+        memberCount: viewer.memberCount,
+        monthlyActive: viewer.monthlyActive,
+        lastAccessedAt: viewer.lastAccessedAt
+      }, viewer.status);
+    }),
     defaultProfile: publicProfile(state.defaultProfile)
   };
 };
 
-export const listPublicCommunities = async () => (await listCommunities()).map(publicCommunity);
+export const listPublicCommunities = async (requesterHandle?: string | null) =>
+  (await getPublicInitialState(requesterHandle)).communities ?? [];
 
 export const getCommunity = async (communityId: string) => {
   const community = (await listCommunities()).find((item) => item.id === communityId);
@@ -1001,4 +1188,8 @@ export const getCommunity = async (communityId: string) => {
   return community;
 };
 
-export const getPublicCommunity = async (communityId: string) => publicCommunity(await getCommunity(communityId));
+export const getPublicCommunity = async (communityId: string, requesterHandle?: string | null) => {
+  const community = (await listPublicCommunities(requesterHandle)).find((item) => item.id === communityId);
+  if (!community) throw new TRPCError({ code: "NOT_FOUND", message: "Community not found." });
+  return community;
+};

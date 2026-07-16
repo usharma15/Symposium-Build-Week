@@ -10,6 +10,7 @@ import {
 import { findCommentInTree, isDeletedPost } from "@/lib/symposiumCore";
 import { ContentQuoteError, resolveLocalContentQuote } from "@/lib/contentQuotes";
 import { contentQuoteSourceSchema, versionedDocumentSchema } from "@/packages/contracts/src";
+import { localCommunityParticipationAllowed, localQuoteSourceItems } from "@/lib/localCommunityAuthorization";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -69,20 +70,22 @@ export async function POST(request: Request, context: Context) {
     ) {
       return jsonError("Post not found, deleted, or cannot accept this reply.", 404);
     }
+    const actorHandle = String(body.authorHandle ?? "");
+    if (!(await localCommunityParticipationAllowed(existing, actorHandle))) return jsonError("Join this community before participating.", 403);
     if (attachmentIds.length && (existing.room === "office" || existing.kind === "draft")) {
       return jsonError("Private comment attachments require protected delivery before they can be published.", 412);
     }
     const attachments = await replaceLocalOwnerAttachments({
-      actorHandle: String(body.authorHandle ?? ""),
+      actorHandle,
       attachmentIds,
       ownerId: commentId,
       ownerType: "comment"
     });
-    const quote = resolveLocalContentQuote(snapshot.items, quoteSource?.data, {
+    const quote = resolveLocalContentQuote(await localQuoteSourceItems(snapshot.items, actorHandle), quoteSource?.data, {
       ownerId: commentId,
       ownerType: "comment"
     });
-    const result = await addComment(id, { ...input, id: commentId, attachments, quote }, String(body.authorHandle ?? ""));
+    const result = await addComment(id, { ...input, id: commentId, attachments, quote }, actorHandle);
     if (!result) {
       await deleteLocalOwnerAttachments("comment", commentId);
       return jsonError("Post not found, deleted, or cannot accept this reply.", 404);

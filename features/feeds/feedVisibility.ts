@@ -3,6 +3,7 @@ import type { OfficeMode } from "@/features/navigation/viewState";
 import { itemAuthoredByProfile } from "@/features/profiles/ProfileViews";
 import { isSavedBy } from "@/lib/symposiumCore";
 import { itemHasPostType } from "@/lib/postSemantics";
+import { communityPostIsExternallyDiscoverable } from "@/features/communities/communityPolicy";
 
 export const selectVisibleFeedItems = (input: {
   items: InquiryItem[];
@@ -13,6 +14,7 @@ export const selectVisibleFeedItems = (input: {
   fallbackProfile: ResearchProfile;
   followingHandles: string[];
 }) => input.items
+  .filter((item) => input.activeRoom === "communities" || communityPostIsExternallyDiscoverable(item))
   .filter((item) => {
     if (input.activeRoom === "hall" || input.activeRoom === "symposium") {
       return itemHasPostType(item, "paper") || itemHasPostType(item, "thought");

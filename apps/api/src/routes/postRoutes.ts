@@ -18,7 +18,7 @@ export const registerPostRoutes = (app: FastifyInstance) => {
     try {
       const actor = await getActorFromRequest(request);
       const state = await getPublicInitialState(actor.handle);
-      return reply.send({ items: state.items });
+      return reply.send({ items: state.items.filter((item) => !item.communityId || item.postType === "paper") });
     } catch (error) {
       return sendError(app, reply, error);
     }

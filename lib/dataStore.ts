@@ -81,6 +81,7 @@ export type CreatePostInput = {
   kind: ContentKind;
   postType: PostTypeContract;
   room: Exclude<RoomId, "hall">;
+  communityId?: string;
   attachments?: InquiryAttachment[];
   quote?: ContentQuoteContract;
   patronage?: PatronageProposalInputContract;
@@ -305,6 +306,7 @@ const normalizeItem = (item: InquiryItem): InquiryItem => {
   const seedItem = seedItemById.get(item.id);
   return {
     ...item,
+    communityId: item.communityId ?? seedItem?.communityId,
     postType: postTypeForItem(item) ?? undefined,
     kind: item.room === "funding" ? "paper" : item.room === "opportunities" ? "thought" : item.kind,
     patronage: item.patronage ?? (item.room === "funding" ? seedItem?.patronage : undefined),
@@ -487,6 +489,7 @@ const ensureSchema = async () => {
           kind TEXT NOT NULL,
           post_type TEXT,
           room TEXT NOT NULL,
+          community_id TEXT,
           title TEXT NOT NULL,
           author_handle TEXT NOT NULL,
           author_name TEXT NOT NULL,
@@ -583,6 +586,7 @@ const ensureSchema = async () => {
         ALTER TABLE items ADD COLUMN IF NOT EXISTS patronage JSONB;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS opportunity JSONB;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS post_type TEXT;
+        ALTER TABLE items ADD COLUMN IF NOT EXISTS community_id TEXT;
         UPDATE items SET post_type = CASE
           WHEN room = 'office' THEN NULL
           WHEN patronage IS NOT NULL OR room = 'funding' THEN 'proposal'
@@ -687,14 +691,14 @@ const seedPostgres = async () => {
   for (const item of seed.items) {
     await db.query(
       `INSERT INTO items (
-        id, kind, post_type, room, title, author_handle, author_name, affiliation, date_label, status,
+        id, kind, post_type, room, community_id, title, author_handle, author_name, affiliation, date_label, status,
         metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
         tests, forks, saved, saved_by, signaled_by, forked_by, quote, patronage, opportunity, created_at
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
         $11, $12, $13, $14, $15, $16, $17, $18, $19,
-        $20, $21, $22, $23, $24, $25, $26, $27, $28, $29
+        $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30
       )
       ON CONFLICT (id) DO NOTHING`,
       [
@@ -702,6 +706,7 @@ const seedPostgres = async () => {
         item.kind,
         item.postType,
         item.room,
+        item.communityId ?? null,
         item.title,
         item.authorHandle ?? handleFromName(item.author),
         item.author,
@@ -896,6 +901,7 @@ const loadPostgres = async (): Promise<AppData> => {
       kind: ContentKind;
       post_type: PostTypeContract | null;
       room: Exclude<RoomId, "hall">;
+      community_id: string | null;
       title: string;
       author_handle: string;
       author_name: string;
@@ -957,6 +963,7 @@ const loadPostgres = async (): Promise<AppData> => {
     kind: item.kind,
     postType: item.post_type ?? undefined,
     room: item.room,
+    communityId: item.community_id ?? undefined,
     title: item.title,
     author: item.author_name,
     authorHandle: item.author_handle || undefined,
@@ -1096,6 +1103,7 @@ export const createPost = async (input: CreatePostInput, authorHandle: string) =
     kind: input.kind,
     postType: input.postType,
     room: input.room,
+    communityId: input.communityId,
     title: input.title.trim(),
     author: author.name,
     authorHandle: author.handle,
@@ -1140,20 +1148,21 @@ export const createPost = async (input: CreatePostInput, authorHandle: string) =
     await ensureSchema();
     await getPool().query(
       `INSERT INTO items (
-        id, kind, post_type, room, title, author_handle, author_name, affiliation, date_label, created_at, status,
+        id, kind, post_type, room, community_id, title, author_handle, author_name, affiliation, date_label, created_at, status,
         metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
         tests, forks, attachments, saved, saved_by, signaled_by, forked_by, quote, patronage, opportunity
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
         $11, $12, $13, $14, $15, $16, $17, $18, $19,
-        $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30
+        $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31
       )`,
       [
         item.id,
         item.kind,
         item.postType,
         item.room,
+        item.communityId ?? null,
         item.title,
         item.authorHandle,
         item.author,

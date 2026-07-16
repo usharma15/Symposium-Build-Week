@@ -9,6 +9,7 @@ import {
 import { canManageComment, findCommentInTree, isDeletedComment } from "@/lib/symposiumCore";
 import { ContentQuoteError, resolveLocalContentQuote } from "@/lib/contentQuotes";
 import { contentQuoteSourceSchema, versionedDocumentSchema } from "@/packages/contracts/src";
+import { localCommunityReadAllowed, localQuoteSourceItems } from "@/lib/localCommunityAuthorization";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -74,6 +75,7 @@ export async function PATCH(request: Request, context: Context) {
     ) {
       return jsonError("Comment not found or cannot be edited by this profile.", 404);
     }
+    if (!(await localCommunityReadAllowed(existing, actorHandle ?? ""))) return jsonError("Comment not found.", 404);
     if (attachmentIds?.length && (existing.room === "office" || existing.kind === "draft")) {
       return jsonError("Private comment attachments require protected delivery before they can be published.", 412);
     }
@@ -95,7 +97,7 @@ export async function PATCH(request: Request, context: Context) {
       ? undefined
       : parsedQuoteSource === null
         ? null
-        : resolveLocalContentQuote(snapshot.items, parsedQuoteSource, { ownerId: commentId, ownerType: "comment" });
+        : resolveLocalContentQuote(await localQuoteSourceItems(snapshot.items, actorHandle ?? ""), parsedQuoteSource, { ownerId: commentId, ownerType: "comment" });
     const item = await updateComment(id, commentId, { ...input, attachments, quote }, actorHandle ?? "");
     if (!item) {
       return jsonError("Comment not found or cannot be edited by this profile.", 404);
@@ -122,6 +124,9 @@ export async function DELETE(request: Request, context: Context) {
     idempotencyKey
   });
   if (live) return live;
+
+  const existing = (await getSnapshot()).items.find((item) => item.id === id);
+  if (!existing || !(await localCommunityReadAllowed(existing, actorHandle ?? ""))) return jsonError("Comment not found.", 404);
 
   const item = await deleteComment(id, commentId, actorHandle ?? "");
   if (!item) {

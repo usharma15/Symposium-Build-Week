@@ -4,20 +4,38 @@ import { sendError } from "../http/errors";
 import { mutationContextFromRequest } from "../services/mutations";
 import { getActorFromRequest } from "../services/auth";
 import {
+  createCommunity,
   createCommunityCall,
   endCommunityCall,
   joinCommunityCall,
   joinOrRequestCommunity,
-  listCommunityCalls
+  leaveCommunity,
+  listCommunityCalls,
+  recordCommunityAccess
 } from "../repository/communities";
 import { getPublicCommunity, listPublicCommunities } from "../repository/foundation";
 import type { RouteParams } from "./types";
 
 export const registerCommunityRoutes = (app: FastifyInstance) => {
-  app.get("/v1/communities", async (_request, reply) => {
+  app.get("/v1/communities", async (request, reply) => {
     try {
-      const communities = await listPublicCommunities();
+      const actor = await getActorFromRequest(request);
+      const communities = await listPublicCommunities(actor.handle);
       return reply.send({ communities });
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.post("/v1/communities", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      const community = await createCommunity(
+        request.body,
+        actor,
+        mutationContextFromRequest(request, "community.create", request.body)
+      );
+      return reply.send({ community });
     } catch (error) {
       return sendError(app, reply, error);
     }
@@ -25,7 +43,8 @@ export const registerCommunityRoutes = (app: FastifyInstance) => {
 
   app.get<{ Params: RouteParams }>("/v1/communities/:id", async (request, reply) => {
     try {
-      const community = await getPublicCommunity(request.params.id);
+      const actor = await getActorFromRequest(request);
+      const community = await getPublicCommunity(request.params.id, actor.handle);
       return reply.send({ community });
     } catch (error) {
       return sendError(app, reply, error);
@@ -36,6 +55,26 @@ export const registerCommunityRoutes = (app: FastifyInstance) => {
     try {
       const actor = await withWriteActor(request);
       const result = await joinOrRequestCommunity({ communityId: request.params.id }, actor);
+      return reply.send(result);
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.delete<{ Params: RouteParams }>("/v1/communities/:id/membership", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      const result = await leaveCommunity({ communityId: request.params.id }, actor);
+      return reply.send(result);
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.post<{ Params: RouteParams }>("/v1/communities/:id/access", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request);
+      const result = await recordCommunityAccess({ communityId: request.params.id }, actor);
       return reply.send(result);
     } catch (error) {
       return sendError(app, reply, error);

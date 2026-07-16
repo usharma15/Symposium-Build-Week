@@ -1,6 +1,7 @@
-import { applyPostAction, type PostAction } from "@/lib/dataStore";
+import { applyPostAction, getSnapshot, type PostAction } from "@/lib/dataStore";
 import { jsonError, readJson } from "@/lib/api";
 import { proxyLiveBackend } from "@/lib/liveBackendClient";
+import { localCommunityReadAllowed } from "@/lib/localCommunityAuthorization";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,6 +37,8 @@ export async function POST(request: Request, context: Context) {
   if (live) return live;
 
   const actorHandle = String(body.actorHandle ?? "@udayan");
+  const existing = (await getSnapshot()).items.find((item) => item.id === id);
+  if (!existing || !(await localCommunityReadAllowed(existing, actorHandle))) return jsonError("Post not found.", 404);
   const result = await applyPostAction(
     id,
     typedAction,

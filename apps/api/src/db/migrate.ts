@@ -1660,6 +1660,89 @@ const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS posts_post_type_created_at_idx
         ON posts (post_type, created_at DESC);
     `
+  },
+  {
+    id: "0028_communities_foundation",
+    sql: `
+      ALTER TABLE communities ADD COLUMN IF NOT EXISTS moderator_handles JSONB NOT NULL DEFAULT '[]'::jsonb;
+      ALTER TABLE communities ADD COLUMN IF NOT EXISTS guidelines TEXT NOT NULL DEFAULT '';
+      ALTER TABLE communities ADD COLUMN IF NOT EXISTS announcements JSONB NOT NULL DEFAULT '[]'::jsonb;
+      ALTER TABLE communities ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE community_memberships ADD COLUMN IF NOT EXISTS last_accessed_at TIMESTAMPTZ;
+      ALTER TABLE community_memberships ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+
+      UPDATE communities
+      SET moderator_handles = CASE
+        WHEN moderator_handles = '[]'::jsonb THEN COALESCE((
+          SELECT jsonb_agg(membership.profile_handle ORDER BY membership.profile_handle)
+          FROM community_memberships membership
+          WHERE membership.community_id = communities.id
+            AND membership.role IN ('owner', 'moderator')
+            AND membership.status = 'active'
+        ), '[]'::jsonb)
+        ELSE moderator_handles
+      END;
+
+      CREATE INDEX IF NOT EXISTS community_memberships_recent_idx
+        ON community_memberships (profile_handle, last_accessed_at DESC);
+      CREATE INDEX IF NOT EXISTS community_memberships_community_status_idx
+        ON community_memberships (community_id, status);
+
+      UPDATE posts SET community_id = 'frontier-physics-bench'
+        WHERE title = 'Frontier Physics Bench field map' AND community_id IS NULL;
+      UPDATE posts SET community_id = 'source-packet-workshop'
+        WHERE title = 'Source Packet Workshop review scaffold' AND community_id IS NULL;
+      UPDATE posts SET community_id = 'replication-commons'
+        WHERE title = 'Replication Commons needs a failure etiquette' AND community_id IS NULL;
+      UPDATE posts SET community_id = 'rogue-youth-labs'
+        WHERE title = 'Rogue Youth Labs seeks summer cell advisors' AND community_id IS NULL;
+      UPDATE posts SET community_id = 'open-problems-garden'
+        WHERE title = 'Open Problems Garden bounty board' AND community_id IS NULL;
+      UPDATE posts SET community_id = 'patronage-design-desk'
+        WHERE title = 'Patronage Design Desk call memo' AND community_id IS NULL;
+      UPDATE posts AS post
+      SET community_id = seed.community_id
+      FROM (VALUES
+        ('live-1-library-paper', 'frontier-physics-bench'),
+        ('live-2-symposium-thought', 'ai-metascience-lab'),
+        ('live-3-amphitheater-thought', 'replication-commons'),
+        ('live-4-library-paper', 'rogue-youth-labs'),
+        ('live-5-symposium-paper', 'history-of-discovery-circle'),
+        ('live-6-office-draft', 'tools-instruments-guild'),
+        ('live-7-library-paper', 'patronage-design-desk'),
+        ('live-8-amphitheater-note', 'open-problems-garden'),
+        ('live-9-symposium-thought', 'field-methods-exchange'),
+        ('live-10-office-code', 'source-packet-workshop'),
+        ('live-11-library-paper', 'toy-world-agents'),
+        ('live-12-amphitheater-thought', 'campus-events-board'),
+        ('live-13-funding-paper', 'anomaly-archive-room'),
+        ('live-14-funding-paper', 'mentor-critique-table'),
+        ('live-15-communities-thought', 'civic-bounty-commons'),
+        ('live-16-communities-note', 'private-grant-circle'),
+        ('live-17-library-paper', 'frontier-physics-bench'),
+        ('live-18-library-paper', 'source-packet-workshop'),
+        ('live-19-amphitheater-thought', 'replication-commons'),
+        ('live-20-opportunities-note', 'rogue-youth-labs'),
+        ('live-21-opportunities-draft', 'open-problems-garden'),
+        ('live-22-communities-note', 'patronage-design-desk'),
+        ('live-23-opportunities-note', 'institution-design-forum'),
+        ('live-24-opportunities-draft', 'conference-signals-forum')
+      ) AS seed(post_id, community_id)
+      WHERE post.id = seed.post_id AND post.community_id IS NULL;
+      UPDATE posts SET visibility = CASE WHEN post_type = 'paper' THEN 'public' ELSE 'community' END
+        WHERE community_id IS NOT NULL;
+
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'communities_revision_check') THEN
+          ALTER TABLE communities ADD CONSTRAINT communities_revision_check CHECK (revision >= 1);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'communities_visibility_check') THEN
+          ALTER TABLE communities ADD CONSTRAINT communities_visibility_check CHECK (visibility IN ('public', 'private'));
+        END IF;
+      END
+      $$;
+    `
   }
 ];
 

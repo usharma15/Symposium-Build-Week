@@ -46,7 +46,7 @@ const attachmentCount = (value: string | number) => Math.min(Math.max(Number(val
 export const resolveContentQuote = async (
   client: PoolClient,
   source: ContentQuoteSourceContract | undefined,
-  owner?: { ownerId: string; ownerType: QuoteOwnerType }
+  owner?: { ownerId: string; ownerType: QuoteOwnerType; actorHandle?: string }
 ): Promise<ContentQuoteContract | undefined> => {
   if (!source) return undefined;
   if (owner?.ownerType === source.sourceType && owner.ownerId === source.sourceId) {
@@ -73,11 +73,26 @@ export const resolveContentQuote = async (
        FROM posts post
        WHERE post.id = $1
          AND post.deleted_at IS NULL
-         AND post.visibility = 'public'
+         AND (
+           post.visibility = 'public'
+           OR (
+           post.community_id IS NOT NULL
+             AND EXISTS (
+               SELECT 1
+               FROM communities community
+               LEFT JOIN community_memberships membership
+                 ON membership.community_id = community.id
+                AND membership.profile_handle = $2
+                AND membership.status = 'active'
+               WHERE community.id = post.community_id
+                 AND (community.visibility = 'public' OR membership.profile_handle IS NOT NULL)
+             )
+           )
+         )
          AND post.room <> 'office'
          AND post.kind <> 'draft'
        FOR SHARE OF post`,
-      [source.sourceId]
+      [source.sourceId, owner?.actorHandle ?? null]
     );
     const row = result.rows[0];
     if (!row) throw unavailableSource();
@@ -119,11 +134,26 @@ export const resolveContentQuote = async (
      WHERE comment.id = $1
        AND comment.deleted_at IS NULL
        AND post.deleted_at IS NULL
-       AND post.visibility = 'public'
+       AND (
+         post.visibility = 'public'
+         OR (
+           post.community_id IS NOT NULL
+           AND EXISTS (
+             SELECT 1
+             FROM communities community
+             LEFT JOIN community_memberships membership
+               ON membership.community_id = community.id
+              AND membership.profile_handle = $2
+              AND membership.status = 'active'
+             WHERE community.id = post.community_id
+               AND (community.visibility = 'public' OR membership.profile_handle IS NOT NULL)
+           )
+         )
+       )
        AND post.room <> 'office'
        AND post.kind <> 'draft'
      FOR SHARE OF comment, post`,
-    [source.sourceId]
+    [source.sourceId, owner?.actorHandle ?? null]
   );
   const row = result.rows[0];
   if (!row) throw unavailableSource();
@@ -147,7 +177,7 @@ export const resolveUpdatedContentQuote = (
   client: PoolClient,
   current: ContentQuoteContract | undefined,
   source: ContentQuoteSourceContract | null | undefined,
-  owner: { ownerId: string; ownerType: QuoteOwnerType }
+  owner: { ownerId: string; ownerType: QuoteOwnerType; actorHandle?: string }
 ) => source === undefined ? current : source === null ? undefined : resolveContentQuote(client, source, owner);
 
 const unavailableQuoteSql = `jsonb_build_object(

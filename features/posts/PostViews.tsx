@@ -83,6 +83,7 @@ import { CanonicalLink } from "@/features/navigation/CanonicalLink";
 import { canonicalRouteHref } from "@/features/navigation/canonicalRoute";
 import { postToneClassName, postToneForItem } from "@/lib/postTone";
 import { itemHasPostType } from "@/lib/postSemantics";
+import { communityPostIsInteractive } from "@/features/communities/communityPolicy";
 import {
   attachmentScribbleSource,
   postScribbleSource,
@@ -149,7 +150,8 @@ export function PostComposerModal({
   onUploadAttachment,
   onResolveQuoteLink,
   profiles,
-  initialKind = "thought"
+  initialKind = "thought",
+  destinationLabel
 }: {
   onClose: () => void;
   onCreatePost: (draft: PostDraft) => Promise<PostCreationResult>;
@@ -158,6 +160,7 @@ export function PostComposerModal({
   onResolveQuoteLink: QuoteLinkResolver;
   profiles: Record<string, ResearchProfile>;
   initialKind?: PostDraftKind;
+  destinationLabel?: string;
 }) {
   const [kind, setKind] = useState<PostDraft["kind"]>(initialKind);
   const [title, setTitle] = useState("");
@@ -247,7 +250,7 @@ export function PostComposerModal({
       <form className="post-composer post-composer-modal" onSubmit={submitPost} onClick={(event) => event.stopPropagation()}>
         <div className="composer-modal-head">
           <div>
-            <span>New post</span>
+            <span>{destinationLabel ?? "New post"}</span>
             <strong>{composerKindLabels[kind]}</strong>
           </div>
           <button type="button" title="Close" onClick={onClose}>
@@ -610,6 +613,7 @@ export function FeedPost({
   const postRef = useRef<HTMLElement | null>(null);
   const scribble = useScribble();
   const tone = postToneForItem(item);
+  const interactionLocked = !communityPostIsInteractive(item);
   const openPost = () => onSelect(item.id);
   const openPostUnlessSelecting = () => {
     if (window.getSelection()?.toString().trim()) return;
@@ -622,7 +626,7 @@ export function FeedPost({
     }
   };
   useQualifiedView(postRef, {
-    disabled: isDeletedPost(item),
+    disabled: isDeletedPost(item) || interactionLocked,
     targetKey: item.id,
     onView: () => onAction(item.id, "read", { trigger: "visibility", surface })
   });
@@ -637,7 +641,7 @@ export function FeedPost({
       onClick={openPostUnlessSelecting}
       onKeyDown={onKeyDown}
     >
-      <PostOwnerControls item={item} actorHandle={actorHandle} onEditPost={onEditPost} onDeletePost={onDeletePost} />
+      {!interactionLocked ? <PostOwnerControls item={item} actorHandle={actorHandle} onEditPost={onEditPost} onDeletePost={onDeletePost} /> : null}
       <PostAuthor
         item={item}
         profiles={profiles}
@@ -654,15 +658,25 @@ export function FeedPost({
             {deletedPostContextTitle(item)}
           </CanonicalLink>
         </h2>
-        <ScribbleCitable source={postScribbleSource(item)}><SymposiumDocumentRenderer
-          document={item.document}
-          body={item.body}
-          attachments={item.attachments}
-          profiles={profiles}
-          mode="feed"
-          onExpand={() => onAction(item.id, "read", { trigger: "expand", surface })}
-          onCiteAttachment={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, postScribbleSource(item)))}
-        /></ScribbleCitable>
+        {interactionLocked ? (
+          <SymposiumDocumentRenderer
+            document={item.document}
+            body={item.body}
+            attachments={item.attachments}
+            profiles={profiles}
+            mode="feed"
+          />
+        ) : (
+          <ScribbleCitable source={postScribbleSource(item)}><SymposiumDocumentRenderer
+            document={item.document}
+            body={item.body}
+            attachments={item.attachments}
+            profiles={profiles}
+            mode="feed"
+            onExpand={() => onAction(item.id, "read", { trigger: "expand", surface })}
+            onCiteAttachment={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, postScribbleSource(item)))}
+          /></ScribbleCitable>
+        )}
         <PostAttachmentCarousel item={item} onOpenPreview={onOpenAttachmentPreview} onAddToScribble={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, postScribbleSource(item)))} />
         {item.quote ? (
           <ContentQuoteCard
@@ -752,6 +766,7 @@ function SocialActions({
   actorHandle: string;
 }) {
   const postDeleted = isDeletedPost(item);
+  const interactionLocked = !communityPostIsInteractive(item);
   const savedByActor = isSavedBy(item, actorHandle, profile.handle);
   const signaledByActor = hasHandle(item.signaledBy, actorHandle);
   const forkedByActor = hasHandle(item.forkedBy, actorHandle);
@@ -768,9 +783,9 @@ function SocialActions({
       {actions.map((action) => {
         const Icon = action.icon;
         const fillActiveIcon = action.active && (action.label === "Likes" || action.label === "Saves");
-        const disabled = postDeleted && Boolean(action.action);
+        const disabled = interactionLocked || (postDeleted && Boolean(action.action));
         const metricValue = action.value === deletedMetricLabel ? deletedMetricLabel : formatMetric(metricNumber(action.value));
-        if (action.label === "Comments" && !postDeleted) {
+        if (action.label === "Comments" && !postDeleted && !interactionLocked) {
           return (
             <CanonicalLink
               key={action.label}
@@ -794,7 +809,7 @@ function SocialActions({
             disabled={disabled}
             onClick={(event) => {
               event.stopPropagation();
-              if (action.action && !postDeleted) onAction(item.id, action.action);
+              if (action.action && !postDeleted && !interactionLocked) onAction(item.id, action.action);
               else if (action.label === "Comments") onCommentsClick?.();
             }}
           >
@@ -804,7 +819,7 @@ function SocialActions({
           </button>
         );
       })}
-      <QuoteActionButton disabled={postDeleted} label="post" onQuote={onQuote} />
+      <QuoteActionButton disabled={postDeleted || interactionLocked} label="post" onQuote={onQuote} />
       <a
         className="content-link-action"
         href={canonicalRouteHref({ kind: "post", postId: item.id })}
@@ -880,6 +895,7 @@ export function DetailView({
   const isOpportunity = itemHasPostType(item, "opportunity");
   const tone = postToneForItem(item);
   const postDeleted = isDeletedPost(item);
+  const interactionLocked = !communityPostIsInteractive(item);
   const detailRef = useRef<HTMLElement | null>(null);
   const doiSlug = item.id.replace(/[^a-z0-9]+/gi, ".").replace(/\.+/g, ".").replace(/\.$/, "");
   const codeSlug = item.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 44);
@@ -917,7 +933,7 @@ export function DetailView({
   }, [commentSegmentStacks, item.id, threadSelectedCommentId]);
 
   useQualifiedView(detailRef, {
-    disabled: postDeleted,
+    disabled: postDeleted || interactionLocked,
     targetKey: item.id,
     onView: () => onAction(item.id, "read", { trigger: "visibility", surface: "detail" })
   });
@@ -930,7 +946,11 @@ export function DetailView({
       </button>
 
       <section className="detail-main" ref={detailRef}>
-        <PostOwnerControls item={item} actorHandle={actorHandle} onEditPost={onEditPost} onDeletePost={onDeletePost} />
+        {interactionLocked ? (
+          <div className="community-citation-only-notice">
+            This source now belongs to a private community. Only the cited content and its author remain visible; community context and interactions are unavailable.
+          </div>
+        ) : <PostOwnerControls item={item} actorHandle={actorHandle} onEditPost={onEditPost} onDeletePost={onDeletePost} />}
         <p className="eyebrow">{isProposal ? "Patronage Proposal" : isOpportunity ? "Opportunity" : kindLabels[item.kind]}</p>
         <h1>{deletedPostContextTitle(item)}</h1>
         {postDeleted ? (
@@ -955,15 +975,25 @@ export function DetailView({
             </span>
           </CanonicalLink>
         )}
-        <ScribbleCitable source={postScribbleSource(item)}><SymposiumDocumentRenderer
-          document={item.document}
-          body={item.body}
-          attachments={item.attachments}
-          profiles={profiles}
-          mode="detail"
-          onOpenAttachment={(attachmentId) => onOpenAttachmentPreview(item, attachmentId)}
-          onCiteAttachment={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, postScribbleSource(item)))}
-        /></ScribbleCitable>
+        {interactionLocked ? (
+          <SymposiumDocumentRenderer
+            document={item.document}
+            body={item.body}
+            attachments={item.attachments}
+            profiles={profiles}
+            mode="detail"
+          />
+        ) : (
+          <ScribbleCitable source={postScribbleSource(item)}><SymposiumDocumentRenderer
+            document={item.document}
+            body={item.body}
+            attachments={item.attachments}
+            profiles={profiles}
+            mode="detail"
+            onOpenAttachment={(attachmentId) => onOpenAttachmentPreview(item, attachmentId)}
+            onCiteAttachment={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, postScribbleSource(item)))}
+          /></ScribbleCitable>
+        )}
         {appendedContentAttachments(item.document, item.attachments ?? []).length ? (
           <PostAttachmentCarousel item={{ ...item, attachments: appendedContentAttachments(item.document, item.attachments ?? []) }} onOpenPreview={onOpenAttachmentPreview} onAddToScribble={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, postScribbleSource(item)))} variant="detail" />
         ) : null}
@@ -995,7 +1025,19 @@ export function DetailView({
         ) : isOpportunity && item.opportunity ? (
           <div className="opportunity-side-inline"><OpportunityRail item={item} actorHandle={actorHandle} onApply={onApplyOpportunity} onReview={onReviewOpportunity} /></div>
         ) : null}
-        <section className="comments-section" id={commentsSectionId}>
+        {interactionLocked ? (
+          item.comments.length ? (
+            <section className="comments-section community-cited-comments" id={commentsSectionId}>
+              <h2>Cited comment</h2>
+              {item.comments.map((comment) => (
+                <article key={comment.id ?? `${comment.author}:${comment.body.slice(0, 20)}`}>
+                  <strong>{comment.author}</strong>
+                  <p>{comment.body}</p>
+                </article>
+              ))}
+            </section>
+          ) : null
+        ) : <section className="comments-section" id={commentsSectionId}>
           <h2>Discussion</h2>
           {postDeleted ? null : (
             <CommentComposer
@@ -1029,7 +1071,7 @@ export function DetailView({
             onCommentSegmentStackChange={onCommentSegmentStackChange}
             onVisibleCommentSegmentStackChange={onVisibleCommentSegmentStackChange}
           />
-        </section>
+        </section>}
       </section>
 
       {!isProposal && !isOpportunity && isPaper ? (

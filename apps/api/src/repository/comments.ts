@@ -33,6 +33,7 @@ import { claimMutation, completeMutation, type MutationContext } from "../servic
 import { markQuotedCommentUnavailable, resolveContentQuote, resolveUpdatedContentQuote } from "../services/contentQuotes";
 import { queueAttachmentsForOwnerStorageDeletion, triggerStorageDeletion } from "../services/storageDeletion";
 import { transitionCommentAction } from "./actions";
+import { assertCommunityParticipation, assertCommunityReadAccess, communityEventScope } from "./communities";
 import { recordContentView, recordMemoryContentView } from "./contentViews";
 import { actorHandle, commentTreesFromRows, ensureLiveData, getInitialState, getPostConversationAttachments, newId, rowToAttachment, rowToItem, type CommentRow, type SnapshotRow } from "./foundation";
 type ActionMutationResult = {
@@ -64,6 +65,7 @@ export const addComment = async (
     });
   }
   const handle = actorHandle(actor, input.authorHandle);
+  if (existing.communityId && existing.postType !== "paper") await assertCommunityParticipation(existing.communityId, handle);
   if (
     (existing.room === "office" || existing.kind === "draft") &&
     (!existing.authorHandle || cleanHandle(existing.authorHandle) !== handle)
@@ -127,7 +129,7 @@ export const addComment = async (
     }
     const postResult = await client.query<SnapshotRow>(
       `SELECT
-        id, revision, kind, post_type AS "postType", room,
+        id, revision, kind, post_type AS "postType", room, community_id AS "communityId",
         title,
         author_handle AS "authorHandle",
         author_name AS "authorName",
@@ -206,7 +208,7 @@ export const addComment = async (
       uploaderHandle: handle
     });
     comment.attachments = attachmentChange.attachments.map(rowToAttachment);
-    comment.quote = await resolveContentQuote(client, input.quoteSource, { ownerId: comment.id as string, ownerType: "comment" });
+    comment.quote = await resolveContentQuote(client, input.quoteSource, { ownerId: comment.id as string, ownerType: "comment", actorHandle: handle });
 
     const lockedNextCritiques = incrementMetric(lockedItem.metrics.critiques, 1);
     const lockedNextMetrics = { ...lockedItem.metrics, critiques: lockedNextCritiques };
@@ -274,12 +276,14 @@ export const addComment = async (
       })
     });
     await completeMutation(client, handle, mutation, { comment, item: updatedItem });
+    const eventScope = await communityEventScope(client, existing.postType === "paper" ? null : existing.communityId);
     stagedEvent = await stageEvent(client, {
       kind: "comment.created",
       actorHandle: comment.authorHandle,
       subjectType: "post",
       subjectId: postId,
-      visibility: existing.room === "office" || existing.kind === "draft" ? "private" : "public",
+      visibility: existing.room === "office" || existing.kind === "draft" ? "private" : eventScope.visibility,
+      audienceHandles: existing.room === "office" || existing.kind === "draft" ? [handle] : eventScope.audienceHandles,
       payload:
         existing.room === "office" || existing.kind === "draft"
           ? { comment, item: updatedItem, commentId: comment.id, parentId: comment.parentId }
@@ -313,6 +317,7 @@ export const updateComment = async (
     const snapshot = await getInitialState();
     const existing = snapshot.items.find((item) => item.id === postId);
     if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    if (existing.communityId && existing.postType !== "paper") await assertCommunityReadAccess(existing.communityId, handle);
     if (
       (existing.room === "office" || existing.kind === "draft") &&
       (!existing.authorHandle || cleanHandle(existing.authorHandle) !== handle)
@@ -352,7 +357,7 @@ export const updateComment = async (
     }
     const postResult = await client.query<SnapshotRow>(
       `SELECT
-        id, revision, kind, post_type AS "postType", room, title, author_handle AS "authorHandle", author_name AS "authorName",
+        id, revision, kind, post_type AS "postType", room, community_id AS "communityId", title, author_handle AS "authorHandle", author_name AS "authorName",
         affiliation, date_label AS "dateLabel", created_at AS "createdAt", edited_at AS "editedAt",
         deleted_at AS "deletedAt",
         status, metrics, gathering_reason AS "gatheringReason", excerpt, body, content_document AS "document", tags, signals,
@@ -365,6 +370,7 @@ export const updateComment = async (
     );
     const row = postResult.rows[0];
     if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    if (row.communityId && row.postType !== "paper") await assertCommunityReadAccess(row.communityId, handle);
     if (
       (row.room === "office" || row.kind === "draft") &&
       (!row.authorHandle || cleanHandle(row.authorHandle) !== handle)
@@ -414,7 +420,7 @@ export const updateComment = async (
       uploaderHandle: handle
     });
     removedAttachmentIds = attachmentChange.removedAttachmentIds;
-    const quote = await resolveUpdatedContentQuote(client, original.quote, input.quoteSource, { ownerId: commentId, ownerType: "comment" });
+    const quote = await resolveUpdatedContentQuote(client, original.quote, input.quoteSource, { ownerId: commentId, ownerType: "comment", actorHandle: handle });
 
     const mapped = mapCommentTree(existingComments, commentId, (comment) => ({
       ...comment,
@@ -462,12 +468,14 @@ export const updateComment = async (
       }
     });
     await completeMutation(client, handle, mutation, updatedItem);
+    const eventScope = await communityEventScope(client, updatedItem.postType === "paper" ? null : updatedItem.communityId);
     stagedEvent = await stageEvent(client, {
       kind: "comment.updated",
       actorHandle: handle,
       subjectType: "comment",
       subjectId: commentId,
-      visibility: updatedItem.room === "office" || updatedItem.kind === "draft" ? "private" : "public",
+      visibility: updatedItem.room === "office" || updatedItem.kind === "draft" ? "private" : eventScope.visibility,
+      audienceHandles: updatedItem.room === "office" || updatedItem.kind === "draft" ? [handle] : eventScope.audienceHandles,
       payload:
         updatedItem.room === "office" || updatedItem.kind === "draft"
           ? { item: updatedItem, commentId }
@@ -502,6 +510,7 @@ export const deleteComment = async (
     const snapshot = await getInitialState();
     const existing = snapshot.items.find((item) => item.id === postId);
     if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    if (existing.communityId && existing.postType !== "paper") await assertCommunityReadAccess(existing.communityId, handle);
     if (
       (existing.room === "office" || existing.kind === "draft") &&
       (!existing.authorHandle || cleanHandle(existing.authorHandle) !== handle)
@@ -539,7 +548,7 @@ export const deleteComment = async (
     }
     const postResult = await client.query<SnapshotRow>(
       `SELECT
-        id, revision, kind, post_type AS "postType", room, title, author_handle AS "authorHandle", author_name AS "authorName",
+        id, revision, kind, post_type AS "postType", room, community_id AS "communityId", title, author_handle AS "authorHandle", author_name AS "authorName",
         affiliation, date_label AS "dateLabel", created_at AS "createdAt", edited_at AS "editedAt",
         deleted_at AS "deletedAt",
         status, metrics, gathering_reason AS "gatheringReason", excerpt, body, content_document AS "document", tags, signals,
@@ -552,6 +561,7 @@ export const deleteComment = async (
     );
     const row = postResult.rows[0];
     if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    if (row.communityId && row.postType !== "paper") await assertCommunityReadAccess(row.communityId, handle);
     if (
       (row.room === "office" || row.kind === "draft") &&
       (!row.authorHandle || cleanHandle(row.authorHandle) !== handle)
@@ -663,12 +673,14 @@ export const deleteComment = async (
         subjectId: commentId,
         metadata: { deletedAt, postId, storageAttachmentCount: storageAttachmentIds.length }
       });
+      const eventScope = await communityEventScope(client, updatedItem.postType === "paper" ? null : updatedItem.communityId);
       stagedEvent = await stageEvent(client, {
         kind: "comment.deleted",
         actorHandle: handle,
         subjectType: "comment",
         subjectId: commentId,
-        visibility: updatedItem.room === "office" || updatedItem.kind === "draft" ? "private" : "public",
+        visibility: updatedItem.room === "office" || updatedItem.kind === "draft" ? "private" : eventScope.visibility,
+        audienceHandles: updatedItem.room === "office" || updatedItem.kind === "draft" ? [handle] : eventScope.audienceHandles,
         payload:
           updatedItem.room === "office" || updatedItem.kind === "draft"
             ? { item: updatedItem, commentId }
@@ -704,6 +716,7 @@ export const applyCommentAction = async (
     const snapshot = await getInitialState();
     const existing = snapshot.items.find((item) => item.id === postId);
     if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    if (existing.communityId && existing.postType !== "paper") await assertCommunityReadAccess(existing.communityId, handle);
     if (
       (existing.room === "office" || existing.kind === "draft") &&
       (!existing.authorHandle || cleanHandle(existing.authorHandle) !== handle)
@@ -742,7 +755,7 @@ export const applyCommentAction = async (
     }
     const postResult = await client.query<SnapshotRow>(
       `SELECT
-        id, revision, kind, post_type AS "postType", room, title, author_handle AS "authorHandle", author_name AS "authorName",
+        id, revision, kind, post_type AS "postType", room, community_id AS "communityId", title, author_handle AS "authorHandle", author_name AS "authorName",
         affiliation, date_label AS "dateLabel", created_at AS "createdAt", edited_at AS "editedAt",
         deleted_at AS "deletedAt",
         status, metrics, gathering_reason AS "gatheringReason", excerpt, body, content_document AS "document", tags, signals,
@@ -755,6 +768,7 @@ export const applyCommentAction = async (
     );
     const row = postResult.rows[0];
     if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    if (row.communityId && row.postType !== "paper") await assertCommunityReadAccess(row.communityId, handle);
     if (
       (row.room === "office" || row.kind === "draft") &&
       (!row.authorHandle || cleanHandle(row.authorHandle) !== handle)
@@ -862,12 +876,15 @@ export const applyCommentAction = async (
     }
     await completeMutation(client, handle, mutation, { item: updatedItem, activity });
     const privatePost = updatedItem.room === "office" || updatedItem.kind === "draft";
+    const eventScope = await communityEventScope(client, updatedItem.postType === "paper" ? null : updatedItem.communityId);
     if (!privatePost) {
       stagedEvents.push(
         await stageEvent(client, {
           kind: `comment.${input.action}`,
           subjectType: "comment",
           subjectId: commentId,
+          visibility: eventScope.visibility,
+          audienceHandles: eventScope.audienceHandles,
           payload: { action: input.action, commentId, itemId: postId }
         })
       );

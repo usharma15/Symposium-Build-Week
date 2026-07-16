@@ -10,6 +10,7 @@ import {
 import { cleanHandle, isDeletedPost } from "@/lib/symposiumCore";
 import { ContentQuoteError, resolveLocalContentQuote } from "@/lib/contentQuotes";
 import { contentQuoteSourceSchema, opportunityPostInputSchema, patronageProposalInputSchema, versionedDocumentSchema } from "@/packages/contracts/src";
+import { localCommunityReadAllowed, localQuoteSourceItems } from "@/lib/localCommunityAuthorization";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -80,6 +81,7 @@ export async function PATCH(request: Request, context: Context) {
     ) {
       return jsonError("Post not found or cannot be edited by this profile.", 404);
     }
+    if (!(await localCommunityReadAllowed(existing, actorHandle ?? ""))) return jsonError("Post not found.", 404);
     if (attachmentIds?.length && (existing.room === "office" || existing.kind === "draft")) {
       return jsonError("Private post attachments require protected delivery before they can be published.", 412);
     }
@@ -96,7 +98,7 @@ export async function PATCH(request: Request, context: Context) {
       ? undefined
       : parsedQuoteSource === null
         ? null
-        : resolveLocalContentQuote(snapshot.items, parsedQuoteSource, { ownerId: id, ownerType: "post" });
+        : resolveLocalContentQuote(await localQuoteSourceItems(snapshot.items, actorHandle ?? ""), parsedQuoteSource, { ownerId: id, ownerType: "post" });
     if (patronage?.success && !existing.patronage) return jsonError("Only Patronage proposals can receive funding details.", 400);
     if (opportunity?.success && !existing.opportunity) return jsonError("Only Opportunity posts can receive opportunity metadata.", 400);
     const item = await updatePost(id, { ...input, attachments, quote, patronage: patronage?.data, opportunity: opportunity?.data }, actorHandle ?? "");
@@ -127,6 +129,7 @@ export async function DELETE(request: Request, context: Context) {
   if (live) return live;
 
     const existing = (await getSnapshot()).items.find((item) => item.id === id);
+    if (existing && !(await localCommunityReadAllowed(existing, actorHandle ?? ""))) return jsonError("Post not found.", 404);
     if (existing?.opportunity) await deleteLocalOpportunityApplicationsForPost(id, actorHandle ?? "");
     const item = await deletePost(id, actorHandle ?? "");
   if (!item) {

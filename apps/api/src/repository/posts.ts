@@ -40,6 +40,7 @@ import {
 } from "../services/storageDeletion";
 import { assertCanonicalOpportunityUpdate, createOpportunityProjection, opportunityPostStatus, updateOpportunityProjection } from "../services/opportunityPosts";
 import { transitionPostAction } from "./actions";
+import { assertCommunityParticipation, assertCommunityReadAccess, communityEventScope } from "./communities";
 import { recordContentView, recordMemoryContentView } from "./contentViews";
 import {
   actorHandle,
@@ -62,7 +63,7 @@ type ActionMutationResult = {
 };
 
 const lockedPostSelect = `SELECT
-  id, revision, kind, post_type AS "postType", room, title, author_handle AS "authorHandle", author_name AS "authorName",
+  id, revision, kind, post_type AS "postType", room, community_id AS "communityId", title, author_handle AS "authorHandle", author_name AS "authorName",
   affiliation, date_label AS "dateLabel", created_at AS "createdAt", edited_at AS "editedAt", deleted_at AS "deletedAt",
   status, metrics, gathering_reason AS "gatheringReason", excerpt, body, content_document AS "document", tags, signals,
   claims, objections, evidence, tests, forks, saved, saved_by AS "savedBy",
@@ -77,6 +78,7 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
   const handle = actorHandle(actor, input.authorHandle);
   const author = snapshot.profiles[handle];
   if (!author) throw new TRPCError({ code: "NOT_FOUND", message: "Author profile not found." });
+  if (input.communityId) await assertCommunityParticipation(input.communityId, handle);
   const isPaper = input.kind === "paper";
   const patronage = createPatronageProjection(input.patronage);
   const isProposal = Boolean(patronage);
@@ -101,6 +103,7 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
     kind: input.kind,
     postType: input.postType,
     room: input.room,
+    communityId: input.communityId,
     title: input.title,
     author: author.name,
     authorHandle: author.handle,
@@ -149,23 +152,24 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
       await client.query("COMMIT");
       return claim.response;
     }
-    item.quote = await resolveContentQuote(client, input.quoteSource, { ownerId: item.id, ownerType: "post" });
+    item.quote = await resolveContentQuote(client, input.quoteSource, { ownerId: item.id, ownerType: "post", actorHandle: handle });
     await client.query(
       `INSERT INTO posts (
-        id, kind, post_type, room, title, author_handle, author_name, affiliation, date_label, created_at, status,
+        id, kind, post_type, room, community_id, title, author_handle, author_name, affiliation, date_label, created_at, status,
         metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
-        tests, forks, saved, saved_by, signaled_by, forked_by, quote, search_text, patronage, opportunity
+        tests, forks, saved, saved_by, signaled_by, forked_by, quote, search_text, patronage, opportunity, visibility
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
         $11, $12, $13, $14, $15, $16, $17, $18, $19,
-        $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30
+        $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32
       )`,
       [
         item.id,
         item.kind,
         item.postType,
         item.room,
+        item.communityId ?? null,
         item.title,
         item.authorHandle,
         item.author,
@@ -191,7 +195,8 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
         item.quote ? JSON.stringify(item.quote) : null,
         searchablePostText({ ...item, authorName: item.author }),
         item.patronage ? JSON.stringify(item.patronage) : null,
-        item.opportunity ? JSON.stringify(item.opportunity) : null
+        item.opportunity ? JSON.stringify(item.opportunity) : null,
+        item.communityId && item.postType !== "paper" ? "community" : "public"
       ]
     );
     await insertPatronageProposal(client, item.id, item.patronage);
@@ -230,12 +235,14 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
       })
     });
     await completeMutation(client, handle, mutation, item);
+    const eventScope = await communityEventScope(client, item.postType === "paper" ? null : item.communityId);
     stagedEvent = await stageEvent(client, {
       kind: "post.created",
       actorHandle: item.authorHandle,
       subjectType: "post",
       subjectId: item.id,
-      visibility: item.room === "office" || item.kind === "draft" ? "private" : "public",
+      visibility: item.room === "office" || item.kind === "draft" ? "private" : eventScope.visibility,
+      audienceHandles: item.room === "office" || item.kind === "draft" ? [handle] : eventScope.audienceHandles,
       payload: { item, room: item.room, kind: item.kind, title: item.title }
     });
     await client.query("COMMIT");
@@ -264,6 +271,7 @@ export const applyPostAction = async (
     const snapshot = await getInitialState();
     const existing = snapshot.items.find((item) => item.id === postId);
     if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    if (existing.communityId && existing.postType !== "paper") await assertCommunityReadAccess(existing.communityId, handle);
     if (
       (existing.room === "office" || existing.kind === "draft") &&
       (!existing.authorHandle || cleanHandle(existing.authorHandle) !== handle)
@@ -300,6 +308,7 @@ export const applyPostAction = async (
 
     const row = postResult.rows[0];
     if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    if (row.communityId && row.postType !== "paper") await assertCommunityReadAccess(row.communityId, handle);
 
     const commentsResult = await client.query<CommentRow>(
       `SELECT
@@ -431,12 +440,15 @@ export const applyPostAction = async (
     }
     await completeMutation(client, handle, mutation, { item: updated, activity });
     const privatePost = updated.room === "office" || updated.kind === "draft";
+    const eventScope = await communityEventScope(client, updated.postType === "paper" ? null : updated.communityId);
     if (!privatePost) {
       stagedEvents.push(
         await stageEvent(client, {
           kind: `post.${input.action}`,
           subjectType: "post",
           subjectId: postId,
+          visibility: eventScope.visibility,
+          audienceHandles: eventScope.audienceHandles,
           payload: { action: input.action, itemId: postId }
         })
       );
@@ -478,6 +490,7 @@ export const updatePost = async (
     const snapshot = await getInitialState();
     const existing = snapshot.items.find((item) => item.id === postId);
     if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    if (existing.communityId && existing.postType !== "paper") await assertCommunityReadAccess(existing.communityId, handle);
     if (
       (existing.room === "office" || existing.kind === "draft") &&
       (!existing.authorHandle || cleanHandle(existing.authorHandle) !== handle)
@@ -524,6 +537,7 @@ export const updatePost = async (
     const postResult = await client.query<SnapshotRow>(lockedPostSelect, [postId]);
     const row = postResult.rows[0];
     if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    if (row.communityId && row.postType !== "paper") await assertCommunityReadAccess(row.communityId, handle);
     if (
       (row.room === "office" || row.kind === "draft") &&
       (!row.authorHandle || cleanHandle(row.authorHandle) !== handle)
@@ -565,7 +579,7 @@ export const updatePost = async (
       ? row.quote
       : input.quoteSource === null
         ? undefined
-        : await resolveContentQuote(client, input.quoteSource, { ownerId: postId, ownerType: "post" });
+        : await resolveContentQuote(client, input.quoteSource, { ownerId: postId, ownerType: "post", actorHandle: handle });
     const patronage = updatePatronageProjection(input.patronage, row.patronage);
     const opportunity = updateOpportunityProjection(input.opportunity, row.opportunity);
     const status = opportunityPostStatus(opportunity, patronagePostStatus(patronage, row.status));
@@ -651,12 +665,14 @@ export const updatePost = async (
       }
     });
     await completeMutation(client, handle, mutation, updated);
+    const eventScope = await communityEventScope(client, updated.postType === "paper" ? null : updated.communityId);
     stagedEvent = await stageEvent(client, {
       kind: "post.updated",
       actorHandle: handle,
       subjectType: "post",
       subjectId: postId,
-      visibility: updated.room === "office" || updated.kind === "draft" ? "private" : "public",
+      visibility: updated.room === "office" || updated.kind === "draft" ? "private" : eventScope.visibility,
+      audienceHandles: updated.room === "office" || updated.kind === "draft" ? [handle] : eventScope.audienceHandles,
       payload:
         updated.room === "office" || updated.kind === "draft"
           ? { item: updated }
@@ -683,6 +699,7 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
     const snapshot = await getInitialState();
     const existing = snapshot.items.find((item) => item.id === postId);
     if (!existing) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    if (existing.communityId && existing.postType !== "paper") await assertCommunityReadAccess(existing.communityId, handle);
     if (isDeletedPost(existing)) return existing;
     if (existing.authorHandle && cleanHandle(existing.authorHandle) !== handle) {
       throw new TRPCError({ code: "FORBIDDEN", message: "Only the author can delete this post." });
@@ -707,6 +724,7 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
     const postResult = await client.query<SnapshotRow>(lockedPostSelect, [postId]);
     const row = postResult.rows[0];
     if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Post not found." });
+    if (row.communityId && row.postType !== "paper") await assertCommunityReadAccess(row.communityId, handle);
     if (
       (row.room === "office" || row.kind === "draft") &&
       (!row.authorHandle || cleanHandle(row.authorHandle) !== handle)
@@ -869,12 +887,14 @@ export const deletePost = async (postId: string, actor: Actor, mutation?: Mutati
           storageAttachmentCount: storageAttachmentIds.length
         }
       });
+      const eventScope = await communityEventScope(client, deleted.postType === "paper" ? null : deleted.communityId);
       stagedEvent = await stageEvent(client, {
         kind: "post.deleted",
         actorHandle: handle,
         subjectType: "post",
         subjectId: postId,
-        visibility: deleted.room === "office" || deleted.kind === "draft" ? "private" : "public",
+        visibility: deleted.room === "office" || deleted.kind === "draft" ? "private" : eventScope.visibility,
+        audienceHandles: deleted.room === "office" || deleted.kind === "draft" ? [handle] : eventScope.audienceHandles,
         payload:
           deleted.room === "office" || deleted.kind === "draft"
             ? { itemId: postId, item: deleted }

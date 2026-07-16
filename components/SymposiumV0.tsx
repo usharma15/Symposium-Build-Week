@@ -16,13 +16,13 @@ import {
   getProfileForName,
   inquiryItems,
   profile,
-  researchCommunities,
   rooms,
   type FeedScope,
   type ContentQuoteSource,
   type InquiryAttachment,
   type InquiryComment,
   type InquiryItem,
+  type ResearchCommunity,
   type ResearchProfile,
   type RoomId
 } from "@/lib/mockData";
@@ -158,10 +158,12 @@ import {
 } from "@/features/profiles/ProfileViews";
 import { profileAvatarForPersistence } from "@/features/profiles/profilePersistence";
 import {
-  CommunitiesDirectoryView,
-  SelectedCommunityView
+  CommunitiesStage
 } from "@/features/communities/CommunityViews";
 import { searchableContentText } from "@/features/discovery/discoveryPolicy";
+import { communityPostIsExternallyDiscoverable } from "@/features/communities/communityPolicy";
+import { useCommunityState } from "@/features/communities/useCommunityState";
+import { createCommunityController } from "@/features/communities/communityController";
 import { TabletPanel } from "@/features/workspace/WorkspacePanels";
 import { WorkspaceView } from "@/features/workspace/WorkspaceView";
 import { savePostDraftToWorkspace } from "@/features/workspace/savePostDraftToWorkspace";
@@ -409,6 +411,18 @@ function SymposiumExperience({
   );
   const [communitiesExpanded, setCommunitiesExpanded] = useState(false);
   const [communityQuery, setCommunityQuery] = useState("");
+  const {
+    communities,
+    communitiesRef,
+    setCommunities,
+    communityCalls,
+    setCommunityCalls,
+    communityMembershipBusy,
+    setCommunityMembershipBusy,
+    composerCommunityId,
+    setComposerCommunityId,
+    selectedCommunity
+  } = useCommunityState(currentProfile.handle, selectedCommunityId);
   const [tabletOpen, setTabletOpen] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
   const [quoteSelection, setQuoteSelection] = useState<QuoteSelection | null>(null);
@@ -533,8 +547,6 @@ function SymposiumExperience({
     : undefined;
   const resolveComposerQuoteLink: QuoteLinkResolver = (link, owner) =>
     resolveQuoteLink(itemsRef.current, link, owner);
-  const selectedCommunity =
-    selectedCommunityId ? researchCommunities.find((community) => community.id === selectedCommunityId) ?? null : null;
   const profileList = useMemo(() => Object.values(profiles), [profiles]);
   const findProfile = (nameOrHandle: string) =>
     profileList.find((person) => person.handle === nameOrHandle) ??
@@ -543,6 +555,7 @@ function SymposiumExperience({
   const selectedProfile = selectedProfileName ? findProfile(selectedProfileName) : null;
 
   useSymposiumRenderPreload(themePreloadRenders, activeRoomRender);
+
 
   useEffect(() => {
     profilesRef.current = profiles;
@@ -555,6 +568,7 @@ function SymposiumExperience({
   useEffect(() => {
     currentProfileRef.current = currentProfile;
   }, [currentProfile]);
+
 
   const clientViewStorageKey = (handle: string) => `symposium-view-dedupe:${cleanHandle(handle)}`;
   const clientViewKey = (targetType: ViewTargetType, targetId: string) => `${targetType}:${targetId}`;
@@ -674,7 +688,7 @@ function SymposiumExperience({
   ) => {
     persistCachedBootstrap(
       window.localStorage,
-      { items: nextItems, profiles: nextProfiles },
+      { items: nextItems, profiles: nextProfiles, communities: communitiesRef.current },
       nextProfile.handle
     );
 
@@ -711,7 +725,7 @@ function SymposiumExperience({
       lastPersistedItemsRef.current = nextItems;
       persistCachedBootstrap(
         window.localStorage,
-        { items: nextItems, profiles: profilesRef.current },
+        { items: nextItems, profiles: profilesRef.current, communities: communitiesRef.current },
         currentProfileRef.current.handle
       );
     },
@@ -749,7 +763,7 @@ function SymposiumExperience({
       }
       persistCachedBootstrap(
         window.localStorage,
-        { items: nextItems, profiles: nextProfiles },
+        { items: nextItems, profiles: nextProfiles, communities: communitiesRef.current },
         nextCurrent.handle
       );
     },
@@ -780,6 +794,10 @@ function SymposiumExperience({
       if (event.key === "symposium-local-snapshot") {
         const snapshot = readCachedBootstrapSnapshot(window.localStorage);
         if (!snapshot) return;
+        if (snapshot.communities?.length) {
+          communitiesRef.current = snapshot.communities;
+          setCommunities(snapshot.communities);
+        }
         const currentHandle = currentProfileRef.current.handle;
         const previousCurrent = profilesRef.current[currentHandle];
         const revisionSafeProfiles = Object.fromEntries(
@@ -921,8 +939,9 @@ function SymposiumExperience({
     const data = await symposiumApi.request<{
       items: InquiryItem[];
       profiles: Record<string, ResearchProfile>;
+      communities?: ResearchCommunity[];
       defaultProfile: ResearchProfile;
-    }>("/api/bootstrap", { cache: "no-store" });
+    }>(`/api/bootstrap?actorHandle=${encodeURIComponent(preferredHandle)}`, { cache: "no-store" });
     let loadedProfiles = Object.keys(data.profiles).length
       ? data.profiles
       : { [data.defaultProfile.handle]: data.defaultProfile };
@@ -970,9 +989,12 @@ function SymposiumExperience({
     );
     profilesRef.current = loadedProfiles;
     currentProfileRef.current = nextProfile;
+    const loadedCommunities = data.communities?.length ? data.communities : communitiesRef.current;
+    communitiesRef.current = loadedCommunities;
     replaceItems(loadedItems);
     setProfiles(loadedProfiles);
     setCurrentProfile(nextProfile);
+    setCommunities(loadedCommunities);
     persistLocalSnapshot(loadedItems, loadedProfiles, nextProfile);
     setSyncStatus(liveStatus.connected);
   };
@@ -1290,6 +1312,10 @@ function SymposiumExperience({
     lastPersistedItemsRef.current = cachedItems;
     profilesRef.current = cached.profiles;
     currentProfileRef.current = cached.currentProfile;
+    if (cached.communities?.length) {
+      communitiesRef.current = cached.communities;
+      setCommunities(cached.communities);
+    }
     setProfiles(cached.profiles);
     replaceItems(cachedItems);
     setCurrentProfile(cached.currentProfile);
@@ -1830,6 +1856,7 @@ function SymposiumExperience({
     setCommentSegmentStacks(restoredSegmentStacks);
     setTabletOpen(false);
     setComposerOpen(false);
+    setComposerCommunityId(null);
     setSettingsOpen(false);
     setSearchOpen(false);
     setMessagesOpen(snapshot.messagesOpen);
@@ -2032,6 +2059,26 @@ function SymposiumExperience({
     retryMutationRegistryRef.current.clear(fingerprintKey);
   };
 
+  const communityController = createCommunityController({
+    currentProfileHandle: currentProfile.handle,
+    communitiesRef,
+    setCommunities,
+    setCommunityCalls,
+    setMembershipBusy: setCommunityMembershipBusy,
+    membershipBusy: communityMembershipBusy,
+    selectedCommunity,
+    retryMutationKey,
+    clearRetryMutationKey,
+    persist: () => persistLocalSnapshot(itemsRef.current, profilesRef.current),
+    openCommunity,
+    setStatus: setSyncStatus,
+    contactModerators: (label) => {
+      setSelectedConversationId(null);
+      setMessagesOpen(true);
+      setSyncStatus(`Message ${label}`);
+    }
+  });
+
   const savePostDraft = (draft: PostDraft) => savePostDraftToWorkspace({
     actorHandle: currentProfile.handle,
     draft,
@@ -2051,6 +2098,7 @@ function SymposiumExperience({
       kind: contentKind,
       postType: kind,
       room: routedRoom,
+      communityId: composerCommunityId ?? undefined,
       patronage,
       opportunity,
       authorHandle: currentProfile.handle,
@@ -2091,13 +2139,15 @@ function SymposiumExperience({
     replaceItems(nextItems);
     persistLocalSnapshot(nextItems, profiles, currentProfile, { broadcastItemIds: [committedItem.id] });
     navigateView({
-      activeRoom: committedItem.room,
+      activeRoom: committedItem.communityId ? "communities" : committedItem.room,
       selectedItemId: committedItem.id,
       selectedCommentId: null,
       selectedProfileName: null,
-      officeMode: "desk"
+      officeMode: "desk",
+      selectedCommunityId: committedItem.communityId ?? null
     });
     setComposerOpen(false);
+    setComposerCommunityId(null);
     setSyncStatus("Post saved");
     return { ok: true as const };
   };
@@ -3075,6 +3125,7 @@ function SymposiumExperience({
     setSearchOpen(false);
     setMessagesOpen(false);
     setComposerOpen(false);
+    setComposerCommunityId(null);
     setQuoteSelection(selection);
   };
 
@@ -3094,13 +3145,14 @@ function SymposiumExperience({
   const searchResults = useMemo(() => {
     const term = normalizeSearchPhrase(searchQuery);
     if (!term) return { titleMatches: [] as InquiryItem[], contentMatches: [] as InquiryItem[], profileMatches: [] as ResearchProfile[] };
+    const searchableItems = activeItems.filter(communityPostIsExternallyDiscoverable);
 
     const titleMatches = sortByPublishedRecency(
-      activeItems.filter((item) => normalizeSearchPhrase(item.title).includes(term))
+      searchableItems.filter((item) => normalizeSearchPhrase(item.title).includes(term))
     );
     const titleIds = new Set(titleMatches.map((item) => item.id));
     const contentMatches = sortByPublishedRecency(
-      activeItems.filter((item) => !titleIds.has(item.id) && normalizeSearchPhrase(searchableContentText(item)).includes(term))
+      searchableItems.filter((item) => !titleIds.has(item.id) && normalizeSearchPhrase(searchableContentText(item)).includes(term))
     );
     const profileMatches = profileList
       .filter((person) =>
@@ -3215,7 +3267,7 @@ function SymposiumExperience({
         ) : selectedProfile ? (
           <ProfileView
             person={selectedProfile}
-            items={items}
+            items={items.filter(communityPostIsExternallyDiscoverable)}
             isOwnProfile={selectedProfile.handle === currentProfile.handle}
             isFollowing={followingHandles.includes(selectedProfile.handle)}
             onSelect={openPost}
@@ -3303,33 +3355,20 @@ function SymposiumExperience({
             initialDocumentId={initialRoute.kind === "workspace" ? initialRoute.noteId : undefined}
             initialCommentId={initialRoute.kind === "workspace" ? initialRoute.commentId : undefined}
           />
-        ) : activeRoom === "communities" && selectedCommunity ? (
-          <SelectedCommunityView
-            community={selectedCommunity}
-            items={items}
-            currentProfile={currentProfile}
-            profiles={profiles}
-            onBack={closeCommunity}
-            onSelect={openPost}
-            onOpenProfile={openProfile}
-            onAction={applyAction}
-            onQuote={beginQuote}
-            onOpenQuote={openQuotedSource}
-            onEditPost={setEditingPost}
-            onDeletePost={deletePost}
-            onOpenAttachmentPreview={openAttachmentPreview}
-            onDummyCall={(mode) => setSyncStatus(`${mode} call placeholder`)}
-          />
         ) : activeRoom === "communities" ? (
-          <CommunitiesDirectoryView
-            communities={researchCommunities}
-            items={items}
-            currentProfile={currentProfile}
-            query={communityQuery}
-            onQuery={setCommunityQuery}
-            expanded={communitiesExpanded}
-            onExpanded={setCommunitiesExpanded}
-            onOpenCommunity={openCommunity}
+          <CommunitiesStage
+            state={{ selectedCommunity, communities, items, calls: selectedCommunity ? communityCalls[selectedCommunity.id] ?? [] : [], currentProfile, profiles, membershipBusy: communityMembershipBusy }}
+            directory={{ query: communityQuery, onQuery: setCommunityQuery, expanded: communitiesExpanded, onExpanded: setCommunitiesExpanded }}
+            actions={{
+              onBack: closeCommunity, onMembership: communityController.changeMembership,
+              onCreatePost: () => { if (selectedCommunity) { setComposerCommunityId(selectedCommunity.id); setComposerOpen(true); } },
+              onCreateCall: communityController.createCall, onJoinCall: communityController.joinCall,
+              onInvite: communityController.invite, onContactModerators: communityController.contactModerators,
+              onOpenCommunity: openCommunity, onCreateCommunity: communityController.createCommunity,
+              onSelect: openPost, onOpenProfile: openProfile, onAction: applyAction, onQuote: beginQuote,
+              onOpenQuote: openQuotedSource, onEditPost: setEditingPost, onDeletePost: deletePost,
+              onOpenAttachmentPreview: openAttachmentPreview
+            }}
           />
         ) : (
           <RoomView
@@ -3362,6 +3401,7 @@ function SymposiumExperience({
           setSettingsOpen(false);
           setSearchOpen(false);
           setMessagesOpen(false);
+          setComposerCommunityId(null);
           setComposerOpen(true);
         }}
       >
@@ -3402,13 +3442,17 @@ function SymposiumExperience({
 
       {composerOpen ? (
         <PostComposerModal
-          onClose={() => setComposerOpen(false)}
+          onClose={() => {
+            setComposerOpen(false);
+            setComposerCommunityId(null);
+          }}
           onCreatePost={createPost}
           onSaveDraft={savePostDraft}
           onUploadAttachment={uploadPostAttachment}
           onResolveQuoteLink={resolveComposerQuoteLink}
           profiles={profiles}
           initialKind={activeRoom === "opportunities" ? "opportunity" : activeRoom === "funding" ? "proposal" : undefined}
+          destinationLabel={composerCommunityId ? `Posting in ${communities.find((community) => community.id === composerCommunityId)?.name ?? "community"}` : undefined}
         />
       ) : null}
 

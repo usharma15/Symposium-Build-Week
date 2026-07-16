@@ -10,16 +10,24 @@ import {
   replaceLocalOwnerAttachments,
   resolveLocalPostAttachments
 } from "@/lib/localAttachmentStore";
+import { listLocalCommunities } from "@/lib/localCommunityStore";
+import { projectCommunityItemsForViewer } from "@/lib/communityContentProjection";
+import { localQuoteSourceItems } from "@/lib/localCommunityAuthorization";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET() {
-  const live = await proxyLiveBackend("/v1/posts");
+export async function GET(request: Request) {
+  const actorHandle = new URL(request.url).searchParams.get("actorHandle") ?? undefined;
+  const live = await proxyLiveBackend("/v1/posts", { actorHandle });
   if (live) return live;
 
   const snapshot = await getSnapshot();
-  return Response.json({ items: snapshot.items });
+  const communities = await listLocalCommunities(actorHandle);
+  return Response.json({
+    items: projectCommunityItemsForViewer(snapshot.items, communities)
+      .filter((item) => !item.communityId || item.postType === "paper")
+  });
 }
 
 export async function POST(request: Request) {
@@ -27,6 +35,7 @@ export async function POST(request: Request) {
   const body = await readJson<Partial<CreatePostInput> & {
     attachmentIds?: unknown[];
     authorHandle?: string;
+    communityId?: string;
     quoteSource?: unknown;
     patronage?: unknown;
     opportunity?: unknown;
@@ -54,6 +63,7 @@ export async function POST(request: Request) {
     room: postRooms.includes(room as Exclude<RoomId, "hall">)
       ? (room as Exclude<RoomId, "hall">)
       : "symposium",
+    communityId: body.communityId ? String(body.communityId) : undefined,
     attachments: Array.isArray(body.attachments) ? body.attachments : []
   };
 
@@ -88,6 +98,9 @@ export async function POST(request: Request) {
   if (input.postType !== expectedPostType) {
     return jsonError("The publication type must describe the post independently of its editor format.", 400);
   }
+  if (input.communityId && input.postType === "paper" && input.room !== "library") {
+    return jsonError("Community papers publish canonically in the Library.", 400);
+  }
 
   const live = await proxyLiveBackend("/v1/posts", {
     method: "POST",
@@ -98,6 +111,7 @@ export async function POST(request: Request) {
       kind: input.kind,
       postType: input.postType,
       room: input.room,
+      communityId: input.communityId,
       authorHandle: body.authorHandle,
       attachmentIds,
       quoteSource: quoteSource?.data,
@@ -110,6 +124,10 @@ export async function POST(request: Request) {
   if (live) return live;
 
   try {
+    if (input.communityId) {
+      const community = (await listLocalCommunities(String(body.authorHandle ?? ""))).find((candidate) => candidate.id === input.communityId);
+      if (!community || community.membershipStatus !== "active") return jsonError("Join this community before participating.", 403);
+    }
     if (attachmentIds.length && input.room === "office") {
       return jsonError("Private post attachments require protected delivery before they can be published.", 412);
     }
@@ -117,7 +135,10 @@ export async function POST(request: Request) {
     const localAttachments = attachmentIds.length
       ? await resolveLocalPostAttachments(attachmentIds, String(body.authorHandle ?? ""))
       : [];
-    const quote = resolveLocalContentQuote(snapshot.items, quoteSource?.data);
+    const quote = resolveLocalContentQuote(
+      await localQuoteSourceItems(snapshot.items, String(body.authorHandle ?? "")),
+      quoteSource?.data
+    );
     const item = await createPost({ ...input, attachments: localAttachments, quote, patronage: patronage?.data, opportunity: opportunity?.data }, String(body.authorHandle ?? ""));
     await replaceLocalOwnerAttachments({
       actorHandle: String(body.authorHandle ?? ""),

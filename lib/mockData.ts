@@ -832,6 +832,7 @@ const coreInquiryItems: InquiryItem[] = [
 const generatedBlueprints: Array<{
   room: Exclude<RoomId, "hall">;
   kind: ContentKind;
+  communityId?: string;
   status: string;
   title: string;
   excerpt: string;
@@ -1001,6 +1002,7 @@ const generatedBlueprints: Array<{
   {
     room: "library",
     kind: "paper",
+    communityId: "frontier-physics-bench",
     status: "Community paper",
     title: "Frontier Physics Bench field map",
     excerpt: "A shared map of hidden-law tasks, apparatus constraints, and unresolved anomaly work.",
@@ -1011,6 +1013,7 @@ const generatedBlueprints: Array<{
   {
     room: "library",
     kind: "paper",
+    communityId: "source-packet-workshop",
     status: "Source packet",
     title: "Source Packet Workshop review scaffold",
     excerpt: "A private workshop format for evidence packets that can still publish useful paper artifacts.",
@@ -1021,6 +1024,7 @@ const generatedBlueprints: Array<{
   {
     room: "amphitheater",
     kind: "thought",
+    communityId: "replication-commons",
     status: "Public community thought",
     title: "Replication Commons needs a failure etiquette",
     excerpt: "A negative result should feel like a contribution, not a confession.",
@@ -1031,6 +1035,7 @@ const generatedBlueprints: Array<{
   {
     room: "opportunities",
     kind: "note",
+    communityId: "rogue-youth-labs",
     status: "Open community call",
     title: "Rogue Youth Labs seeks summer cell advisors",
     excerpt: "Need older critics who can protect weird work while demanding visible artifacts.",
@@ -1041,6 +1046,7 @@ const generatedBlueprints: Array<{
   {
     room: "opportunities",
     kind: "draft",
+    communityId: "open-problems-garden",
     status: "Bounty sketch",
     title: "Open Problems Garden bounty board",
     excerpt: "Small bounties for converting vague research wishes into concrete challenge packets.",
@@ -1051,6 +1057,7 @@ const generatedBlueprints: Array<{
   {
     room: "communities",
     kind: "note",
+    communityId: "patronage-design-desk",
     status: "Private room note",
     title: "Patronage Design Desk call memo",
     excerpt: "A private community note on what evidence should unlock the next tranche.",
@@ -1071,6 +1078,7 @@ const generatedBlueprints: Array<{
   {
     room: "opportunities",
     kind: "draft",
+    communityId: "young-builders-courtyard",
     status: "Fellowship sketch",
     title: "Three-month rogue youth lab residency",
     excerpt: "A small residency for young builders producing artifacts rather than credential theater.",
@@ -1447,6 +1455,7 @@ const generatedInquiryItems: InquiryItem[] = Array.from({ length: 132 }, (_, ind
     id: `live-${index + 1}-${blueprint.room}-${blueprint.kind}`,
     kind: blueprint.kind,
     room: blueprint.room,
+    communityId: blueprint.communityId ?? (index < researchCommunities.length ? researchCommunities[index]?.id : undefined),
     title: `${blueprint.title}${index >= generatedBlueprints.length ? ` ${Math.floor(index / generatedBlueprints.length) + 1}` : ""}`,
     author: author.name,
     authorHandle: author.handle,

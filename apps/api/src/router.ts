@@ -3,6 +3,7 @@ import {
   assistantMessageInputSchema,
   callIdInputSchema,
   confirmAttachmentInputSchema,
+  createCommunityInputSchema,
   createAttachmentUploadInputSchema,
   createCommentInputSchema,
   createCommunityCallInputSchema,
@@ -35,9 +36,12 @@ import { confirmAttachment, createAttachmentUpload } from "./repository/attachme
 import { addComment } from "./repository/comments";
 import {
   createCommunityCall,
+  createCommunity,
   endCommunityCall,
   joinCommunityCall,
   joinOrRequestCommunity,
+  leaveCommunity,
+  recordCommunityAccess,
   listCommunityCalls
 } from "./repository/communities";
 import { listConversations, sendMessage } from "./repository/conversations";
@@ -97,7 +101,8 @@ export const appRouter = router({
       .input(z.object({ room: z.string().optional(), limit: z.number().int().positive().max(100).default(50) }).optional())
       .query(async ({ ctx, input }) => {
         const snapshot = await getPublicInitialState(ctx.actor.handle);
-        const items = input?.room ? snapshot.items.filter((item) => item.room === input.room) : snapshot.items;
+        const externallyDiscoverable = snapshot.items.filter((item) => !item.communityId || item.postType === "paper");
+        const items = input?.room ? externallyDiscoverable.filter((item) => item.room === input.room) : externallyDiscoverable;
         return items.slice(0, input?.limit ?? 50);
       }),
     getDetail: publicProcedure.input(z.object({ id: z.string() })).query(async ({ ctx, input }) => {
@@ -139,9 +144,14 @@ export const appRouter = router({
     )
   }),
   communities: router({
-    list: publicProcedure.query(() => listPublicCommunities()),
-    get: publicProcedure.input(z.object({ communityId: z.string() })).query(({ input }) => getPublicCommunity(input.communityId)),
+    list: publicProcedure.query(({ ctx }) => listPublicCommunities(ctx.actor.handle)),
+    get: publicProcedure.input(z.object({ communityId: z.string() })).query(({ ctx, input }) => getPublicCommunity(input.communityId, ctx.actor.handle)),
+    create: authedProcedure.input(createCommunityInputSchema).mutation(({ ctx, input }) =>
+      createCommunity(input, ctx.actor, mutationContextFromRequest(ctx.req, "community.create", input))
+    ),
     joinOrRequest: authedProcedure.input(joinCommunityInputSchema).mutation(({ ctx, input }) => joinOrRequestCommunity(input, ctx.actor)),
+    leave: authedProcedure.input(joinCommunityInputSchema).mutation(({ ctx, input }) => leaveCommunity(input, ctx.actor)),
+    recordAccess: authedProcedure.input(joinCommunityInputSchema).mutation(({ ctx, input }) => recordCommunityAccess(input, ctx.actor)),
     listCalls: publicProcedure.input(z.object({ communityId: z.string() })).query(({ ctx, input }) =>
       listCommunityCalls(input.communityId, ctx.actor)
     ),
@@ -172,7 +182,7 @@ export const appRouter = router({
     )
   }),
   search: router({
-    query: publicProcedure.input(searchInputSchema).query(({ input }) => search(input))
+    query: publicProcedure.input(searchInputSchema).query(({ ctx, input }) => search(input, ctx.actor.handle))
   }),
   notifications: router({
     list: authedProcedure.query(({ ctx }) => listNotifications(ctx.actor)),
