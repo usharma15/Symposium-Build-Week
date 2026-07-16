@@ -1090,7 +1090,7 @@ const generatedBlueprints: Array<{
 
 const participantHandles = [profile.handle, ...generatedPublicProfiles.map((person) => person.handle)];
 
-export const researchCommunities: ResearchCommunity[] = [
+const baseResearchCommunities: ResearchCommunity[] = [
   {
     id: "frontier-physics-bench",
     name: "Frontier Physics Bench",
@@ -1380,6 +1380,61 @@ export const researchCommunities: ResearchCommunity[] = [
     callStatus: "video live"
   }
 ];
+
+const communityRoster = (seed: number, targetSize: number, anchors: string[]) => {
+  const roster = Array.from(new Set(anchors));
+  let offset = 0;
+  while (roster.length < targetSize && offset < participantHandles.length * 3) {
+    const handle = participantHandles[(seed * 13 + offset * 7) % participantHandles.length];
+    if (handle && !roster.includes(handle)) roster.push(handle);
+    offset += 1;
+  }
+  return roster;
+};
+
+const communityAnnouncements = (community: ResearchCommunity, index: number) => [
+  {
+    id: `${community.id}-working-session`,
+    title: index % 3 === 0 ? "Working session this week" : index % 3 === 1 ? "Open review table" : "Next community session",
+    body: `Bring one unresolved piece of ${community.field.toLowerCase()} work, the evidence attached to it, and the next test you would actually run.`,
+    createdAt: new Date(Date.UTC(2026, 6, 15 - (index % 4), 16, 0)).toISOString()
+  },
+  {
+    id: `${community.id}-packet-call`,
+    title: "Packet and artifact call",
+    body: "New papers, source packets, datasets, instruments, failed attempts, and opportunity briefs are ready for member review.",
+    createdAt: new Date(Date.UTC(2026, 6, 12 - (index % 3), 13, 30)).toISOString()
+  },
+  {
+    id: `${community.id}-orientation`,
+    title: "New member orientation",
+    body: "Start with the guidelines, introduce the work you are carrying, and join an existing thread before opening a new one.",
+    createdAt: new Date(Date.UTC(2026, 6, 8 - (index % 3), 18, 15)).toISOString()
+  }
+];
+
+export const researchCommunities: ResearchCommunity[] = baseResearchCommunities.map((community, index) => {
+  const targetSize = Math.min(participantHandles.length, Math.max(community.online + 8, 32 + (index % 9)));
+  const memberHandles = communityRoster(index + 1, targetSize, community.memberHandles);
+  const moderatorHandles = memberHandles.slice(0, Math.min(4, memberHandles.length));
+  const online = Math.min(community.online, memberHandles.length);
+  return {
+    ...community,
+    online,
+    memberHandles,
+    memberCount: memberHandles.length,
+    monthlyActive: Math.min(memberHandles.length, Math.max(online, Math.round(memberHandles.length * 0.78))),
+    moderatorHandles,
+    guidelines: [
+      `Keep ${community.field.toLowerCase()} discussion attached to inspectable work, evidence, or an explicit question.`,
+      "Critique claims and artifacts directly. Do not turn disagreement into status theatre or personal performance.",
+      "Preserve sources, revisions, failed attempts, and changed assumptions so another member can reconstruct the path.",
+      "Papers publish publicly in the Library. Check private material carefully before citing it in a paper.",
+      "Calls should leave a short public artifact, decision note, or next-step record whenever the community is public."
+    ].join("\n\n"),
+    announcements: communityAnnouncements(community, index)
+  };
+});
 
 const pickHandles = (seed: number, count: number) =>
   Array.from({ length: Math.min(count, participantHandles.length) }, (_, offset) => {

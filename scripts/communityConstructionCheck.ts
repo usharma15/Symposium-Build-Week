@@ -8,11 +8,14 @@ import {
 } from "../packages/contracts/src";
 import {
   canViewCommunity,
+  defaultCommunityFeedFilter,
+  filterCommunityFeedItems,
   communityMembershipLabel,
   communityPostIsExternallyDiscoverable
 } from "../features/communities/communityPolicy";
 import { getCommunityItems } from "../features/discovery/discoveryPolicy";
 import { projectCommunityItemsForViewer } from "../lib/communityContentProjection";
+import { researchCommunities } from "../lib/mockData";
 
 const profile = { handle: "@viewer" };
 const community = researchCommunitySchema.parse({
@@ -149,21 +152,49 @@ const basePost = {
 assert.equal(createPostInputSchema.safeParse({ ...basePost, room: "library" }).success, true);
 assert.equal(createPostInputSchema.safeParse({ ...basePost, room: "amphitheater" }).success, false, "Community papers must publish in the Library.");
 
+const filterItems = [
+  item({ id: "filter-thought", kind: "thought", postType: "thought", room: "amphitheater", title: "Thought", createdAt: "2026-07-16T12:00:00.000Z" }),
+  item({ id: "filter-paper", kind: "paper", postType: "paper", room: "library", title: "Paper", createdAt: "2026-07-15T12:00:00.000Z", metrics: { signal: "40", critiques: "0", forks: "8", saves: "12", reads: "800" } }),
+  item({ id: "filter-proposal", kind: "paper", postType: "proposal", room: "funding", title: "Proposal", createdAt: "2026-07-14T12:00:00.000Z" })
+];
+assert.deepEqual(filterCommunityFeedItems(filterItems, defaultCommunityFeedFilter).map((entry) => entry.id), ["filter-thought", "filter-paper", "filter-proposal"]);
+assert.deepEqual(filterCommunityFeedItems(filterItems, { ...defaultCommunityFeedFilter, content: "proposal" }).map((entry) => entry.id), ["filter-proposal"]);
+assert.equal(filterCommunityFeedItems(filterItems, { content: "all", sort: "popular", popularityWindow: "week" }, Date.parse("2026-07-16T13:00:00.000Z"))[0]?.id, "filter-paper");
+
+for (const seededCommunity of researchCommunities) {
+  assert.ok((seededCommunity.memberCount ?? 0) >= 30, `${seededCommunity.name} needs a substantial seeded roster.`);
+  assert.ok((seededCommunity.moderatorHandles?.length ?? 0) >= 3, `${seededCommunity.name} needs visible moderators.`);
+  assert.ok((seededCommunity.announcements?.length ?? 0) >= 3, `${seededCommunity.name} needs active announcements.`);
+  assert.ok((seededCommunity.guidelines?.length ?? 0) >= 300, `${seededCommunity.name} needs useful guidelines.`);
+}
+
 const main = async () => {
 const sources = await Promise.all([
   readFile(new URL("../features/communities/CommunityViews.tsx", import.meta.url), "utf8"),
+  readFile(new URL("../features/communities/CommunityFeedFilterModal.tsx", import.meta.url), "utf8"),
   readFile(new URL("../apps/api/src/repository/communities.ts", import.meta.url), "utf8"),
   readFile(new URL("../apps/api/src/repository/foundation.ts", import.meta.url), "utf8"),
-  readFile(new URL("../app/api/communities/[id]/membership/route.ts", import.meta.url), "utf8")
+  readFile(new URL("../app/api/communities/[id]/membership/route.ts", import.meta.url), "utf8"),
+  readFile(new URL("../components/SymposiumV0.tsx", import.meta.url), "utf8"),
+  readFile(new URL("../features/posts/PostViews.tsx", import.meta.url), "utf8"),
+  readFile(new URL("../styles/89-communities.css", import.meta.url), "utf8"),
+  readFile(new URL("../lib/localCommunityStore.ts", import.meta.url), "utf8")
 ]);
-const [views, repository, foundation, membershipRoute] = sources;
+const [views, filterModal, repository, foundation, membershipRoute, shell, postViews, communityStyles, localStore] = sources;
 assert.match(views, /communityMembershipLabel/, "The selected view must use one canonical membership control.");
 assert.match(views, /Create community/, "The directory must expose community creation.");
 assert.match(views, /Events & calls/, "The active right rail must expose events and calls.");
+assert.match(views, /community-people-panel/, "Selected communities must expose active member and moderator accounts.");
+assert.match(filterModal, /Hot right now/, "Community feed filtering must expose a real heat ranking.");
 assert.match(repository, /assertCommunityParticipation/, "Community writes must enforce active participation.");
 assert.match(repository, /last_accessed_at/, "Recent community access must persist server-side.");
 assert.match(foundation, /citationOnlyItemProjection/, "Bootstrap delivery must enforce citation-only private source projection.");
+assert.match(foundation, /syncCommunityActivityFixtures/, "Community activity fixtures must hydrate the durable live backend.");
 assert.match(membershipRoute, /action === "leave"/, "The single membership control must support leave through the same client route.");
+assert.match(shell, /selectedCommunity && canParticipateInCommunity/, "The global composer must default to the selected community when participation is allowed.");
+assert.match(postViews, /Post destination/, "The global composer must allow switching between community and global publication.");
+assert.doesNotMatch(communityStyles, /data-room=\"communities\"[^}]+display:\s*none/, "Communities must never hide the global bottom launchers.");
+assert.match(localStore, /version: 2/, "Existing local community state must migrate to the enriched activity model.");
 
 console.log("community construction checks passed");
 };

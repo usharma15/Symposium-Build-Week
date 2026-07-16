@@ -151,7 +151,7 @@ export function PostComposerModal({
   onResolveQuoteLink,
   profiles,
   initialKind = "thought",
-  destinationLabel
+  destination
 }: {
   onClose: () => void;
   onCreatePost: (draft: PostDraft) => Promise<PostCreationResult>;
@@ -160,7 +160,11 @@ export function PostComposerModal({
   onResolveQuoteLink: QuoteLinkResolver;
   profiles: Record<string, ResearchProfile>;
   initialKind?: PostDraftKind;
-  destinationLabel?: string;
+  destination?: {
+    communityId: string | null;
+    selectedCommunity?: { id: string; name: string; canPost: boolean };
+    onChange: (communityId: string | null) => void;
+  };
 }) {
   const [kind, setKind] = useState<PostDraft["kind"]>(initialKind);
   const [title, setTitle] = useState("");
@@ -250,7 +254,7 @@ export function PostComposerModal({
       <form className="post-composer post-composer-modal" onSubmit={submitPost} onClick={(event) => event.stopPropagation()}>
         <div className="composer-modal-head">
           <div>
-            <span>{destinationLabel ?? "New post"}</span>
+            <span>{destination?.communityId && destination.selectedCommunity ? `Posting in ${destination.selectedCommunity.name}` : "Global post"}</span>
             <strong>{composerKindLabels[kind]}</strong>
           </div>
           <button type="button" title="Close" onClick={onClose}>
@@ -282,6 +286,18 @@ export function PostComposerModal({
             </button>
           </div>
         </div>
+        {destination?.selectedCommunity ? (
+          <label className="composer-destination-control">
+            <span>Post destination</span>
+            <select value={destination.communityId ?? "global"} onChange={(event) => destination.onChange(event.target.value === "global" ? null : event.target.value)}>
+              <option value="global">Global · common feeds</option>
+              <option value={destination.selectedCommunity.id} disabled={!destination.selectedCommunity.canPost}>
+                {destination.selectedCommunity.name}{destination.selectedCommunity.canPost ? "" : " · join to post"}
+              </option>
+            </select>
+            <small>{kind === "paper" ? "Papers are always public and published in the Library, wherever they begin." : destination.communityId ? "This post stays inside the selected community." : "This post enters the common global feeds."}</small>
+          </label>
+        ) : null}
         <input
           value={title}
           onChange={(event) => setTitle(event.target.value)}

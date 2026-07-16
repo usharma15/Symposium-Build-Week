@@ -391,6 +391,110 @@ const insertCommentTree = async (
   }
 };
 
+const seedCallsForCommunity = (community: ResearchCommunityContract, index: number) => {
+  const hostHandle = community.moderatorHandles?.[0] ?? community.memberHandles[0];
+  if (!hostHandle) return [];
+  const calls = [
+    {
+      id: `00000000-0000-4000-8000-${String(100 + index * 2).padStart(12, "0")}`,
+      hostHandle,
+      title: index % 3 === 0 ? "Weekly work review" : index % 3 === 1 ? "Open methods clinic" : "Member artifact table",
+      kind: index % 2 === 0 ? "video" : "voice",
+      status: "scheduled",
+      startsAt: new Date(Date.now() + (index % 6 + 1) * 18 * 60 * 60 * 1000).toISOString(),
+      providerRoomId: `${community.id}-weekly-review`,
+      participantHandles: community.memberHandles.slice(0, 4 + (index % 5))
+    },
+    {
+      id: `00000000-0000-4000-8000-${String(101 + index * 2).padStart(12, "0")}`,
+      hostHandle: community.moderatorHandles?.[1] ?? hostHandle,
+      title: index % 2 === 0 ? "Paper and source packet salon" : "New member working session",
+      kind: index % 2 === 0 ? "voice" : "video",
+      status: "scheduled",
+      startsAt: new Date(Date.now() + (index % 8 + 4) * 24 * 60 * 60 * 1000).toISOString(),
+      providerRoomId: `${community.id}-salon`,
+      participantHandles: community.memberHandles.slice(3, 8 + (index % 4))
+    }
+  ];
+  if (community.callStatus !== "quiet") {
+    calls.unshift({
+      id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+      hostHandle,
+      title: community.callStatus === "video live" ? "Open video workroom" : "Open voice workroom",
+      kind: community.callStatus === "video live" ? "video" : "voice",
+      status: "live",
+      startsAt: new Date(Date.now() - (index % 5 + 1) * 11 * 60_000).toISOString(),
+      providerRoomId: `${community.id}-live`,
+      participantHandles: community.memberHandles.slice(0, Math.min(community.online, 10))
+    });
+  }
+  return calls;
+};
+
+const syncCommunityActivityFixtures = async (client: PoolClient) => {
+  const fixtureProfiles = seedProfiles();
+  const existingProfiles = await client.query<{ handle: string }>(
+    "SELECT handle FROM profiles WHERE handle = ANY($1::text[])",
+    [fixtureProfiles.map((person) => cleanHandle(person.handle))]
+  );
+  const existingHandles = new Set(existingProfiles.rows.map((row) => cleanHandle(row.handle)));
+  for (const person of fixtureProfiles) {
+    if (!existingHandles.has(cleanHandle(person.handle))) await insertProfile(client, person);
+  }
+  for (const [communityIndex, community] of researchCommunities.entries()) {
+    await client.query(
+      `UPDATE communities SET
+         online = $2,
+         member_handles = CASE WHEN jsonb_array_length(member_handles) < 10 THEN $3::jsonb ELSE member_handles END,
+         seed_counts = $4,
+         call_status = CASE WHEN call_status = 'quiet' THEN $5 ELSE call_status END,
+         moderator_handles = CASE WHEN jsonb_array_length(moderator_handles) < 3 THEN $6::jsonb ELSE moderator_handles END,
+         guidelines = CASE WHEN length(trim(guidelines)) < 160 THEN $7 ELSE guidelines END,
+         announcements = CASE WHEN jsonb_array_length(announcements) < 2 THEN $8::jsonb ELSE announcements END,
+         updated_at = now()
+       WHERE id = $1`,
+      [
+        community.id,
+        community.online,
+        JSON.stringify(community.memberHandles),
+        JSON.stringify(community.seedCounts),
+        community.callStatus,
+        JSON.stringify(community.moderatorHandles ?? []),
+        community.guidelines ?? "",
+        JSON.stringify(community.announcements ?? [])
+      ]
+    );
+    const moderators = new Set((community.moderatorHandles ?? []).map(cleanHandle));
+    for (const [memberIndex, rawHandle] of community.memberHandles.entries()) {
+      const handle = cleanHandle(rawHandle);
+      const role = memberIndex === 0 ? "owner" : moderators.has(handle) ? "moderator" : "member";
+      await client.query(
+        `INSERT INTO community_memberships (community_id, profile_handle, role, status)
+         VALUES ($1, $2, $3, 'active')
+         ON CONFLICT (community_id, profile_handle) DO UPDATE SET role = EXCLUDED.role`,
+        [community.id, handle, role]
+      );
+    }
+    for (const call of seedCallsForCommunity(community, communityIndex)) {
+      await client.query(
+        `INSERT INTO community_calls (
+           id, community_id, host_handle, title, kind, status, starts_at, provider, provider_room_id
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'symposium', $8)
+         ON CONFLICT (id) DO NOTHING`,
+        [call.id, community.id, call.hostHandle, call.title, call.kind, call.status, call.startsAt, call.providerRoomId]
+      );
+      for (const [participantIndex, participantHandle] of call.participantHandles.entries()) {
+        await client.query(
+          `INSERT INTO call_participants (call_id, profile_handle, role)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (call_id, profile_handle) DO NOTHING`,
+          [call.id, cleanHandle(participantHandle), participantIndex === 0 ? "host" : "participant"]
+        );
+      }
+    }
+  }
+};
+
 const seedDatabase = async () => {
   if (!hasDatabase() || env.SYMPOSIUM_SEED_ON_BOOT === false) return;
   await ensureDatabase();
@@ -402,6 +506,7 @@ const seedDatabase = async () => {
     await client.query("BEGIN");
     const existing = await client.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM posts");
     if (Number(existing.rows[0]?.count ?? 0) > 0) {
+      await syncCommunityActivityFixtures(client);
       await client.query("COMMIT");
       return;
     }
@@ -466,6 +571,8 @@ const seedDatabase = async () => {
         );
       }
     }
+
+    await syncCommunityActivityFixtures(client);
 
     for (const [itemIndex, item] of inquiryItems.entries()) {
       const author = getProfileForName(item.author);

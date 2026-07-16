@@ -161,7 +161,7 @@ import {
   CommunitiesStage
 } from "@/features/communities/CommunityViews";
 import { searchableContentText } from "@/features/discovery/discoveryPolicy";
-import { communityPostIsExternallyDiscoverable } from "@/features/communities/communityPolicy";
+import { canParticipateInCommunity, communityPostIsExternallyDiscoverable } from "@/features/communities/communityPolicy";
 import { useCommunityState } from "@/features/communities/useCommunityState";
 import { createCommunityController } from "@/features/communities/communityController";
 import { TabletPanel } from "@/features/workspace/WorkspacePanels";
@@ -3401,7 +3401,7 @@ function SymposiumExperience({
           setSettingsOpen(false);
           setSearchOpen(false);
           setMessagesOpen(false);
-          setComposerCommunityId(null);
+          setComposerCommunityId(selectedCommunity && canParticipateInCommunity(selectedCommunity, currentProfile) ? selectedCommunity.id : null);
           setComposerOpen(true);
         }}
       >
@@ -3452,7 +3452,15 @@ function SymposiumExperience({
           onResolveQuoteLink={resolveComposerQuoteLink}
           profiles={profiles}
           initialKind={activeRoom === "opportunities" ? "opportunity" : activeRoom === "funding" ? "proposal" : undefined}
-          destinationLabel={composerCommunityId ? `Posting in ${communities.find((community) => community.id === composerCommunityId)?.name ?? "community"}` : undefined}
+          destination={{
+            communityId: composerCommunityId,
+            selectedCommunity: selectedCommunity ? {
+              id: selectedCommunity.id,
+              name: selectedCommunity.name,
+              canPost: canParticipateInCommunity(selectedCommunity, currentProfile)
+            } : undefined,
+            onChange: setComposerCommunityId
+          }}
         />
       ) : null}
 

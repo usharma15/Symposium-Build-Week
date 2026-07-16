@@ -9,7 +9,6 @@ import {
   ChevronDown,
   CircleDot,
   Contact,
-  Filter,
   LockKeyhole,
   Megaphone,
   MessageCircleMore,
@@ -17,6 +16,7 @@ import {
   Radio,
   Search,
   Send,
+  SlidersHorizontal,
   UserRoundPlus,
   UsersRound,
   X
@@ -28,7 +28,7 @@ import type {
   CreateCommunityCallInputContract
 } from "@/packages/contracts/src";
 import type { InquiryItem, ResearchCommunity, ResearchProfile } from "@/lib/mockData";
-import { itemTimestampScore, normalizeSearchPhrase } from "@/lib/symposiumCore";
+import { cleanHandle, normalizeSearchPhrase } from "@/lib/symposiumCore";
 import type { PostActionHandler } from "@/features/actions/actionTypes";
 import type { QuoteActionHandler } from "@/features/quotes/QuoteViews";
 import type { AttachmentPreviewHandler } from "@/features/attachments/AttachmentViews";
@@ -40,15 +40,18 @@ import {
 import {
   canParticipateInCommunity,
   canViewCommunity,
+  communityFeedFilterLabel,
   communityMembershipLabel,
   communityMembershipStatus,
   communityRecencyScore,
+  defaultCommunityFeedFilter,
+  filterCommunityFeedItems,
   isActiveCommunityMember
 } from "@/features/communities/communityPolicy";
+import { CommunityFeedFilterModal } from "@/features/communities/CommunityFeedFilterModal";
+import { profileForHandle } from "@/features/identity/profilePresentation";
 import { FeedPost } from "@/features/posts/PostViews";
 import { CanonicalLink } from "@/features/navigation/CanonicalLink";
-
-type CommunityFilter = "all" | "paper" | "thought" | "opportunity";
 
 export function CommunitiesStage({
   state,
@@ -186,9 +189,8 @@ export function CommunitiesDirectoryView({
     <section className="communities-directory-layout" aria-label="Communities directory">
       <aside className="communities-directory-rail">
         <header>
-          <p className="eyebrow">Classic and current communities</p>
+          <p className="eyebrow">Directory</p>
           <h1>Communities</h1>
-          <p>Directory</p>
         </header>
 
         <button className="community-primary-action" type="button" onClick={() => setCreateOpen(true)}>
@@ -481,8 +483,9 @@ export function SelectedCommunityView({
   onDeletePost: (itemId: string) => void;
   onOpenAttachmentPreview: AttachmentPreviewHandler;
 }) {
-  const [filter, setFilter] = useState<CommunityFilter>("all");
+  const [filter, setFilter] = useState(defaultCommunityFeedFilter);
   const [feedQuery, setFeedQuery] = useState("");
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
   const [callComposerOpen, setCallComposerOpen] = useState(false);
   const isMember = isActiveCommunityMember(community, currentProfile);
@@ -490,14 +493,24 @@ export function SelectedCommunityView({
   const mayParticipate = canParticipateInCommunity(community, currentProfile);
   const relatedItems = useMemo(() => {
     const term = normalizeSearchPhrase(feedQuery);
-    return sortCommunityItems(getCommunityItems(items, community)).filter((item) => {
-      const filterMatches = filter === "all" || item.postType === filter;
+    const matching = getCommunityItems(items, community).filter((item) => {
       const queryMatches = !term || normalizeSearchPhrase([item.title, item.body, item.author, ...item.tags].join(" ")).includes(term);
-      return filterMatches && queryMatches;
+      return queryMatches;
     });
+    return filterCommunityFeedItems(matching, filter);
   }, [community, feedQuery, filter, items]);
   const liveCalls = calls.filter((call) => call.status === "live");
   const upcomingCalls = calls.filter((call) => call.status === "scheduled");
+  const communityPeople = useMemo(() => {
+    const moderatorHandles = new Set((community.moderatorHandles ?? []).map(cleanHandle));
+    const visible = community.memberHandles
+      .map((handle) => profileForHandle(profiles, handle))
+      .filter((person): person is ResearchProfile => Boolean(person));
+    return {
+      moderators: visible.filter((person) => moderatorHandles.has(cleanHandle(person.handle))).slice(0, 4),
+      members: visible.filter((person) => !moderatorHandles.has(cleanHandle(person.handle))).slice(0, 6)
+    };
+  }, [community.memberHandles, community.moderatorHandles, profiles]);
 
   return (
     <section className="selected-community-layout" aria-label={community.name}>
@@ -509,7 +522,6 @@ export function SelectedCommunityView({
           <p className="eyebrow">{community.visibility} community</p>
           <h1>{community.name}</h1>
           <p>{community.summary}</p>
-          <span>{community.field}</span>
         </header>
 
         <button className="community-membership-action" type="button" disabled={membershipBusy || communityMembershipStatus(community, currentProfile) === "requested"} onClick={onMembership}>
@@ -520,12 +532,7 @@ export function SelectedCommunityView({
 
         {mayView ? <section className="community-feed-controls" aria-label="Community feed controls">
           <label><Search size={15} /><input value={feedQuery} onChange={(event) => setFeedQuery(event.target.value)} placeholder="Search this community" /></label>
-          <div>
-            <span><Filter size={14} /> Feed</span>
-            {(["all", "paper", "thought", "opportunity"] as CommunityFilter[]).map((option) => (
-              <button key={option} type="button" className={filter === option ? "active" : ""} onClick={() => setFilter(option)}>{option === "all" ? "Everything" : option === "opportunity" ? "Opportunities" : `${option}s`}</button>
-            ))}
-          </div>
+          <button type="button" onClick={() => setFiltersOpen(true)}><SlidersHorizontal size={15} /><span><strong>Filter feed</strong><small>{communityFeedFilterLabel(filter)}</small></span></button>
         </section> : null}
 
         {mayView ? <div className="community-secondary-actions">
@@ -562,7 +569,7 @@ export function SelectedCommunityView({
           ))
         ) : (
           <div className="empty-feed">
-            <strong>{feedQuery || filter !== "all" ? "No posts match these filters." : "No shared work yet."}</strong>
+            <strong>{feedQuery || filter.content !== "all" || filter.sort !== "recent" ? "No posts match these filters." : "No shared work yet."}</strong>
             <span>{isMember ? "Create the first post here. Papers will also appear publicly in the Library." : "Join to begin contributing."}</span>
           </div>
         )}
@@ -580,7 +587,7 @@ export function SelectedCommunityView({
 
         <section className="community-announcements-panel">
           <div className="community-section-heading"><span><Megaphone size={15} /> Announcements</span><small>{community.announcements?.length ?? 0}</small></div>
-          {mayView && community.announcements?.length ? community.announcements.slice(0, 3).map((announcement) => (
+          {mayView && community.announcements?.length ? community.announcements.slice(0, 2).map((announcement) => (
             <article key={announcement.id}><strong>{announcement.title}</strong><p>{announcement.body}</p></article>
           )) : <p>{mayView ? "No announcements right now." : "Available to members."}</p>}
         </section>
@@ -597,6 +604,20 @@ export function SelectedCommunityView({
           {mayView && !liveCalls.length && !upcomingCalls.length ? <p>No calls or events scheduled.</p> : null}
           {mayView ? <button type="button" disabled={!mayParticipate} onClick={() => setCallComposerOpen(true)}><Plus size={15} /> Create event or call</button> : null}
         </section>
+
+        <section className="community-people-panel">
+          <div className="community-section-heading"><span><UsersRound size={15} /> People</span><small>{community.memberCount ?? community.memberHandles.length}</small></div>
+          {communityPeople.moderators.length ? <div className="community-people-group"><span>Moderators</span>{communityPeople.moderators.map((person) => (
+            <CanonicalLink key={person.handle} route={{ kind: "profile", handle: person.handle }} onNavigate={() => onOpenProfile(person.handle)}>
+              <i>{person.avatarUrl ? <img src={person.avatarUrl} alt="" /> : person.name.slice(0, 1)}</i><span><strong>{person.name}</strong><small>{person.handle}</small></span>
+            </CanonicalLink>
+          ))}</div> : null}
+          {communityPeople.members.length ? <div className="community-people-group"><span>Members</span>{communityPeople.members.map((person) => (
+            <CanonicalLink key={person.handle} route={{ kind: "profile", handle: person.handle }} onNavigate={() => onOpenProfile(person.handle)}>
+              <i>{person.avatarUrl ? <img src={person.avatarUrl} alt="" /> : person.name.slice(0, 1)}</i><span><strong>{person.name}</strong><small>{person.handle}</small></span>
+            </CanonicalLink>
+          ))}</div> : null}
+        </section>
       </aside> : null}
 
       {rulesOpen ? (
@@ -607,6 +628,7 @@ export function SelectedCommunityView({
           </section>
         </div>
       ) : null}
+      {filtersOpen ? <CommunityFeedFilterModal value={filter} onChange={setFilter} onClose={() => setFiltersOpen(false)} /> : null}
       {callComposerOpen ? <CreateCallModal onCreate={onCreateCall} onClose={() => setCallComposerOpen(false)} /> : null}
     </section>
   );
@@ -654,6 +676,3 @@ const formatCallTime = (value?: string) => {
   if (Number.isNaN(date.getTime())) return "Scheduled";
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(date);
 };
-
-const sortCommunityItems = (items: InquiryItem[]) =>
-  [...items].sort((a, b) => itemTimestampScore(b) - itemTimestampScore(a));

@@ -17,6 +17,7 @@ type StoredMembership = {
 };
 
 type LocalCommunityState = {
+  version: 2;
   communities: ResearchCommunity[];
   memberships: Record<string, Record<string, StoredMembership>>;
   calls: CommunityCallContract[];
@@ -33,42 +34,105 @@ const withLock = <T>(operation: () => Promise<T>) => {
   return result;
 };
 
+const seedCommunityCalls = (): CommunityCallContract[] => {
+  const now = Date.now();
+  return researchCommunities.flatMap((community, index) => {
+    const hostHandle = community.moderatorHandles?.[0] ?? community.memberHandles[0];
+    if (!hostHandle) return [];
+    const calls: CommunityCallContract[] = [
+      {
+        id: `00000000-0000-4000-8000-${String(100 + index * 2).padStart(12, "0")}`,
+        communityId: community.id,
+        hostHandle,
+        title: index % 3 === 0 ? "Weekly work review" : index % 3 === 1 ? "Open methods clinic" : "Member artifact table",
+        kind: index % 2 === 0 ? "video" : "voice",
+        status: "scheduled",
+        startsAt: new Date(now + (index % 6 + 1) * 18 * 60 * 60 * 1000).toISOString(),
+        provider: "symposium",
+        providerRoomId: `${community.id}-weekly-review`,
+        participantHandles: community.memberHandles.slice(0, 4 + (index % 5))
+      },
+      {
+        id: `00000000-0000-4000-8000-${String(101 + index * 2).padStart(12, "0")}`,
+        communityId: community.id,
+        hostHandle: community.moderatorHandles?.[1] ?? hostHandle,
+        title: index % 2 === 0 ? "Paper and source packet salon" : "New member working session",
+        kind: index % 2 === 0 ? "voice" : "video",
+        status: "scheduled",
+        startsAt: new Date(now + (index % 8 + 4) * 24 * 60 * 60 * 1000).toISOString(),
+        provider: "symposium",
+        providerRoomId: `${community.id}-salon`,
+        participantHandles: community.memberHandles.slice(3, 8 + (index % 4))
+      }
+    ];
+    if (community.callStatus !== "quiet") {
+      calls.unshift({
+        id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+        communityId: community.id,
+        hostHandle,
+        title: community.callStatus === "video live" ? "Open video workroom" : "Open voice workroom",
+        kind: community.callStatus === "video live" ? "video" : "voice",
+        status: "live",
+        startsAt: new Date(now - (index % 5 + 1) * 11 * 60_000).toISOString(),
+        provider: "symposium",
+        providerRoomId: `${community.id}-live`,
+        participantHandles: community.memberHandles.slice(0, Math.min(community.online, 10))
+      });
+    }
+    return calls;
+  });
+};
+
 const seedState = (): LocalCommunityState => ({
+  version: 2,
   communities: researchCommunities,
-  memberships: Object.fromEntries(researchCommunities.map((community) => [
+  memberships: Object.fromEntries(researchCommunities.map((community, communityIndex) => [
     community.id,
     Object.fromEntries(community.memberHandles.map((handle, index) => [cleanHandle(handle), {
       status: "active" as const,
-      role: index === 0 ? "owner" as const : "member" as const
+      role: (community.moderatorHandles ?? []).map(cleanHandle).includes(cleanHandle(handle))
+        ? index === 0 ? "owner" as const : "moderator" as const
+        : "member" as const,
+      lastAccessedAt: cleanHandle(handle) === "@udayan"
+        ? new Date(Date.UTC(2026, 6, 16, 12 - communityIndex, 0)).toISOString()
+        : undefined
     }]))
   ])),
-  calls: researchCommunities
-    .filter((community) => community.callStatus !== "quiet")
-    .map((community, index) => ({
-      id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
-      communityId: community.id,
-      hostHandle: community.memberHandles[0],
-      title: community.callStatus === "video live" ? "Open video room" : "Open voice room",
-      kind: community.callStatus === "video live" ? "video" : "voice",
-      status: "live",
-      startsAt: new Date(Date.now() - index * 7 * 60_000).toISOString(),
-      participantHandles: community.memberHandles.slice(0, Math.min(community.online, 8))
-    }))
+  calls: seedCommunityCalls()
 });
 
 const readState = async (): Promise<LocalCommunityState> => {
   try {
-    const parsed = JSON.parse(await readFile(storagePath, "utf8")) as Partial<LocalCommunityState>;
+    const parsed = JSON.parse(await readFile(storagePath, "utf8")) as Partial<LocalCommunityState> & { version?: number };
     if (!Array.isArray(parsed.communities) || !parsed.memberships || !Array.isArray(parsed.calls)) return seedState();
     const seeded = seedState();
     const storedById = new Map(parsed.communities.map((community) => [community.id, community]));
+    const seededIds = new Set(seeded.communities.map((community) => community.id));
+    const communities = seeded.communities.map((community) => {
+      const stored = storedById.get(community.id);
+      if (!stored) return community;
+      if (parsed.version === 2) return { ...community, ...stored };
+      return {
+        ...stored,
+        memberHandles: Array.from(new Set([...community.memberHandles, ...stored.memberHandles])),
+        memberCount: community.memberCount,
+        monthlyActive: community.monthlyActive,
+        moderatorHandles: community.moderatorHandles,
+        guidelines: community.guidelines,
+        announcements: community.announcements
+      };
+    });
+    const memberships = Object.fromEntries(communities.map((community) => [
+      community.id,
+      { ...(seeded.memberships[community.id] ?? {}), ...(parsed.memberships?.[community.id] ?? {}) }
+    ]));
+    const seededCallById = new Map(seeded.calls.map((call) => [call.id, call]));
+    for (const call of parsed.calls) seededCallById.set(call.id, call);
     return {
-      communities: [
-        ...seeded.communities.map((community) => storedById.get(community.id) ?? community),
-        ...parsed.communities.filter((community) => !seeded.communities.some((seed) => seed.id === community.id))
-      ],
-      memberships: { ...seeded.memberships, ...parsed.memberships },
-      calls: parsed.calls.length ? parsed.calls : seeded.calls
+      version: 2,
+      communities: [...communities, ...parsed.communities.filter((community) => !seededIds.has(community.id))],
+      memberships: { ...memberships, ...Object.fromEntries(Object.entries(parsed.memberships).filter(([id]) => !seededIds.has(id))) },
+      calls: [...seededCallById.values()]
     };
   } catch {
     return seedState();
