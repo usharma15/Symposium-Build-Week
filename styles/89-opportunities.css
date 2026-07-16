@@ -16,6 +16,7 @@
 .opportunity-status-closed { color: var(--muted); }
 
 .detail-layout.simple-detail.opportunity-detail { grid-template-columns: minmax(0, var(--symposium-feed-width)) 304px; width: min(calc(var(--symposium-feed-width) + 320px), calc(100vw - 48px)); }
+.opportunity-side-inline { position: absolute; top: 0; bottom: 0; left: calc(100% + 16px); width: 304px; }
 .opportunity-side { position: sticky; top: 112px; align-self: start; min-width: 0; }
 .opportunity-side > section { overflow: hidden; padding: 18px; border: 1px solid rgba(120, 52, 61, .28); border-radius: 16px; background: color-mix(in srgb, var(--paper) 88%, #f1dedd); box-shadow: 0 16px 48px rgba(61, 29, 33, .1); }
 .opportunity-side-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
@@ -28,7 +29,6 @@
 .opportunity-primary-action span { min-width: 22px; padding: 3px 6px; border-radius: 999px; background: rgba(255,255,255,.17); }
 .opportunity-primary-action:disabled { opacity: .55; cursor: default; }
 .opportunity-applied { border-color: rgba(120,52,61,.2); background: rgba(120,52,61,.07); color: #78343d; }
-.opportunity-side-inline { display: none; }
 
 .opportunity-apply-modal { width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 40px); overflow: auto; display: grid; gap: 17px; padding: 20px; border: 1px solid var(--line); border-radius: 18px; background: var(--paper); color: var(--ink); box-shadow: 0 28px 90px rgba(24,20,17,.24); }
 .opportunity-apply-modal > header, .opportunity-apply-modal > footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
@@ -116,8 +116,7 @@
 }
 @media (max-width: 920px) {
   .detail-layout.simple-detail.opportunity-detail { grid-template-columns: minmax(0, 1fr); width: min(var(--symposium-feed-width), calc(100vw - 32px)); }
-  .opportunity-detail > .opportunity-side { display: none; }
-  .opportunity-side-inline { display: block; margin-top: 16px; }
+  .opportunity-side-inline { position: static; width: 100%; margin-top: 16px; }
   .opportunity-side-inline .opportunity-side { position: static; display: block; }
 }
 @media (max-width: 760px) {

@@ -4,7 +4,7 @@ import { jsonError, readJson } from "@/lib/api";
 import { proxyLiveBackend } from "@/lib/liveBackendClient";
 import { contentKinds, postRooms } from "@/lib/symposiumCore";
 import { ContentQuoteError, resolveLocalContentQuote } from "@/lib/contentQuotes";
-import { contentQuoteSourceSchema, opportunityPostInputSchema, patronageProposalInputSchema, versionedDocumentSchema } from "@/packages/contracts/src";
+import { contentQuoteSourceSchema, opportunityPostInputSchema, patronageProposalInputSchema, postTypeSchema, versionedDocumentSchema } from "@/packages/contracts/src";
 import {
   LocalAttachmentStoreError,
   replaceLocalOwnerAttachments,
@@ -38,6 +38,8 @@ export async function POST(request: Request) {
 
   const kind = String(body.kind ?? "");
   const room = String(body.room ?? "");
+  const postType = postTypeSchema.safeParse(body.postType);
+  if (!postType.success) return jsonError("Choose a valid publication type.", 400);
   const attachmentIds = Array.isArray(body.attachmentIds)
     ? body.attachmentIds.map((attachmentId) => String(attachmentId))
     : Array.isArray(body.attachments)
@@ -48,6 +50,7 @@ export async function POST(request: Request) {
     body: String(body.body ?? "").trim(),
     document: body.document === undefined ? undefined : versionedDocumentSchema.safeParse(body.document).data,
     kind: contentKinds.includes(kind as ContentKind) ? (kind as ContentKind) : "thought",
+    postType: postType.data,
     room: postRooms.includes(room as Exclude<RoomId, "hall">)
       ? (room as Exclude<RoomId, "hall">)
       : "symposium",
@@ -56,6 +59,9 @@ export async function POST(request: Request) {
 
   if (!input.title || !input.body) {
     return jsonError("Title and body are required.", 400);
+  }
+  if (input.kind !== "paper" && input.kind !== "thought" && input.kind !== "note") {
+    return jsonError("Private drafts and code artifacts publish through the Workspace, not the public post endpoint.", 400);
   }
   if (body.document !== undefined && !versionedDocumentSchema.safeParse(body.document).success) {
     return jsonError("The post document is invalid or unsupported.", 400);
@@ -72,6 +78,16 @@ export async function POST(request: Request) {
   if ((input.room === "opportunities") !== Boolean(opportunity?.success) || (opportunity?.success && input.kind !== "thought")) {
     return jsonError("Opportunities publish as thought-grade posts with application metadata.", 400);
   }
+  const expectedPostType = patronage?.success
+    ? "proposal"
+    : opportunity?.success
+      ? "opportunity"
+      : input.kind === "paper"
+        ? "paper"
+        : "thought";
+  if (input.postType !== expectedPostType) {
+    return jsonError("The publication type must describe the post independently of its editor format.", 400);
+  }
 
   const live = await proxyLiveBackend("/v1/posts", {
     method: "POST",
@@ -80,6 +96,7 @@ export async function POST(request: Request) {
       body: input.body,
       document: input.document,
       kind: input.kind,
+      postType: input.postType,
       room: input.room,
       authorHandle: body.authorHandle,
       attachmentIds,
@@ -93,7 +110,7 @@ export async function POST(request: Request) {
   if (live) return live;
 
   try {
-    if (attachmentIds.length && (input.room === "office" || input.kind === "draft")) {
+    if (attachmentIds.length && input.room === "office") {
       return jsonError("Private post attachments require protected delivery before they can be published.", 412);
     }
     const snapshot = await getSnapshot();

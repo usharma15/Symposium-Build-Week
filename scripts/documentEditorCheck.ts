@@ -91,6 +91,7 @@ assert.equal(createPostInputSchema.safeParse({
   body: "A paper",
   document: { ...document, nodes: [{ id: "heading", type: "heading", level: 1, content: [{ text: "Section" }], align: "left" }] },
   kind: "paper",
+  postType: "paper",
   room: "library",
   attachments: []
 }).success, true);
@@ -100,6 +101,7 @@ assert.equal(createPostInputSchema.safeParse({
   body: "A thought",
   document: { ...document, nodes: [{ id: "heading", type: "heading", level: 1, content: [{ text: "Not reduced" }], align: "left" }] },
   kind: "thought",
+  postType: "thought",
   room: "symposium",
   attachments: []
 }).success, false);
@@ -121,6 +123,7 @@ assert.equal(createPostInputSchema.safeParse({
   body: "Missing asset ownership",
   document,
   kind: "paper",
+  postType: "paper",
   room: "library",
   attachmentIds: [],
   attachments: []

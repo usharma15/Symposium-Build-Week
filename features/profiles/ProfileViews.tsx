@@ -56,6 +56,7 @@ import {
   type QuoteActionHandler
 } from "@/features/quotes/QuoteViews";
 import { postToneClassName, postToneForItem } from "@/lib/postTone";
+import { itemHasPostType } from "@/lib/postSemantics";
 
 export type { ProfileTab } from "@/features/navigation/canonicalRoute";
 export type ProfileActivityKind = "authored" | "comments" | "fork" | "signal" | "save";
@@ -300,8 +301,10 @@ export function ProfileView({
     return Boolean(canonicalActionState(canonicalActivities, "comment", comment.id, person.handle, kind)?.active);
   };
   const authored = byPublishedRecency(items.filter(isAuthor));
-  const papers = authored.filter((item) => item.kind === "paper");
-  const thoughts = authored.filter((item) => item.kind === "thought" || item.kind === "note");
+  const papers = authored.filter((item) => itemHasPostType(item, "paper"));
+  const thoughts = authored.filter((item) => itemHasPostType(item, "thought"));
+  const proposals = authored.filter((item) => itemHasPostType(item, "proposal"));
+  const opportunities = authored.filter((item) => itemHasPostType(item, "opportunity"));
   const commentRecency = (item: InquiryItem, comment: InquiryComment, kind: ProfileCommentActivityKind) =>
     getProfileCommentRecency(item, comment, person.handle, kind);
   const commentActivities = collectProfileComments(
@@ -335,6 +338,8 @@ export function ProfileView({
   const authoredEntries = authored.map((item) => postEntry(item, getProfileRecency(item, person.handle, "authored")));
   const paperEntries = papers.map((item) => postEntry(item, getProfileRecency(item, person.handle, "authored")));
   const thoughtEntries = thoughts.map((item) => postEntry(item, getProfileRecency(item, person.handle, "authored")));
+  const proposalEntries = proposals.map((item) => postEntry(item, getProfileRecency(item, person.handle, "authored")));
+  const opportunityEntries = opportunities.map((item) => postEntry(item, getProfileRecency(item, person.handle, "authored")));
   const reshareEntries = reshares.map((item) => postEntry(item, getProfileRecency(item, person.handle, "fork")));
   const likeEntries = likes.map((item) => postEntry(item, getProfileRecency(item, person.handle, "signal")));
   const savedEntries = saved.map((item) => postEntry(item, getProfileRecency(item, person.handle, "save")));
@@ -364,6 +369,8 @@ export function ProfileView({
     all: allActivity,
     papers: paperEntries,
     thoughts: thoughtEntries,
+    proposals: proposalEntries,
+    opportunities: opportunityEntries,
     comments: commentEntries,
     reshares: reshareTabEntries,
     likes: sortEntries([...likeEntries, ...commentLikeEntries]),
@@ -374,6 +381,8 @@ export function ProfileView({
     all: allActivity.length,
     papers: papers.length,
     thoughts: thoughts.length,
+    proposals: proposals.length,
+    opportunities: opportunities.length,
     comments: commentActivities.length,
     reshares: reshareTabEntries.length,
     likes: likeEntries.length + commentLikeEntries.length,
@@ -384,6 +393,8 @@ export function ProfileView({
     { id: "all", label: "All" },
     { id: "papers", label: "Papers" },
     { id: "thoughts", label: "Thoughts" },
+    { id: "proposals", label: "Proposals" },
+    { id: "opportunities", label: "Opportunities" },
     { id: "comments", label: "Comments" },
     ...(canShowReshares ? [{ id: "reshares" as const, label: "Reshares" }] : []),
     ...(canShowLikes ? [{ id: "likes" as const, label: "Likes" }] : []),

@@ -62,7 +62,7 @@ type ActionMutationResult = {
 };
 
 const lockedPostSelect = `SELECT
-  id, revision, kind, room, title, author_handle AS "authorHandle", author_name AS "authorName",
+  id, revision, kind, post_type AS "postType", room, title, author_handle AS "authorHandle", author_name AS "authorName",
   affiliation, date_label AS "dateLabel", created_at AS "createdAt", edited_at AS "editedAt", deleted_at AS "deletedAt",
   status, metrics, gathering_reason AS "gatheringReason", excerpt, body, content_document AS "document", tags, signals,
   claims, objections, evidence, tests, forks, saved, saved_by AS "savedBy",
@@ -99,6 +99,7 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
     id: newId("post"),
     revision: 1,
     kind: input.kind,
+    postType: input.postType,
     room: input.room,
     title: input.title,
     author: author.name,
@@ -151,18 +152,19 @@ export const createPost = async (rawInput: unknown, actor: Actor, mutation?: Mut
     item.quote = await resolveContentQuote(client, input.quoteSource, { ownerId: item.id, ownerType: "post" });
     await client.query(
       `INSERT INTO posts (
-        id, kind, room, title, author_handle, author_name, affiliation, date_label, created_at, status,
+        id, kind, post_type, room, title, author_handle, author_name, affiliation, date_label, created_at, status,
         metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
         tests, forks, saved, saved_by, signaled_by, forked_by, quote, search_text, patronage, opportunity
       )
       VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9,
-        $10, $11, $12, $13, $14, $15, $16, $17, $18,
-        $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+        $11, $12, $13, $14, $15, $16, $17, $18, $19,
+        $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30
       )`,
       [
         item.id,
         item.kind,
+        item.postType,
         item.room,
         item.title,
         item.authorHandle,

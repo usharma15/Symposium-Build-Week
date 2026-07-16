@@ -14,7 +14,7 @@ export type CanonicalRoute =
 export const canonicalRoomIds = ["symposium", "library", "amphitheater"] as const;
 export type CanonicalRoomId = (typeof canonicalRoomIds)[number];
 export type ProfileSocialView = "followers" | "following";
-export const canonicalProfileTabs = ["all", "papers", "thoughts", "comments", "reshares", "likes", "saved"] as const;
+export const canonicalProfileTabs = ["all", "papers", "thoughts", "proposals", "opportunities", "comments", "reshares", "likes", "saved"] as const;
 export type ProfileTab = (typeof canonicalProfileTabs)[number];
 
 export const canonicalRouteForRoom = (roomId: string): CanonicalRoute => {

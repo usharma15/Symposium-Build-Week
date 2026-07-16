@@ -26,6 +26,7 @@ const canonicalPost = {
   title: "Research tooling fellowship",
   body: "Build and test a small piece of public research infrastructure.",
   kind: "thought" as const,
+  postType: "opportunity" as const,
   room: "opportunities" as const,
   opportunity,
   attachments: []
@@ -34,6 +35,7 @@ assert.ok(createPostInputSchema.safeParse(canonicalPost).success);
 assert.equal(createPostInputSchema.safeParse({ ...canonicalPost, opportunity: undefined }).success, false);
 assert.equal(createPostInputSchema.safeParse({ ...canonicalPost, kind: "paper" }).success, false);
 assert.equal(createPostInputSchema.safeParse({ ...canonicalPost, room: "amphitheater" }).success, false);
+assert.equal(createPostInputSchema.safeParse({ ...canonicalPost, postType: "thought" }).success, false);
 
 const workspaceOpportunity = {
   title: canonicalPost.title,
@@ -61,6 +63,7 @@ const seeded = inquiryItems.filter((item) => item.room === "opportunities");
 assert.ok(seeded.length >= 4);
 for (const item of seeded) {
   assert.equal(item.kind, "thought");
+  assert.equal(item.postType, "opportunity");
   assert.ok(item.opportunity, `${item.id} must use the canonical Opportunity projection`);
 }
 

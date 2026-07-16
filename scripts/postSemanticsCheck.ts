@@ -1,0 +1,67 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import {
+  itemHasPostType,
+  postTypeForItem,
+  preservePostSemanticProjection
+} from "@/lib/postSemantics";
+import { inquiryItems } from "@/lib/mockData";
+
+const main = async () => {
+const proposals = inquiryItems.filter((item) => itemHasPostType(item, "proposal"));
+const opportunities = inquiryItems.filter((item) => itemHasPostType(item, "opportunity"));
+const papers = inquiryItems.filter((item) => itemHasPostType(item, "paper"));
+const thoughts = inquiryItems.filter((item) => itemHasPostType(item, "thought"));
+
+assert.ok(proposals.length > 0);
+assert.ok(opportunities.length > 0);
+assert.equal(proposals.some((item) => papers.includes(item)), false);
+assert.equal(opportunities.some((item) => thoughts.includes(item)), false);
+assert.equal(postTypeForItem({ kind: "paper", room: "funding", patronage: {} }), "proposal");
+assert.equal(postTypeForItem({ kind: "thought", room: "opportunities", opportunity: {} }), "opportunity");
+assert.equal(postTypeForItem({ kind: "draft", room: "office" }), null);
+assert.equal(postTypeForItem({ kind: "paper", room: "office", postType: "paper" }), null);
+
+const currentOpportunity = opportunities[0]!;
+const partialLiveOpportunity = {
+  ...currentOpportunity,
+  postType: undefined,
+  opportunity: undefined
+};
+const protectedOpportunity = preservePostSemanticProjection(partialLiveOpportunity, currentOpportunity);
+assert.equal(protectedOpportunity.postType, "opportunity");
+assert.equal(protectedOpportunity.opportunity, currentOpportunity.opportunity);
+
+const root = process.cwd();
+const [feedVisibility, profileViews, discovery, quoteService, workspacePublishing, migration] = await Promise.all([
+  readFile(path.join(root, "features/feeds/feedVisibility.ts"), "utf8"),
+  readFile(path.join(root, "features/profiles/ProfileViews.tsx"), "utf8"),
+  readFile(path.join(root, "features/discovery/discoveryPolicy.ts"), "utf8"),
+  readFile(path.join(root, "apps/api/src/services/contentQuotes.ts"), "utf8"),
+  readFile(path.join(root, "apps/api/src/services/notePublishing.ts"), "utf8"),
+  readFile(path.join(root, "apps/api/src/db/migrate.ts"), "utf8")
+]);
+
+assert.match(feedVisibility, /activeRoom === "library"\) return itemHasPostType\(item, "paper"\)/);
+assert.match(feedVisibility, /activeRoom === "amphitheater"\) return itemHasPostType\(item, "thought"\)/);
+assert.match(profileViews, /itemHasPostType\(item, "proposal"\)/);
+assert.match(profileViews, /itemHasPostType\(item, "opportunity"\)/);
+assert.match(discovery, /itemHasPostType\(item, "opportunity"\)/);
+assert.match(quoteService, /post\.post_type AS "postType"/);
+assert.match(workspacePublishing, /postType: target/);
+assert.match(migration, /0027_semantic_post_types/);
+assert.match(migration, /posts_semantic_destination_check/);
+
+console.log(JSON.stringify({
+  ok: true,
+  checked: [
+    "exclusive public publication identities",
+    "private drafts remain untyped",
+    "partial live payload semantic preservation",
+    "feed, profile, discovery, quote, Workspace, and database integration"
+  ]
+}, null, 2));
+};
+
+void main();

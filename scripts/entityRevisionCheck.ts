@@ -56,6 +56,15 @@ assert.deepEqual(
 
 first.complete("post-1");
 
+const equalRevisionCurrent = { id: "post-2", revision: 3, value: "stable" };
+const equalRevisionIncoming = { ...equalRevisionCurrent };
+const stableRefresh = first.reconcileRefresh(
+  [equalRevisionIncoming],
+  [equalRevisionCurrent],
+  first.capture()
+);
+assert.equal(stableRefresh[0], equalRevisionCurrent);
+
 console.log(
   JSON.stringify(
     {
@@ -67,7 +76,8 @@ console.log(
         "older-device message rejection",
         "newer canonical immediate convergence",
         "newer canonical pending-mutation convergence",
-        "late server-event rejection"
+        "late server-event rejection",
+        "equal-revision referential stability"
       ]
     },
     null,

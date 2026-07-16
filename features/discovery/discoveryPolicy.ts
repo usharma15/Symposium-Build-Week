@@ -1,5 +1,6 @@
 import type { InquiryComment, InquiryItem, ResearchCommunity } from "@/lib/mockData";
 import { isDeletedComment, isDeletedPost, normalizeSearchPhrase } from "@/lib/symposiumCore";
+import { itemHasPostType } from "@/lib/postSemantics";
 
 const commentSearchText = (comments: InquiryComment[]): string =>
   comments
@@ -62,9 +63,9 @@ export const getCommunityItems = (items: InquiryItem[], community: ResearchCommu
 
 export const getCommunityStats = (items: InquiryItem[], community: ResearchCommunity) => {
   const communityItems = getCommunityItems(items, community);
-  const papers = communityItems.filter((item) => item.kind === "paper").length;
-  const thoughts = communityItems.filter((item) => item.kind === "thought" || item.kind === "note").length;
-  const opportunities = communityItems.filter((item) => item.room === "opportunities").length;
+  const papers = communityItems.filter((item) => itemHasPostType(item, "paper")).length;
+  const thoughts = communityItems.filter((item) => itemHasPostType(item, "thought")).length;
+  const opportunities = communityItems.filter((item) => itemHasPostType(item, "opportunity")).length;
 
   return {
     papers: Math.max(papers, community.seedCounts.papers),

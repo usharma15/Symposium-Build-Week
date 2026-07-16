@@ -42,6 +42,7 @@ export const createOpportunity = async (rawInput: unknown, actor: Actor, mutatio
     title: input.title,
     body: input.body,
     kind: "thought",
+    postType: "opportunity",
     room: "opportunities",
     authorHandle: actor.handle,
     opportunity: {

@@ -797,10 +797,30 @@
   background: color-mix(in srgb, #176f7b 18%, var(--panel-strong));
 }
 
+.symposium-shell.night .quote-card-proposal,
+.symposium-shell.night .comment button.quote-card-proposal {
+  border-color: rgba(177, 204, 131, 0.36);
+  background: color-mix(in srgb, #4e7130 20%, var(--panel-strong));
+}
+
+.symposium-shell.night .quote-card-opportunity,
+.symposium-shell.night .comment button.quote-card-opportunity {
+  border-color: rgba(221, 147, 157, 0.36);
+  background: color-mix(in srgb, #78343d 20%, var(--panel-strong));
+}
+
 .symposium-shell.night .quote-kind-paper {
   color: #f2c98d;
 }
 
 .symposium-shell.night .quote-kind-thought {
   color: #9de4ec;
+}
+
+.symposium-shell.night .quote-kind-proposal {
+  color: #bddb91;
+}
+
+.symposium-shell.night .quote-kind-opportunity {
+  color: #dc929d;
 }

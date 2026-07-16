@@ -65,6 +65,7 @@ export const resolveLocalContentQuote = (
       authorHandle: item.authorHandle,
       title: item.title,
       kind: item.kind,
+      postType: item.postType,
       body: item.body,
       createdAt: item.createdAt,
       attachmentCount: Math.min(item.attachments?.length ?? 0, 10)
@@ -86,6 +87,7 @@ export const resolveLocalContentQuote = (
       author: comment.author,
       authorHandle: comment.authorHandle,
       kind: item.kind,
+      postType: item.postType,
       body: comment.body,
       createdAt: comment.createdAt,
       attachmentCount: Math.min(comment.attachments?.length ?? 0, 10)

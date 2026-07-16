@@ -82,7 +82,7 @@ const main = async () => {
   const patronageStyles = sources.get("89-patronage.css") ?? "";
   assert.match(patronageStyles, /\.patronage-proposal-fields/);
   assert.match(patronageStyles, /\.patronage-feed-summary/);
-  assert.match(patronageStyles, /\.paper-detail\.patronage-detail > \.patronage-side/);
+  assert.match(patronageStyles, /\.patronage-side-inline > \.patronage-side/);
   assert.match(patronageStyles, /\.symposium-shell\.night \.patronage-feed-summary/);
   assert.match(documentStyles, /\.symposium-document-editor\.disabled\s*\{[^}]*pointer-events:\s*none/);
   assert.doesNotMatch(documentStyles, /\.symposium-document-editor\.disabled\s*\{[^}]*opacity:/);

@@ -100,6 +100,7 @@ export async function POST(request: Request, context: Context) {
         body: document.body,
         document: document.document,
         kind: target === "proposal" ? "paper" : target === "opportunity" ? "thought" : target,
+        postType: target,
         room: target === "proposal" ? "funding" : target === "opportunity" ? "opportunities" : target === "paper" ? "library" : "amphitheater",
         patronage: target === "proposal" ? document.proposal ?? undefined : undefined,
         opportunity: target === "opportunity" ? document.opportunity ?? undefined : undefined,

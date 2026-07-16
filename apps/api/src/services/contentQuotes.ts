@@ -3,7 +3,8 @@ import type { PoolClient } from "pg";
 import type {
   ContentKindContract,
   ContentQuoteContract,
-  ContentQuoteSourceContract
+  ContentQuoteSourceContract,
+  PostTypeContract
 } from "../../../../packages/contracts/src";
 
 export type QuoteOwnerType = "post" | "comment";
@@ -12,6 +13,7 @@ type PostQuoteSourceRow = {
   id: string;
   revision: number;
   kind: ContentKindContract;
+  postType: PostTypeContract;
   title: string;
   authorHandle: string | null;
   authorName: string;
@@ -25,6 +27,7 @@ type CommentQuoteSourceRow = {
   revision: number;
   postId: string;
   kind: ContentKindContract;
+  postType: PostTypeContract;
   authorHandle: string | null;
   authorName: string;
   body: string;
@@ -56,6 +59,7 @@ export const resolveContentQuote = async (
          post.id,
          post.revision,
          post.kind,
+         post.post_type AS "postType",
          post.title,
          post.author_handle AS "authorHandle",
          post.author_name AS "authorName",
@@ -87,6 +91,7 @@ export const resolveContentQuote = async (
       authorHandle: row.authorHandle ?? undefined,
       title: row.title,
       kind: row.kind,
+      postType: row.postType,
       body: row.body,
       createdAt: new Date(row.createdAt).toISOString(),
       attachmentCount: attachmentCount(row.attachmentCount)
@@ -99,6 +104,7 @@ export const resolveContentQuote = async (
        comment.revision,
        comment.post_id AS "postId",
        post.kind,
+       post.post_type AS "postType",
        comment.author_handle AS "authorHandle",
        comment.author_name AS "authorName",
        comment.body,
@@ -130,6 +136,7 @@ export const resolveContentQuote = async (
     author: row.authorName,
     authorHandle: row.authorHandle ?? undefined,
     kind: row.kind,
+    postType: row.postType,
     body: row.body,
     createdAt: new Date(row.createdAt).toISOString(),
     attachmentCount: attachmentCount(row.attachmentCount)

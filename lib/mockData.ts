@@ -1530,6 +1530,17 @@ const seedPatronage = (index: number): NonNullable<InquiryItem["patronage"]> => 
 
 export const inquiryItems: InquiryItem[] = [...coreInquiryItems, ...generatedInquiryItems].map((item, index) => ({
   ...item,
+  postType: item.room === "office"
+    ? undefined
+    : item.room === "funding"
+      ? "proposal" as const
+      : item.room === "opportunities"
+        ? "opportunity" as const
+        : item.kind === "paper"
+          ? "paper" as const
+          : item.kind === "thought" || item.kind === "note"
+            ? "thought" as const
+            : undefined,
   ...(item.room === "funding" ? {
     kind: "paper" as const,
     status: "Open",

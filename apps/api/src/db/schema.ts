@@ -21,6 +21,7 @@ import type {
   InquiryItemContract,
   OpportunityPostInputContract,
   PatronageProposalInputContract,
+  PostTypeContract,
   ResearchCommunityContract,
   ResearchProfileContract,
   VersionedDocumentContract
@@ -214,6 +215,7 @@ export const posts = pgTable(
   {
     id: text("id").primaryKey(),
     kind: text("kind").$type<ContentKindContract>().notNull(),
+    postType: text("post_type").$type<PostTypeContract>(),
     room: text("room").notNull(),
     communityId: text("community_id").references(() => communities.id, { onDelete: "set null" }),
     title: text("title").notNull(),
@@ -251,9 +253,14 @@ export const posts = pgTable(
   },
   (table) => [
     index("posts_room_idx").on(table.room),
+    index("posts_post_type_created_at_idx").on(table.postType, table.createdAt),
     index("posts_author_idx").on(table.authorHandle),
     index("posts_community_idx").on(table.communityId),
     index("posts_created_at_idx").on(table.createdAt),
+    check(
+      "posts_semantic_destination_check",
+      sql`${table.postType} IS NULL OR (${table.postType} = 'proposal' AND ${table.room} = 'funding') OR (${table.postType} = 'opportunity' AND ${table.room} = 'opportunities') OR (${table.postType} IN ('paper', 'thought') AND ${table.room} NOT IN ('office', 'funding', 'opportunities'))`
+    ),
     index("posts_quote_source_post_idx").on(sql`(${table.quote}->>'sourcePostId')`).where(sql`${table.quote} IS NOT NULL`),
     index("posts_quote_comment_source_idx").on(sql`(${table.quote}->>'sourceId')`).where(sql`${table.quote}->>'sourceType' = 'comment'`)
   ]

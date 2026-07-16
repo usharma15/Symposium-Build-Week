@@ -21,6 +21,7 @@ import {
   researchCommunities
 } from "@/lib/mockData";
 import { cleanHandle } from "@/lib/symposiumCore";
+import { postTypeForItem } from "@/lib/postSemantics";
 import { env } from "../config/env";
 import { getPool, hasDatabase } from "../db/client";
 import { ensureDatabase } from "../db/migrate";
@@ -464,19 +465,20 @@ const seedDatabase = async () => {
       const comments = normalizeComments(item.comments, item.id, itemIndex);
       await client.query(
         `INSERT INTO posts (
-          id, kind, room, title, author_handle, author_name, affiliation, date_label, created_at, status,
+          id, kind, post_type, room, title, author_handle, author_name, affiliation, date_label, created_at, status,
           metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
           tests, forks, saved, saved_by, signaled_by, forked_by, patronage, opportunity, search_text
         )
         VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9,
-          $10, $11, $12, $13, $14, $15, $16, $17, $18,
-          $19, $20, $21, $22, $23, $24, $25, $26, $27, $28
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+          $11, $12, $13, $14, $15, $16, $17, $18, $19,
+          $20, $21, $22, $23, $24, $25, $26, $27, $28, $29
         )
         ON CONFLICT (id) DO NOTHING`,
         [
           item.id,
           item.kind,
+          postTypeForItem(item),
           item.room,
           item.title,
           item.authorHandle ?? author.handle,
@@ -691,6 +693,7 @@ export const rowToItem = (
     id: row.id,
     revision: row.revision,
     kind: row.kind,
+    postType: row.postType ?? postTypeForItem(row) ?? undefined,
     room: row.room,
     title: row.title,
     author: row.authorName,
@@ -767,6 +770,7 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
           id,
           revision,
           kind,
+          post_type AS "postType",
           room,
           title,
           author_handle AS "authorHandle",

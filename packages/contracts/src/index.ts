@@ -22,6 +22,7 @@ export const postRoomSchema = z.enum([
 ]);
 
 export const contentKindSchema = z.enum(["paper", "thought", "draft", "note", "code"]);
+export const postTypeSchema = z.enum(["paper", "thought", "proposal", "opportunity"]);
 export const postActionSchema = z.enum(["signal", "save", "fork", "read"]);
 export const toggleActionSchema = z.enum(["signal", "save", "fork"]);
 export const actionSubjectTypeSchema = z.enum(["post", "comment"]);
@@ -542,6 +543,7 @@ export const contentQuoteSchema = z.object({
   authorHandle: z.string().optional(),
   title: z.string().optional(),
   kind: contentKindSchema.optional(),
+  postType: postTypeSchema.optional(),
   body: z.string().optional(),
   createdAt: z.string().optional(),
   attachmentCount: z.number().int().min(0).max(10).default(0)
@@ -598,6 +600,7 @@ export const inquiryItemSchema = z.object({
   id: z.string(),
   revision: z.number().int().positive().optional(),
   kind: contentKindSchema,
+  postType: postTypeSchema.optional(),
   room: postRoomSchema,
   title: z.string(),
   author: z.string(),
@@ -661,6 +664,7 @@ export const createPostInputSchema = z.object({
   body: z.string().trim().min(1).max(20000),
   document: versionedDocumentSchema.optional(),
   kind: contentKindSchema,
+  postType: postTypeSchema,
   room: postRoomSchema,
   authorHandle: z.string().optional(),
   attachmentIds: z.array(postAttachmentIdSchema).max(100).optional(),
@@ -670,6 +674,22 @@ export const createPostInputSchema = z.object({
   attachments: z.array(postAttachmentInputSchema).max(10).default([])
 }).superRefine((input, context) => {
   validateDocumentAttachmentReferences(input.document, input.attachmentIds, context);
+  const expectedPostType = input.patronage
+    ? "proposal"
+    : input.opportunity
+      ? "opportunity"
+      : input.kind === "paper"
+        ? "paper"
+        : input.kind === "thought" || input.kind === "note"
+          ? "thought"
+          : null;
+  if (expectedPostType !== input.postType) {
+    context.addIssue({
+      code: "custom",
+      path: ["postType"],
+      message: "The public post type must describe the publication itself, independently of its editor grade."
+    });
+  }
   if (input.kind !== "paper" && input.document && !documentFitsReducedEditor(input.document)) {
     context.addIssue({ code: "custom", path: ["document"], message: "Thoughts use the reduced editor formatting set." });
   }
@@ -1107,6 +1127,7 @@ export const bootstrapResponseSchema = z.object({
 
 export type RoomIdContract = z.infer<typeof roomIdSchema>;
 export type ContentKindContract = z.infer<typeof contentKindSchema>;
+export type PostTypeContract = z.infer<typeof postTypeSchema>;
 export type PostActionContract = z.infer<typeof postActionSchema>;
 export type ToggleActionContract = z.infer<typeof toggleActionSchema>;
 export type ActionSubjectTypeContract = z.infer<typeof actionSubjectTypeSchema>;

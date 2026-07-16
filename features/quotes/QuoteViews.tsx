@@ -29,9 +29,14 @@ export type QuotePostDraft = {
 };
 export type QuoteCreationResult = { ok: true } | { ok: false; error: string };
 
-const quotePostKind = (quote: ContentQuote) => quote.kind === "paper" ? "paper" : "thought";
+const quotePostKind = (quote: ContentQuote) => quote.postType ?? (quote.kind === "paper" ? "paper" : "thought");
 const quoteKindLabel = (quote: ContentQuote) => {
-  const postKind = quotePostKind(quote) === "paper" ? "Paper" : "Thought";
+  const postKind = {
+    paper: "Paper",
+    thought: "Thought",
+    proposal: "Proposal",
+    opportunity: "Opportunity"
+  }[quotePostKind(quote)];
   return quote.sourceType === "comment" ? `Comment · ${postKind}` : postKind;
 };
 

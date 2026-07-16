@@ -44,6 +44,7 @@ const postBase = {
   title: "An exact proposal",
   body: "A concrete research plan with methods, milestones, risks, and a public budget.",
   kind: "paper" as const,
+  postType: "proposal" as const,
   room: "funding" as const,
   attachments: []
 };
@@ -81,6 +82,7 @@ const seededProposals = inquiryItems.filter((item) => item.room === "funding");
 assert.ok(seededProposals.length >= 2);
 for (const item of seededProposals) {
   assert.equal(item.kind, "paper");
+  assert.equal(item.postType, "proposal");
   assert.ok(item.patronage, `${item.id} must expose proposal funding metadata`);
   assert.equal(item.patronage?.raisedMinorUnits, item.patronage?.topSupporters.reduce((sum, row) => sum + row.amountMinorUnits, 0));
   assert.ok(item.patronage!.topSupporters.length <= 10);
@@ -148,7 +150,7 @@ assert.match(patronageViews, /CircleDollarSign size=\{17\} \/>Contribute/);
 assert.match(patronageViews, /Private Capital <small>Coming soon<\/small>/);
 assert.match(patronageViews, /No contribution has been created or charged/);
 assert.match(patronageStyles, /\.post-tone-patronage \.patronage-feed-summary/);
-assert.match(patronageStyles, /\.paper-detail\.patronage-detail > \.patronage-side[\s\S]*position: fixed;[\s\S]*right: 24px;/);
+assert.match(patronageStyles, /\.patronage-side-inline > \.patronage-side[\s\S]*position: sticky;[\s\S]*top: 112px;/);
 assert.match(patronageStyles, /@media \(max-width: 1439px\)/);
 assert.doesNotMatch(shell, /PatronageLobbyView|matchesPatronageMode|patronageMode/);
 assert.doesNotMatch(routeModel, /PatronageMode/);

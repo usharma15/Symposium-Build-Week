@@ -127,10 +127,7 @@ export const addComment = async (
     }
     const postResult = await client.query<SnapshotRow>(
       `SELECT
-        id,
-        revision,
-        kind,
-        room,
+        id, revision, kind, post_type AS "postType", room,
         title,
         author_handle AS "authorHandle",
         author_name AS "authorName",
@@ -155,7 +152,7 @@ export const addComment = async (
         saved_by AS "savedBy",
         signaled_by AS "signaledBy",
         forked_by AS "forkedBy",
-        quote, patronage
+        quote, patronage, opportunity
        FROM posts
        WHERE id = $1
        FOR UPDATE`,
@@ -355,12 +352,12 @@ export const updateComment = async (
     }
     const postResult = await client.query<SnapshotRow>(
       `SELECT
-        id, revision, kind, room, title, author_handle AS "authorHandle", author_name AS "authorName",
+        id, revision, kind, post_type AS "postType", room, title, author_handle AS "authorHandle", author_name AS "authorName",
         affiliation, date_label AS "dateLabel", created_at AS "createdAt", edited_at AS "editedAt",
         deleted_at AS "deletedAt",
         status, metrics, gathering_reason AS "gatheringReason", excerpt, body, content_document AS "document", tags, signals,
         claims, objections, evidence, tests, forks, saved, saved_by AS "savedBy",
-        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, patronage
+        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, patronage, opportunity
        FROM posts
        WHERE id = $1
        FOR UPDATE`,
@@ -542,12 +539,12 @@ export const deleteComment = async (
     }
     const postResult = await client.query<SnapshotRow>(
       `SELECT
-        id, revision, kind, room, title, author_handle AS "authorHandle", author_name AS "authorName",
+        id, revision, kind, post_type AS "postType", room, title, author_handle AS "authorHandle", author_name AS "authorName",
         affiliation, date_label AS "dateLabel", created_at AS "createdAt", edited_at AS "editedAt",
         deleted_at AS "deletedAt",
         status, metrics, gathering_reason AS "gatheringReason", excerpt, body, content_document AS "document", tags, signals,
         claims, objections, evidence, tests, forks, saved, saved_by AS "savedBy",
-        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, patronage
+        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, patronage, opportunity
        FROM posts
        WHERE id = $1
        FOR UPDATE`,
@@ -745,12 +742,12 @@ export const applyCommentAction = async (
     }
     const postResult = await client.query<SnapshotRow>(
       `SELECT
-        id, revision, kind, room, title, author_handle AS "authorHandle", author_name AS "authorName",
+        id, revision, kind, post_type AS "postType", room, title, author_handle AS "authorHandle", author_name AS "authorName",
         affiliation, date_label AS "dateLabel", created_at AS "createdAt", edited_at AS "editedAt",
         deleted_at AS "deletedAt",
         status, metrics, gathering_reason AS "gatheringReason", excerpt, body, content_document AS "document", tags, signals,
         claims, objections, evidence, tests, forks, saved, saved_by AS "savedBy",
-        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, patronage
+        signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, patronage, opportunity
        FROM posts
        WHERE id = $1
        FOR UPDATE`,

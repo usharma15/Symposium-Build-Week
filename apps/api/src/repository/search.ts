@@ -52,11 +52,11 @@ export const search = async (rawInput: unknown) => {
   const [postsResult, profilesResult, communitiesResult] = await Promise.all([
     getPool().query<SnapshotRow>(
       `SELECT
-        id, revision, kind, room, title, author_handle AS "authorHandle", author_name AS "authorName",
+        id, revision, kind, post_type AS "postType", room, title, author_handle AS "authorHandle", author_name AS "authorName",
         affiliation, date_label AS "dateLabel", status, metrics, gathering_reason AS "gatheringReason",
         created_at AS "createdAt", edited_at AS "editedAt", deleted_at AS "deletedAt",
         excerpt, body, tags, signals, claims, objections, evidence, tests, forks, saved,
-        saved_by AS "savedBy", signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, patronage
+        saved_by AS "savedBy", signaled_by AS "signaledBy", forked_by AS "forkedBy", quote, patronage, opportunity
        FROM posts
        WHERE search_text ILIKE $1
          AND deleted_at IS NULL

@@ -62,6 +62,7 @@ export const publishNote = async (rawInput: unknown, actor: Actor, mutation?: Mu
         title: input.title,
         body: input.body,
         kind: input.publicationTarget ?? "paper",
+        postType: input.publicationTarget ?? "paper",
         room: input.publicationTarget === "thought" ? "amphitheater" : "library",
         authorHandle: publisher
       },
@@ -111,6 +112,7 @@ export const publishNote = async (rawInput: unknown, actor: Actor, mutation?: Mu
           body: revision.body,
           document: publishedContent.document,
           kind: target === "proposal" ? "paper" : target === "opportunity" ? "thought" : target,
+          postType: target,
           room: target === "proposal" ? "funding" : target === "opportunity" ? "opportunities" : target === "paper" ? "library" : "amphitheater",
           patronage: target === "proposal" ? revision.proposal ?? undefined : undefined,
           opportunity: target === "opportunity" ? revision.opportunity ?? undefined : undefined,

@@ -82,6 +82,7 @@ import { useQualifiedView } from "@/features/live-sync/useQualifiedView";
 import { CanonicalLink } from "@/features/navigation/CanonicalLink";
 import { canonicalRouteHref } from "@/features/navigation/canonicalRoute";
 import { postToneClassName, postToneForItem } from "@/lib/postTone";
+import { itemHasPostType } from "@/lib/postSemantics";
 import {
   attachmentScribbleSource,
   postScribbleSource,
@@ -341,6 +342,8 @@ export function PostEditModal({
   onResolveQuoteLink: QuoteLinkResolver;
   profiles: Record<string, ResearchProfile>;
 }) {
+  const isProposal = itemHasPostType(item, "proposal");
+  const isOpportunity = itemHasPostType(item, "opportunity");
   const [title, setTitle] = useState(item.title);
   const [body, setBody] = useState(item.body);
   const [documentValue, setDocumentValue] = useState<VersionedDocumentContract>(() => documentForContent(item.document, item.body));
@@ -373,7 +376,7 @@ export function PostEditModal({
         <div className="composer-modal-head">
           <div>
             <span>Edit post</span>
-            <strong>{item.patronage ? "Patronage Proposal" : item.opportunity ? "Opportunity" : kindLabels[item.kind]}</strong>
+            <strong>{isProposal ? "Patronage Proposal" : isOpportunity ? "Opportunity" : kindLabels[item.kind]}</strong>
           </div>
           <button type="button" title="Close" onClick={onClose}>
             <X size={17} />
@@ -406,7 +409,7 @@ export function PostEditModal({
           attachments={attachments}
           profiles={profiles}
           disabled={busy}
-          placeholder={item.patronage ? "Develop the proposal here" : `Write your ${item.kind === "paper" ? "paper" : "thought"} here`}
+          placeholder={isProposal ? "Develop the proposal here" : isOpportunity ? "Develop the opportunity here" : `Write your ${item.kind === "paper" ? "paper" : "thought"} here`}
           onChange={(document, plainText) => { setDocumentValue(document); setBody(plainText); }}
           onAttachmentsChange={setAttachments}
           onBusyChange={setBusy}
@@ -873,8 +876,8 @@ export function DetailView({
   onReviewOpportunity: (item: InquiryItem) => void;
 }) {
   const isPaper = item.kind === "paper";
-  const isProposal = Boolean(item.patronage);
-  const isOpportunity = Boolean(item.opportunity);
+  const isProposal = itemHasPostType(item, "proposal");
+  const isOpportunity = itemHasPostType(item, "opportunity");
   const tone = postToneForItem(item);
   const postDeleted = isDeletedPost(item);
   const detailRef = useRef<HTMLElement | null>(null);
@@ -987,13 +990,11 @@ export function DetailView({
           }}
           actorHandle={actorHandle}
         />
-        {isProposal ? (
-          <div className="patronage-side-inline">
-            <PatronageProposalRail item={item} />
-          </div>
+        {isProposal && item.patronage ? (
+          <div className="patronage-side-inline"><PatronageProposalRail item={item} /></div>
+        ) : isOpportunity && item.opportunity ? (
+          <div className="opportunity-side-inline"><OpportunityRail item={item} actorHandle={actorHandle} onApply={onApplyOpportunity} onReview={onReviewOpportunity} /></div>
         ) : null}
-        {isOpportunity ? <div className="opportunity-side-inline"><OpportunityRail item={item} actorHandle={actorHandle} onApply={onApplyOpportunity} onReview={onReviewOpportunity} /></div> : null}
-
         <section className="comments-section" id={commentsSectionId}>
           <h2>Discussion</h2>
           {postDeleted ? null : (
@@ -1031,11 +1032,7 @@ export function DetailView({
         </section>
       </section>
 
-      {isProposal ? (
-        <PatronageProposalRail item={item} />
-      ) : isOpportunity ? (
-        <OpportunityRail item={item} actorHandle={actorHandle} onApply={onApplyOpportunity} onReview={onReviewOpportunity} />
-      ) : isPaper ? (
+      {!isProposal && !isOpportunity && isPaper ? (
         <aside className="paper-side">
           <section>
             <h2>Paper</h2>

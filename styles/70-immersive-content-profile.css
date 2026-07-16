@@ -32,6 +32,16 @@
   background: color-mix(in srgb, #d9f0f5 62%, var(--panel-strong));
 }
 
+.quote-card-proposal {
+  border-color: color-mix(in srgb, #4e7130 34%, var(--line));
+  background: color-mix(in srgb, #e4eed2 66%, var(--panel-strong));
+}
+
+.quote-card-opportunity {
+  border-color: color-mix(in srgb, #78343d 32%, var(--line));
+  background: color-mix(in srgb, #ead3d1 66%, var(--panel-strong));
+}
+
 button.quote-card {
   cursor: pointer;
 }
@@ -50,6 +60,16 @@ button.quote-card-paper:hover {
 button.quote-card-thought:hover {
   border-color: color-mix(in srgb, #227986 48%, var(--line));
   background: color-mix(in srgb, #d9f0f5 74%, var(--panel-strong));
+}
+
+button.quote-card-proposal:hover {
+  border-color: color-mix(in srgb, #4e7130 54%, var(--line));
+  background: color-mix(in srgb, #e4eed2 78%, var(--panel-strong));
+}
+
+button.quote-card-opportunity:hover {
+  border-color: color-mix(in srgb, #78343d 52%, var(--line));
+  background: color-mix(in srgb, #ead3d1 78%, var(--panel-strong));
 }
 
 .quote-card-head,
@@ -111,6 +131,16 @@ button.quote-card-thought:hover {
 .quote-kind-thought {
   color: #176f7b;
   background: color-mix(in srgb, #72c9d5 16%, transparent);
+}
+
+.quote-kind-proposal {
+  color: #4e7130;
+  background: color-mix(in srgb, #b7d487 20%, transparent);
+}
+
+.quote-kind-opportunity {
+  color: #78343d;
+  background: color-mix(in srgb, #d99aa3 20%, transparent);
 }
 
 .quote-card h3,

@@ -1629,6 +1629,37 @@ const migrations: Migration[] = [
           ) ELSE opportunity END
       WHERE room = 'opportunities' AND opportunity IS NULL;
     `
+  },
+  {
+    id: "0027_semantic_post_types",
+    sql: `
+      ALTER TABLE posts ADD COLUMN IF NOT EXISTS post_type TEXT;
+
+      UPDATE posts
+      SET post_type = CASE
+        WHEN room = 'office' THEN NULL
+        WHEN patronage IS NOT NULL OR room = 'funding' THEN 'proposal'
+        WHEN opportunity IS NOT NULL OR room = 'opportunities' THEN 'opportunity'
+        WHEN kind = 'paper' THEN 'paper'
+        WHEN kind IN ('thought', 'note') THEN 'thought'
+        ELSE NULL
+      END
+      WHERE post_type IS NULL OR room = 'office';
+
+      ALTER TABLE posts DROP CONSTRAINT IF EXISTS posts_post_type_check;
+      ALTER TABLE posts ADD CONSTRAINT posts_post_type_check
+        CHECK (post_type IN ('paper', 'thought', 'proposal', 'opportunity'));
+      ALTER TABLE posts DROP CONSTRAINT IF EXISTS posts_semantic_destination_check;
+      ALTER TABLE posts ADD CONSTRAINT posts_semantic_destination_check CHECK (
+        post_type IS NULL
+        OR (post_type = 'proposal' AND room = 'funding')
+        OR (post_type = 'opportunity' AND room = 'opportunities')
+        OR (post_type IN ('paper', 'thought') AND room NOT IN ('office', 'funding', 'opportunities'))
+      );
+
+      CREATE INDEX IF NOT EXISTS posts_post_type_created_at_idx
+        ON posts (post_type, created_at DESC);
+    `
   }
 ];
 

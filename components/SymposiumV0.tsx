@@ -75,6 +75,8 @@ import {
 } from "@/features/live-sync/followMutationCoordinator";
 import { useCrossTabItemTransport } from "@/features/live-sync/useCrossTabItemTransport";
 import { useLiveEventStream } from "@/features/live-sync/useLiveEventStream";
+import { useCoalescedRefresh } from "@/features/live-sync/useCoalescedRefresh";
+import { recordPassiveView } from "@/features/live-sync/recordPassiveView";
 import {
   createClientMutationId,
   createRetryMutationRegistry,
@@ -140,6 +142,8 @@ import {
 } from "@/features/quotes/QuoteViews";
 import { resolveQuoteLink, type QuoteLinkResolver } from "@/features/quotes/quoteLinks";
 import { invalidateQuotedSource, resolveLocalContentQuote } from "@/lib/contentQuotes";
+import { preservePostSemanticProjection } from "@/lib/postSemantics";
+import { selectVisibleFeedItems } from "@/features/feeds/feedVisibility";
 import {
   ProfileSettingsModal,
   ProfileView,
@@ -437,6 +441,7 @@ function SymposiumExperience({
   const currentProfileRef = useRef(currentProfile);
   const selectedProfileNameRef = useRef(selectedProfileName);
   const selectedItemIdRef = useRef(selectedItemId);
+  const selectedItemFallbackRef = useRef<InquiryItem | null>(null);
   const selectedCommentIdRef = useRef(selectedCommentId);
   const commentSegmentStacksRef = useRef<CommentSegmentStacks>({});
   const visibleCommentSegmentStacksRef = useRef<CommentSegmentStacks>({});
@@ -460,7 +465,6 @@ function SymposiumExperience({
   const profileActivityRequestRef = useRef<Record<string, number>>({});
   const retryMutationRegistryRef = useRef(createRetryMutationRegistry());
   const pendingActivityRecencyRef = useRef<Record<string, number>>({});
-  const liveRefreshTimerRef = useRef<number | null>(null);
   const itemMutationCoordinatorRef = useRef(createItemMutationCoordinator<InquiryItem>());
   const profileMutationCoordinatorRef = useRef(createItemMutationCoordinator<ProfileSyncEntity>());
   const followMutationCoordinatorRef = useRef(createFollowMutationCoordinator());
@@ -479,7 +483,10 @@ function SymposiumExperience({
   ) =>
     preservePublishedPosition(
       protectItemFromStaleActionState(
-        itemMutationCoordinatorRef.current.protectIncomingItem(incoming, current),
+        itemMutationCoordinatorRef.current.protectIncomingItem(
+          preservePostSemanticProjection(incoming, current),
+          current
+        ),
         current,
         actorHandle
       ),
@@ -494,7 +501,11 @@ function SymposiumExperience({
         ? themedCommunityRenders.selected
         : themedRoomRenders[activeRoom];
   const themePreloadRenders = useMemo(() => getThemePreloadRenders(theme), [theme]);
-  const selectedItem = items.find((item) => item.id === selectedItemId) ?? null;
+  const selectedItemCandidate = items.find((item) => item.id === selectedItemId) ?? null;
+  if (selectedItemCandidate) selectedItemFallbackRef.current = selectedItemCandidate;
+  if (!selectedItemId) selectedItemFallbackRef.current = null;
+  const selectedItem = selectedItemCandidate
+    ?? (selectedItemFallbackRef.current?.id === selectedItemId ? selectedItemFallbackRef.current : null);
   const applicationReviewItem = items.find((item) => item.id === applicationReviewPostId && item.opportunity) ?? null;
   const { beginApplication: beginOpportunityApplication, applicationComposer: opportunityApplicationComposer } = useOpportunityApplicationComposer(currentProfile.handle, () => setSyncStatus("Application submitted"));
   const attachmentPreviewBaseItem = attachmentPreview
@@ -644,36 +655,15 @@ function SymposiumExperience({
     [...nextItems].sort((a, b) => getPublishedRecency(b) - getPublishedRecency(a));
 
   const visibleItems = useMemo(() => {
-    const roomFiltered = activeItems
-      .filter((item) => {
-        if (activeRoom === "hall") return item.kind === "paper" || item.kind === "thought";
-        if (activeRoom === "office") {
-          if (officeMode === "saved") return isSavedBy(item, currentProfile.handle, profile.handle);
-          if (officeMode === "notes") {
-            return itemAuthoredByProfile(item, currentProfile) || item.room === "office";
-          }
-          return false;
-        }
-        if (activeRoom === "symposium") return item.kind === "paper" || item.kind === "thought";
-        if (activeRoom === "library") return item.kind === "paper";
-        if (activeRoom === "amphitheater") return item.kind === "thought" || item.kind === "note";
-        if (activeRoom === "funding") return item.room === "funding" && Boolean(item.patronage);
-        if (activeRoom === "communities") return item.room === "communities";
-        if (activeRoom === "opportunities") return item.room === "opportunities";
-        return true;
-      })
-      .filter((item) => {
-        if (feedScope === "following") {
-          return (
-            itemAuthoredByProfile(item, currentProfile) ||
-            Boolean(item.authorHandle && followingHandles.includes(item.authorHandle)) ||
-            isSavedBy(item, currentProfile.handle, profile.handle)
-          );
-        }
-        return true;
-      });
-
-    return sortByPublishedRecency(roomFiltered);
+    return sortByPublishedRecency(selectVisibleFeedItems({
+      items: activeItems,
+      activeRoom,
+      officeMode,
+      feedScope,
+      currentProfile,
+      fallbackProfile: profile,
+      followingHandles
+    }));
   }, [activeItems, activeRoom, currentProfile, feedScope, followingHandles, officeMode]);
 
   const persistLocalSnapshot = (
@@ -955,7 +945,12 @@ function SymposiumExperience({
       preferredHandle
     });
 
-    const normalizedItems = sortByPublishedRecency(normalizeClientSeedTimes(data.items));
+    const currentById = new Map(itemsRef.current.map((item) => [item.id, item]));
+    const normalizedItems = sortByPublishedRecency(
+      normalizeClientSeedTimes(data.items).map((item) =>
+        preservePostSemanticProjection(item, currentById.get(item.id))
+      )
+    );
     for (const incoming of normalizedItems) {
       if (!itemMutationCoordinatorRef.current.changedSince(mutationSnapshot, incoming.id)) {
         settleFreshItemActionState(incoming, nextProfile.handle);
@@ -1015,12 +1010,15 @@ function SymposiumExperience({
     const currentItems = itemsRef.current;
     const existingIndex = currentItems.findIndex((item) => item.id === incoming.id);
     const currentItem = existingIndex >= 0 ? currentItems[existingIndex] : undefined;
-    const canonicalIncomingIsNewer = (compareEntityRevisions(incoming, currentItem) ?? 0) > 0;
+    const semanticIncoming = preservePostSemanticProjection(incoming, currentItem);
+    const revisionComparison = compareEntityRevisions(semanticIncoming, currentItem);
+    const canonicalIncomingIsNewer = (revisionComparison ?? 0) > 0;
+    if (currentItem && revisionComparison === 0) return false;
     if (currentItem && itemMutationCoordinatorRef.current.isPending(incoming.id) && !canonicalIncomingIsNewer) {
       scheduleLiveRefresh();
       return false;
     }
-    const crossTabProtected = itemMutationCoordinatorRef.current.protectIncomingItem(incoming, currentItem);
+    const crossTabProtected = itemMutationCoordinatorRef.current.protectIncomingItem(semanticIncoming, currentItem);
     const protectedIncoming = protectItemFromStaleActionState(
       crossTabProtected,
       currentItem,
@@ -1113,23 +1111,16 @@ function SymposiumExperience({
     }
   };
 
-  const scheduleLiveRefresh = () => {
-    if (liveRefreshTimerRef.current) return;
-
-    liveRefreshTimerRef.current = window.setTimeout(() => {
-      liveRefreshTimerRef.current = null;
-      const handle = currentProfileRef.current.handle;
-      refreshData(handle).catch(() => undefined);
-      refreshFollowing(handle).catch(() => undefined);
-      const selectedKey = selectedProfileNameRef.current;
-      const selected = selectedKey
-        ? profilesRef.current[selectedKey] ??
-          Object.values(profilesRef.current).find((person) => person.name === selectedKey) ??
-          getProfileForName(selectedKey)
-        : null;
-      if (selected?.handle) refreshProfileFollows(selected.handle).catch(() => undefined);
-    }, 650);
-  };
+  const scheduleLiveRefresh = useCoalescedRefresh(() => {
+    const handle = currentProfileRef.current.handle;
+    const selectedKey = selectedProfileNameRef.current;
+    const selected = selectedKey
+      ? profilesRef.current[selectedKey]
+        ?? Object.values(profilesRef.current).find((person) => person.name === selectedKey)
+        ?? getProfileForName(selectedKey)
+      : null;
+    return [refreshData(handle), refreshFollowing(handle), ...(selected?.handle ? [refreshProfileFollows(selected.handle)] : [])];
+  });
 
   const invalidateLiveQuotedSource = (source: QuoteSelection) => {
     const current = itemsRef.current;
@@ -1193,6 +1184,10 @@ function SymposiumExperience({
 
     if (isLiveInquiryItem(payload.item)) {
       const action = payload.action;
+      if (action === "read") {
+        scheduleLiveRefresh();
+        return;
+      }
       const canonicalActivity = isCanonicalActionActivity(payload.activity) ? payload.activity : null;
       if (canonicalActivity && !acceptCanonicalActivity(canonicalActivity)) return;
       if (
@@ -1203,7 +1198,7 @@ function SymposiumExperience({
       ) {
         const eventTimestamp = event.createdAt ? Date.parse(event.createdAt) : Number.NaN;
         const profileActivityTimestamp = Number.isFinite(eventTimestamp) ? eventTimestamp : Date.now();
-        if (typeof payload.commentId === "string" && action !== "read") {
+        if (typeof payload.commentId === "string") {
           const key = `${payload.item.id}:${payload.commentId}:${action}:${currentProfileRef.current.handle}`;
           const desired = protectedDesiredActionState(key);
           const eventComment = findCommentById(payload.item.comments, payload.commentId);
@@ -1307,16 +1302,6 @@ function SymposiumExperience({
     onMalformedEvent: scheduleLiveRefresh,
     onReconnecting: markLiveUpdatesReconnecting
   });
-
-  useEffect(
-    () => () => {
-      if (liveRefreshTimerRef.current) {
-        window.clearTimeout(liveRefreshTimerRef.current);
-        liveRefreshTimerRef.current = null;
-      }
-    },
-    []
-  );
 
   useEffect(() => {
     if (shouldPlayEntrance === null) return;
@@ -2064,6 +2049,7 @@ function SymposiumExperience({
       body,
       document,
       kind: contentKind,
+      postType: kind,
       room: routedRoom,
       patronage,
       opportunity,
@@ -2508,6 +2494,12 @@ function SymposiumExperience({
     if (isViewAction && !claimClientView("post", itemId)) return;
 
     const actorHandle = currentProfile.handle;
+    if (isViewAction) {
+      const synced = await recordPassiveView("post", itemId, null, actorHandle, options);
+      if (synced) scheduleLiveRefresh();
+      else releaseClientViewClaim("post", itemId);
+      return;
+    }
     const actionKey = `${itemId}:${action}:${actorHandle}`;
     const version = (actionVersionsRef.current[actionKey] ?? 0) + 1;
     actionVersionsRef.current[actionKey] = version;
@@ -2652,6 +2644,12 @@ function SymposiumExperience({
     if (isViewAction && !claimClientView("comment", commentId)) return;
 
     const actorHandle = currentProfile.handle;
+    if (isViewAction) {
+      const synced = await recordPassiveView("comment", itemId, commentId, actorHandle, options);
+      if (synced) scheduleLiveRefresh();
+      else releaseClientViewClaim("comment", commentId);
+      return;
+    }
     const actionKey = `${itemId}:${commentId}:${action}:${actorHandle}`;
     const version = (actionVersionsRef.current[actionKey] ?? 0) + 1;
     actionVersionsRef.current[actionKey] = version;

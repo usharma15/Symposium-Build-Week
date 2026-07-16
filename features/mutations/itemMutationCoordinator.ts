@@ -19,6 +19,8 @@ import {
   type RevisionedEntity
 } from "@/features/live-sync/entityRevision";
 
+const sameValue = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
+
 export const createItemMutationCoordinator = <T extends { id: string } & RevisionedEntity>() => {
   const guard = createItemMutationGuard();
   const crossTab = createCrossTabItemSync<T>();
@@ -66,7 +68,13 @@ export const createItemMutationCoordinator = <T extends { id: string } & Revisio
         return incoming && (compareEntityRevisions(incoming, current) ?? 0) > 0 ? incoming : item;
       }
     );
-    return crossTab.protectIncomingItems(mutationSafe, currentItems);
+    return crossTab.protectIncomingItems(mutationSafe, currentItems).map((item) => {
+      const current = currentById.get(item.id);
+      if (!current) return item;
+      const comparison = compareEntityRevisions(item, current);
+      if (comparison === 0 || (comparison === null && sameValue(item, current))) return current;
+      return item;
+    });
   };
 
   return {

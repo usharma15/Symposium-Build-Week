@@ -115,6 +115,7 @@ export function OpportunityRail({ item, actorHandle, onApply, onReview }: {
   onReview: (item: InquiryItem) => void;
 }) {
   const opportunity = item.opportunity;
+  const hasOpportunity = Boolean(opportunity);
   const owner = item.authorHandle === actorHandle;
   const [ownApplication, setOwnApplication] = useState<OpportunityApplicationContract | null>(null);
   const [applicationCount, setApplicationCount] = useState(item.opportunity?.applicationCount ?? 0);
@@ -129,7 +130,7 @@ export function OpportunityRail({ item, actorHandle, onApply, onReview }: {
         setOwnApplication(data.application);
       }
     } catch { /* authorization and disconnected preview are represented by the action state */ }
-  }, [actorHandle, item.id, opportunity, owner]);
+  }, [actorHandle, hasOpportunity, item.id, owner]);
   useEffect(() => { void refresh(); }, [refresh]);
   useOpportunityChange(item.id, refresh);
   if (!opportunity) return null;

@@ -34,6 +34,7 @@ const parsed = createPostInputSchema.parse({
   title: "Attachment contract",
   body: "The post mutation carries stable attachment identities only.",
   kind: "thought",
+  postType: "thought",
   room: "amphitheater",
   attachmentIds: [attachmentId]
 });
@@ -99,6 +100,7 @@ assert.throws(
       title: "Mismatched references",
       body: "Legacy and canonical references must agree during the rollout window.",
       kind: "thought",
+      postType: "thought",
       room: "amphitheater",
       attachmentIds: [attachmentId],
       attachments: [

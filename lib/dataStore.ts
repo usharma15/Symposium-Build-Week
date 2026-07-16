@@ -6,6 +6,7 @@ import type {
   ContentQuoteContract,
   OpportunityPostInputContract,
   PatronageProposalInputContract,
+  PostTypeContract,
   ToggleActionContract,
   VersionedDocumentContract
 } from "@/packages/contracts/src";
@@ -51,6 +52,7 @@ import {
   projectCanonicalActionLedger
 } from "@/lib/profileActivity";
 import { invalidateQuotedSource } from "@/lib/contentQuotes";
+import { postTypeForItem } from "@/lib/postSemantics";
 
 type AppData = {
   profiles: Record<string, ResearchProfile>;
@@ -77,6 +79,7 @@ export type CreatePostInput = {
   body: string;
   document?: VersionedDocumentContract;
   kind: ContentKind;
+  postType: PostTypeContract;
   room: Exclude<RoomId, "hall">;
   attachments?: InquiryAttachment[];
   quote?: ContentQuoteContract;
@@ -302,6 +305,7 @@ const normalizeItem = (item: InquiryItem): InquiryItem => {
   const seedItem = seedItemById.get(item.id);
   return {
     ...item,
+    postType: postTypeForItem(item) ?? undefined,
     kind: item.room === "funding" ? "paper" : item.room === "opportunities" ? "thought" : item.kind,
     patronage: item.patronage ?? (item.room === "funding" ? seedItem?.patronage : undefined),
     opportunity: item.opportunity ?? (item.room === "opportunities" ? seedItem?.opportunity : undefined),
@@ -481,6 +485,7 @@ const ensureSchema = async () => {
         CREATE TABLE IF NOT EXISTS items (
           id TEXT PRIMARY KEY,
           kind TEXT NOT NULL,
+          post_type TEXT,
           room TEXT NOT NULL,
           title TEXT NOT NULL,
           author_handle TEXT NOT NULL,
@@ -577,6 +582,25 @@ const ensureSchema = async () => {
         ALTER TABLE items ADD COLUMN IF NOT EXISTS quote JSONB;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS patronage JSONB;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS opportunity JSONB;
+        ALTER TABLE items ADD COLUMN IF NOT EXISTS post_type TEXT;
+        UPDATE items SET post_type = CASE
+          WHEN room = 'office' THEN NULL
+          WHEN patronage IS NOT NULL OR room = 'funding' THEN 'proposal'
+          WHEN opportunity IS NOT NULL OR room = 'opportunities' THEN 'opportunity'
+          WHEN kind = 'paper' THEN 'paper'
+          WHEN kind IN ('thought', 'note') THEN 'thought'
+          ELSE NULL
+        END WHERE post_type IS NULL OR room = 'office';
+        ALTER TABLE items DROP CONSTRAINT IF EXISTS items_post_type_check;
+        ALTER TABLE items ADD CONSTRAINT items_post_type_check
+          CHECK (post_type IN ('paper', 'thought', 'proposal', 'opportunity'));
+        ALTER TABLE items DROP CONSTRAINT IF EXISTS items_semantic_destination_check;
+        ALTER TABLE items ADD CONSTRAINT items_semantic_destination_check CHECK (
+          post_type IS NULL
+          OR (post_type = 'proposal' AND room = 'funding')
+          OR (post_type = 'opportunity' AND room = 'opportunities')
+          OR (post_type IN ('paper', 'thought') AND room NOT IN ('office', 'funding', 'opportunities'))
+        );
         ALTER TABLE items ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
         ALTER TABLE items ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
         ALTER TABLE comments ADD COLUMN IF NOT EXISTS metrics JSONB NOT NULL DEFAULT '{"signal":"0","forks":"0","saves":"0","reads":"0"}'::jsonb;
@@ -598,6 +622,8 @@ const ensureSchema = async () => {
           ON comments ((quote->>'sourcePostId')) WHERE quote IS NOT NULL;
         CREATE INDEX IF NOT EXISTS items_quote_comment_source_idx
           ON items ((quote->>'sourceId')) WHERE quote->>'sourceType' = 'comment';
+        CREATE INDEX IF NOT EXISTS items_post_type_created_at_idx
+          ON items (post_type, created_at DESC);
         CREATE INDEX IF NOT EXISTS comments_quote_comment_source_idx
           ON comments ((quote->>'sourceId')) WHERE quote->>'sourceType' = 'comment';
       `);
@@ -661,19 +687,20 @@ const seedPostgres = async () => {
   for (const item of seed.items) {
     await db.query(
       `INSERT INTO items (
-        id, kind, room, title, author_handle, author_name, affiliation, date_label, status,
+        id, kind, post_type, room, title, author_handle, author_name, affiliation, date_label, status,
         metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
         tests, forks, saved, saved_by, signaled_by, forked_by, quote, patronage, opportunity, created_at
       )
       VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9,
-        $10, $11, $12, $13, $14, $15, $16, $17, $18,
-        $19, $20, $21, $22, $23, $24, $25, $26, $27, $28
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+        $11, $12, $13, $14, $15, $16, $17, $18, $19,
+        $20, $21, $22, $23, $24, $25, $26, $27, $28, $29
       )
       ON CONFLICT (id) DO NOTHING`,
       [
         item.id,
         item.kind,
+        item.postType,
         item.room,
         item.title,
         item.authorHandle ?? handleFromName(item.author),
@@ -867,6 +894,7 @@ const loadPostgres = async (): Promise<AppData> => {
     db.query<{
       id: string;
       kind: ContentKind;
+      post_type: PostTypeContract | null;
       room: Exclude<RoomId, "hall">;
       title: string;
       author_handle: string;
@@ -927,6 +955,7 @@ const loadPostgres = async (): Promise<AppData> => {
   const items = itemResult.rows.map((item) => ({
     id: item.id,
     kind: item.kind,
+    postType: item.post_type ?? undefined,
     room: item.room,
     title: item.title,
     author: item.author_name,
@@ -1065,6 +1094,7 @@ export const createPost = async (input: CreatePostInput, authorHandle: string) =
     id: newId("post"),
     revision: 1,
     kind: input.kind,
+    postType: input.postType,
     room: input.room,
     title: input.title.trim(),
     author: author.name,
@@ -1110,18 +1140,19 @@ export const createPost = async (input: CreatePostInput, authorHandle: string) =
     await ensureSchema();
     await getPool().query(
       `INSERT INTO items (
-        id, kind, room, title, author_handle, author_name, affiliation, date_label, created_at, status,
+        id, kind, post_type, room, title, author_handle, author_name, affiliation, date_label, created_at, status,
         metrics, gathering_reason, excerpt, body, tags, signals, claims, objections, evidence,
         tests, forks, attachments, saved, saved_by, signaled_by, forked_by, quote, patronage, opportunity
       )
       VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9,
-        $10, $11, $12, $13, $14, $15, $16, $17, $18,
-        $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+        $11, $12, $13, $14, $15, $16, $17, $18, $19,
+        $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30
       )`,
       [
         item.id,
         item.kind,
+        item.postType,
         item.room,
         item.title,
         item.authorHandle,
