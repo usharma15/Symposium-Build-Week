@@ -118,9 +118,10 @@ export const createCommunityController = (input: {
     }
   };
 
-  const updateSettings = async (settings: Pick<UpdateCommunitySettingsInputContract, "name" | "summary" | "guidelines">) => {
+  const updateSettings = async (settings: Pick<UpdateCommunitySettingsInputContract, "name" | "summary" | "guidelines" | "visibility">) => {
     const community = input.selectedCommunity;
     if (!community) return { ok: false, error: "Community not found." };
+    const visibilityChanged = settings.visibility !== undefined && settings.visibility !== community.visibility;
     const payload = { communityId: community.id, ...settings, expectedRevision: community.revision ?? 1 };
     const mutation = input.retryMutationKey("community-settings", JSON.stringify(payload));
     input.setStatus("Saving community settings");
@@ -131,6 +132,7 @@ export const createCommunityController = (input: {
       input.clearRetryMutationKey(mutation.fingerprintKey);
       mergeCommunity(data.community);
       window.setTimeout(input.persist, 0);
+      if (visibilityChanged) input.refresh();
       input.setStatus("Community updated");
       return { ok: true };
     } catch (error) {

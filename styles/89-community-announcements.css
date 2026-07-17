@@ -20,14 +20,22 @@
 }
 
 .community-announcement-card strong {
+  display: -webkit-box;
+  overflow: hidden;
   font-size: 0.76rem;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
 }
 
 .community-announcement-card p {
+  display: -webkit-box;
+  overflow: hidden;
   margin: 0;
   color: var(--muted);
   font-size: 0.69rem;
   line-height: 1.4;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
 }
 
 .community-announcement-viewer {
@@ -36,11 +44,19 @@
 
 .community-announcement-author,
 .community-announcement-viewer > footer,
-.community-announcement-manager-actions {
+.community-announcement-header-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+
+.community-announcement-viewer-header > div:first-child {
+  min-width: 0;
+}
+
+.community-announcement-header-actions {
+  flex: 0 0 auto;
 }
 
 .community-announcement-author {
@@ -82,7 +98,7 @@
   padding-top: 12px;
 }
 
-.community-announcement-manager-actions button {
+.community-announcement-header-actions button {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -96,9 +112,46 @@
   font-weight: 850;
 }
 
-.community-announcement-manager-actions .danger {
+.community-announcement-header-actions .danger {
   border-color: color-mix(in srgb, #a43b35 48%, var(--line));
   color: #8f302b;
+}
+
+.community-announcement-header-actions .community-announcement-close {
+  width: 34px;
+  padding: 0;
+}
+
+.community-call-viewer > header strong {
+  overflow-wrap: anywhere;
+}
+
+.community-call-viewer dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.community-call-viewer dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 8px;
+}
+
+.community-call-viewer dt {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.community-call-viewer dd {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 850;
+  text-align: right;
 }
 
 .community-announcement-retention-note {

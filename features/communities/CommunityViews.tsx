@@ -26,7 +26,8 @@ import type {
   CommunityCallContract,
   CreateCommunityAnnouncementInputContract,
   CreateCommunityInputContract,
-  CreateCommunityCallInputContract
+  CreateCommunityCallInputContract,
+  UpdateCommunitySettingsInputContract
 } from "@/packages/contracts/src";
 import { communitySummaryMaxLength } from "@/packages/contracts/src";
 import type { InquiryItem, ResearchCommunity, ResearchProfile } from "@/lib/mockData";
@@ -86,7 +87,7 @@ export function CommunitiesStage({
     onBack: () => void;
     onMembership: () => void;
     onVisibility: (visibility: ResearchCommunity["visibility"]) => Promise<{ ok: boolean; error?: string }>;
-    onUpdateSettings: (settings: { name: string; summary: string; guidelines: string }) => Promise<{ ok: boolean; error?: string }>;
+    onUpdateSettings: (settings: Pick<UpdateCommunitySettingsInputContract, "name" | "summary" | "guidelines" | "visibility">) => Promise<{ ok: boolean; error?: string }>;
     onUpdateMemberRole: (memberHandle: string, role: "moderator" | "member") => Promise<{ ok: boolean; error?: string }>;
     onRemoveMember: (memberHandle: string) => Promise<{ ok: boolean; error?: string }>;
     onCreateAnnouncement: (announcement: Pick<CreateCommunityAnnouncementInputContract, "title" | "body">) => Promise<{ ok: boolean; error?: string }>;
@@ -452,7 +453,7 @@ function CreateCommunityModal({
         </header>
         <label>Name<input value={name} onChange={(event) => setName(event.target.value)} maxLength={120} autoFocus /></label>
         <label>Field or purpose<input value={field} onChange={(event) => setField(event.target.value)} maxLength={180} /></label>
-        <label>Short description <small>{summary.length} / {communitySummaryMaxLength}</small><textarea value={summary} onChange={(event) => setSummary(event.target.value)} maxLength={communitySummaryMaxLength} rows={3} /></label>
+        <label className="community-summary-field">Short description <small>{summary.length} / {communitySummaryMaxLength}</small><textarea value={summary} onChange={(event) => setSummary(event.target.value)} maxLength={communitySummaryMaxLength} rows={3} /></label>
         <label>Visibility<select value={visibility} onChange={(event) => setVisibility(event.target.value as typeof visibility)}><option value="public">Public — anyone can look in</option><option value="private">Private — membership required</option></select></label>
         <label>Opening guidelines <small>optional</small><textarea value={guidelines} onChange={(event) => setGuidelines(event.target.value)} rows={4} /></label>
         <p className="community-form-status" aria-live="polite">{status}</p>
@@ -506,7 +507,7 @@ export function SelectedCommunityView({
   onBack: () => void;
   onMembership: () => void;
   onVisibility: (visibility: ResearchCommunity["visibility"]) => Promise<{ ok: boolean; error?: string }>;
-  onUpdateSettings: (settings: { name: string; summary: string; guidelines: string }) => Promise<{ ok: boolean; error?: string }>;
+  onUpdateSettings: (settings: Pick<UpdateCommunitySettingsInputContract, "name" | "summary" | "guidelines" | "visibility">) => Promise<{ ok: boolean; error?: string }>;
   onUpdateMemberRole: (memberHandle: string, role: "moderator" | "member") => Promise<{ ok: boolean; error?: string }>;
   onRemoveMember: (memberHandle: string) => Promise<{ ok: boolean; error?: string }>;
   onCreateAnnouncement: (announcement: Pick<CreateCommunityAnnouncementInputContract, "title" | "body">) => Promise<{ ok: boolean; error?: string }>;
@@ -539,6 +540,7 @@ export function SelectedCommunityView({
   const [announcementComposerOpen, setAnnouncementComposerOpen] = useState(false);
   const [editingAnnouncementId, setEditingAnnouncementId] = useState<string | null>(null);
   const [selectedAnnouncementId, setSelectedAnnouncementId] = useState<string | null>(null);
+  const [selectedCallId, setSelectedCallId] = useState<string | null>(null);
   const [announcementClock, setAnnouncementClock] = useState(() => Date.now());
   const [peopleOpen, setPeopleOpen] = useState<"members" | "moderators" | null>(null);
   const [announcementsExpanded, setAnnouncementsExpanded] = useState(false);
@@ -564,11 +566,13 @@ export function SelectedCommunityView({
   const selectedAnnouncement = announcements.find((announcement) => announcement.id === selectedAnnouncementId) ?? null;
   const editingAnnouncement = announcements.find((announcement) => announcement.id === editingAnnouncementId) ?? null;
   const activeCalls = [...liveCalls, ...upcomingCalls];
+  const selectedCall = activeCalls.find((call) => call.id === selectedCallId) ?? null;
 
   useEffect(() => {
     setSelectedAnnouncementId(null);
     setEditingAnnouncementId(null);
     setAnnouncementComposerOpen(false);
+    setSelectedCallId(null);
     setAnnouncementClock(Date.now());
   }, [community.id]);
 
@@ -576,6 +580,10 @@ export function SelectedCommunityView({
     if (selectedAnnouncementId && !selectedAnnouncement) setSelectedAnnouncementId(null);
     if (editingAnnouncementId && !editingAnnouncement) setEditingAnnouncementId(null);
   }, [editingAnnouncement, editingAnnouncementId, selectedAnnouncement, selectedAnnouncementId]);
+
+  useEffect(() => {
+    if (selectedCallId && !selectedCall) setSelectedCallId(null);
+  }, [selectedCall, selectedCallId]);
 
   useEffect(() => {
     const nextExpiry = announcements
@@ -698,7 +706,19 @@ export function SelectedCommunityView({
           </div>
           <div className="community-section-list" onClick={() => setCallsExpanded((current) => !current)}>
             {mayView ? activeCalls.slice(0, callsExpanded ? undefined : 3).map((call) => (
-              <article key={call.id}>
+              <article
+                key={call.id}
+                role="button"
+                tabIndex={0}
+                aria-label={`View ${call.title}`}
+                onClick={(event) => { event.stopPropagation(); setSelectedCallId(call.id); }}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setSelectedCallId(call.id);
+                }}
+              >
                 <span className={call.status === "live" ? "live-pulse" : "scheduled-dot"} aria-hidden="true" />
                 <div><strong>{call.title}</strong><small>{call.status === "live" ? `${call.kind} live now` : formatCallTime(call.startsAt)}</small><small>{call.participantHandles.length} joined</small></div>
                 <button type="button" onClick={(event) => { event.stopPropagation(); void onJoinCall(call.id); }}>{call.status === "live" ? "Join" : "RSVP"}</button>
@@ -775,6 +795,7 @@ export function SelectedCommunityView({
         onSubmit={(announcement) => onUpdateAnnouncement(editingAnnouncement.id, announcement)}
         onClose={() => setEditingAnnouncementId(null)}
       /> : null}
+      {selectedCall ? <CommunityCallViewerModal community={community} call={selectedCall} onJoin={onJoinCall} onClose={() => setSelectedCallId(null)} /> : null}
       {callComposerOpen ? <CreateCallModal onCreate={onCreateCall} onClose={() => setCallComposerOpen(false)} /> : null}
     </section>
   );
@@ -786,12 +807,13 @@ function EditCommunityModal({
   onClose
 }: {
   community: ResearchCommunity;
-  onSave: (settings: { name: string; summary: string; guidelines: string }) => Promise<{ ok: boolean; error?: string }>;
+  onSave: (settings: Pick<UpdateCommunitySettingsInputContract, "name" | "summary" | "guidelines" | "visibility">) => Promise<{ ok: boolean; error?: string }>;
   onClose: () => void;
 }) {
   const [name, setName] = useState(community.name);
   const [summary, setSummary] = useState(community.summary);
   const [guidelines, setGuidelines] = useState(community.guidelines ?? "");
+  const [visibility, setVisibility] = useState(community.visibility);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   const submit = async (event: FormEvent) => {
@@ -799,7 +821,7 @@ function EditCommunityModal({
     if (!name.trim() || !summary.trim() || busy) return;
     setBusy(true);
     setStatus("Saving community…");
-    const result = await onSave({ name: name.trim(), summary: summary.trim(), guidelines: guidelines.trim() });
+    const result = await onSave({ name: name.trim(), summary: summary.trim(), guidelines: guidelines.trim(), visibility });
     setBusy(false);
     if (result.ok) onClose();
     else setStatus(result.error ?? "Community settings could not be saved.");
@@ -809,7 +831,8 @@ function EditCommunityModal({
       <form className="community-create-modal community-settings-modal" onSubmit={submit} onClick={(event) => event.stopPropagation()}>
         <header><div><span>Community settings</span><strong>Edit community</strong></div><button type="button" title="Close community settings" disabled={busy} onClick={onClose}><X size={18} /></button></header>
         <label>Name<input value={name} onChange={(event) => setName(event.target.value)} maxLength={120} autoFocus /></label>
-        <label>Short description <small>{summary.length} / {communitySummaryMaxLength}</small><textarea value={summary} onChange={(event) => setSummary(event.target.value)} maxLength={communitySummaryMaxLength} rows={3} /></label>
+        <label className="community-summary-field">Short description <small>{summary.length} / {communitySummaryMaxLength}</small><textarea value={summary} onChange={(event) => setSummary(event.target.value)} maxLength={communitySummaryMaxLength} rows={3} /></label>
+        <label>Visibility<select value={visibility} onChange={(event) => setVisibility(event.target.value as ResearchCommunity["visibility"])}><option value="public">Public — anyone can look in</option><option value="private">Private — membership required</option></select></label>
         <label>Guidelines & rules <small>{guidelines.length.toLocaleString()} / 12,000</small><textarea value={guidelines} onChange={(event) => setGuidelines(event.target.value)} maxLength={12000} rows={8} /></label>
         <p className="community-form-status" aria-live="polite">{status}</p>
         <button className="community-primary-action" type="submit" disabled={busy || !name.trim() || !summary.trim()}><Pencil size={16} /> {busy ? "Saving…" : "Save community"}</button>
@@ -849,25 +872,10 @@ function AnnouncementViewerModal({
   return (
     <div className="community-modal-backdrop" role="presentation" onClick={() => !deleting && onClose()}>
       <section className="community-announcement-viewer" role="dialog" aria-modal="true" aria-labelledby="community-announcement-title" onClick={(event) => event.stopPropagation()}>
-        <header>
+        <header className="community-announcement-viewer-header">
           <div><span>Announcement · {community.name}</span><strong id="community-announcement-title">{announcement.title}</strong></div>
-          <button type="button" title="Close announcement" disabled={deleting} onClick={onClose}><X size={18} /></button>
-        </header>
-        <div className="community-announcement-author">
-          <div>
-            <strong>{author?.name ?? (authorHandle.replace(/^@/, "") || "Community team")}</strong>
-            <small>{authorHandle ? `${role} · ${authorHandle}` : "Owner or moderator"}</small>
-          </div>
-          <time dateTime={announcement.createdAt}>{formatAnnouncementTime(announcement.createdAt)}</time>
-        </div>
-        <p className="community-announcement-body">{announcement.body}</p>
-        <footer>
-          <div>
-            <small>{expiresAt ? `Available until ${formatAnnouncementTime(new Date(expiresAt).toISOString())}` : "Available for 30 days from publication"}</small>
-            {announcement.updatedAt ? <small>Edited {formatAnnouncementTime(announcement.updatedAt)}</small> : null}
-          </div>
-          {mayManage ? <div className="community-announcement-manager-actions">
-            {confirmingDelete ? (
+          <div className="community-announcement-header-actions">
+            {mayManage ? (confirmingDelete ? (
               <>
                 <button type="button" disabled={deleting} onClick={() => setConfirmingDelete(false)}>Keep</button>
                 <button className="danger" type="button" disabled={deleting} onClick={async () => {
@@ -883,10 +891,57 @@ function AnnouncementViewerModal({
                 <button type="button" onClick={onEdit}><Pencil size={14} /> Edit</button>
                 <button type="button" onClick={() => setConfirmingDelete(true)}><Trash2 size={14} /> Delete</button>
               </>
-            )}
-          </div> : null}
+            )) : null}
+            <button className="community-announcement-close" type="button" title="Close announcement" disabled={deleting} onClick={onClose}><X size={18} /></button>
+          </div>
+        </header>
+        <div className="community-announcement-author">
+          <div>
+            <strong>{author?.name ?? (authorHandle.replace(/^@/, "") || "Community team")}</strong>
+            <small>{authorHandle ? `${role} · ${authorHandle}` : "Owner or moderator"}</small>
+          </div>
+          <time dateTime={announcement.createdAt}>{formatAnnouncementTime(announcement.createdAt)}</time>
+        </div>
+        <p className="community-announcement-body">{announcement.body}</p>
+        <footer>
+          <div>
+            <small>{expiresAt ? `Available until ${formatAnnouncementTime(new Date(expiresAt).toISOString())}` : "Available for 30 days from publication"}</small>
+            {announcement.updatedAt ? <small>Edited {formatAnnouncementTime(announcement.updatedAt)}</small> : null}
+          </div>
         </footer>
         {status ? <p className="community-form-status" role="alert">{status}</p> : null}
+      </section>
+    </div>
+  );
+}
+
+function CommunityCallViewerModal({
+  community,
+  call,
+  onJoin,
+  onClose
+}: {
+  community: ResearchCommunity;
+  call: CommunityCallContract;
+  onJoin: (callId: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [joining, setJoining] = useState(false);
+  return (
+    <div className="community-modal-backdrop" role="presentation" onClick={() => !joining && onClose()}>
+      <section className="community-call-modal community-call-viewer" role="dialog" aria-modal="true" aria-labelledby="community-call-title" onClick={(event) => event.stopPropagation()}>
+        <header><div><span>Event or call · {community.name}</span><strong id="community-call-title">{call.title}</strong></div><button type="button" title="Close event or call" disabled={joining} onClick={onClose}><X size={18} /></button></header>
+        <dl>
+          <div><dt>Status</dt><dd>{call.status === "live" ? "Live now" : "Scheduled"}</dd></div>
+          <div><dt>Format</dt><dd>{call.kind === "video" ? "Video" : "Voice"}</dd></div>
+          <div><dt>Starts</dt><dd>{call.status === "live" ? "Now" : formatCallTime(call.startsAt)}</dd></div>
+          <div><dt>Participants</dt><dd>{call.participantHandles.length.toLocaleString()} joined</dd></div>
+        </dl>
+        <button className="community-primary-action" type="button" disabled={joining} onClick={async () => {
+          setJoining(true);
+          await onJoin(call.id);
+          setJoining(false);
+        }}><Radio size={16} /> {joining ? "Joining…" : call.status === "live" ? "Join call" : "RSVP"}</button>
       </section>
     </div>
   );

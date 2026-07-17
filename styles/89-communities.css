@@ -504,6 +504,15 @@
   font-weight: 650;
 }
 
+.community-create-modal .community-summary-field textarea {
+  height: calc(3 * 1.4em + 20px);
+  min-height: calc(3 * 1.4em + 20px);
+  max-height: calc(3 * 1.4em + 20px);
+  overflow-y: auto;
+  line-height: 1.4;
+  resize: none;
+}
+
 .selected-community-layout {
   width: min(720px, calc(100vw - 690px));
 }
@@ -853,6 +862,11 @@
   padding: 7px;
   background: color-mix(in srgb, var(--panel) 70%, transparent);
   cursor: pointer;
+}
+
+.community-calls-panel article:focus-visible {
+  outline: 2px solid var(--aqua-deep);
+  outline-offset: 2px;
 }
 
 .community-calls-panel article > div {

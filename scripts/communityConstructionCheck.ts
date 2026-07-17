@@ -325,9 +325,10 @@ const sources = await Promise.all([
   readFile(new URL("../apps/api/src/repository/communityMembers.ts", import.meta.url), "utf8"),
   readFile(new URL("../apps/api/src/repository/communityAuthorization.ts", import.meta.url), "utf8"),
   readFile(new URL("../apps/api/src/repository/communityAnnouncements.ts", import.meta.url), "utf8"),
-  readFile(new URL("../app/api/communities/[id]/announcements/[announcementId]/route.ts", import.meta.url), "utf8")
+  readFile(new URL("../app/api/communities/[id]/announcements/[announcementId]/route.ts", import.meta.url), "utf8"),
+  readFile(new URL("../styles/89-community-announcements.css", import.meta.url), "utf8")
 ]);
-const [views, filterModal, peopleModal, repository, foundation, membershipRoute, shell, postViews, profileViews, communityStyles, communityActivityStyles, localStore, quoteService, communityRoute, commentsRepository, postsRepository, viewState, communityMembersRepository, communityAuthorization, announcementRepository, announcementRoute] = sources;
+const [views, filterModal, peopleModal, repository, foundation, membershipRoute, shell, postViews, profileViews, communityStyles, communityActivityStyles, localStore, quoteService, communityRoute, commentsRepository, postsRepository, viewState, communityMembersRepository, communityAuthorization, announcementRepository, announcementRoute, announcementStyles] = sources;
 assert.match(views, /communityMembershipLabel/, "The selected view must use one canonical membership control.");
 assert.match(views, /Create community/, "The directory must expose community creation.");
 assert.match(views, /Events & calls/, "The active right rail must expose events and calls.");
@@ -379,6 +380,13 @@ assert.match(views, /community-announcement-card/, "Announcements in the right r
 assert.match(views, /community-announcement-viewer/, "Announcements need a dedicated viewing window.");
 assert.match(views, /onUpdateAnnouncement/, "Managers need an announcement edit control.");
 assert.match(views, /onDeleteAnnouncement/, "Managers need an announcement delete control.");
+assert.match(announcementStyles, /community-announcement-card strong[\s\S]+-webkit-line-clamp:\s*1/, "Announcement titles must stay to one compact preview line.");
+assert.match(announcementStyles, /community-announcement-card p[\s\S]+-webkit-line-clamp:\s*3/, "Announcement bodies must stay to a three-line preview.");
+assert.match(views, /community-announcement-header-actions/, "Announcement manager controls belong in the viewer header.");
+assert.match(views, /community-call-viewer/, "Full event and call titles need a focused viewing window.");
+assert.match(communityStyles, /community-calls-panel article strong[\s\S]+white-space:\s*nowrap/, "Event and call titles must stay to one compact preview line.");
+assert.match(views, /name[\s\S]+summary[\s\S]+guidelines[\s\S]+visibility/, "The edit-community mutation must expose current public or private access.");
+assert.match(communityStyles, /community-summary-field textarea[\s\S]+resize:\s*none/, "The community bio editor must remain a fixed three-line field.");
 assert.match(communityStyles, /-webkit-line-clamp:\s*3/, "Selected community descriptions must allow three compact lines.");
 assert.match(communityStyles, /\.selected-community-right \.community-activity-panel[\s\S]+border-top:\s*0/, "The first right-rail activity section must not waste space on a top divider.");
 assert.match(shell, /returnToDetailOrigin/, "Post details must expose a stable return to the source space.");
