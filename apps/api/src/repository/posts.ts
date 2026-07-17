@@ -450,7 +450,12 @@ export const applyPostAction = async (
           subjectId: postId,
           visibility: eventScope.visibility,
           audienceHandles: eventScope.audienceHandles,
-          payload: { action: input.action, itemId: postId }
+          payload: {
+            action: input.action,
+            itemId: postId,
+            metrics: updated.metrics,
+            revision: updated.revision
+          }
         })
       );
     }

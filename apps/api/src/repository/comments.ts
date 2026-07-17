@@ -893,7 +893,14 @@ export const applyCommentAction = async (
           subjectId: commentId,
           visibility: eventScope.visibility,
           audienceHandles: eventScope.audienceHandles,
-          payload: { action: input.action, commentId, itemId: postId }
+          payload: {
+            action: input.action,
+            commentId,
+            itemId: postId,
+            metrics: updatedComment.metrics,
+            revision: updatedItem.revision,
+            commentRevision: updatedComment.revision
+          }
         })
       );
     }

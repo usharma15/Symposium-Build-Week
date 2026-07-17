@@ -1,7 +1,7 @@
 import type { ViewActionOptions } from "@/features/actions/actionTypes";
 import { createClientMutationId, symposiumApi } from "@/features/api/symposiumApiClient";
 
-export const recordPassiveView = async (
+export const recordPassiveView = async <T>(
   target: "post" | "comment",
   itemId: string,
   commentId: string | null,
@@ -12,13 +12,12 @@ export const recordPassiveView = async (
     ? `/api/posts/${itemId}/actions`
     : `/api/posts/${itemId}/comments/${commentId}/actions`;
   try {
-    await symposiumApi.request(path, {
+    return await symposiumApi.request<T>(path, {
       method: "POST",
       idempotencyKey: createClientMutationId(`${target}-view`),
       body: { action: "read", actorHandle, trigger: options.trigger, surface: options.surface }
     });
-    return true;
   } catch {
-    return false;
+    return null;
   }
 };

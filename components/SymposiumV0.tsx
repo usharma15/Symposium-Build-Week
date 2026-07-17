@@ -228,6 +228,9 @@ type LiveEventPayload = {
   activity?: unknown;
   itemId?: string;
   commentId?: string;
+  commentRevision?: number;
+  metrics?: Partial<InquiryItem["metrics"]>;
+  revision?: number;
 };
 
 type ProfileActivitySnapshot = { entries: CanonicalActionActivityContract[]; loaded: boolean; nextCursor: string | null; hiddenCommunityCounts: ProfileActivityCountsContract };
@@ -246,6 +249,7 @@ type SymposiumLiveEvent = {
 type SymposiumAuthState = {
   clerkEnabled: boolean;
   authLoaded: boolean;
+  getAccessToken: () => Promise<string | null>;
   isSignedIn: boolean;
   userId: string | null;
   signOut: () => Promise<void>;
@@ -319,6 +323,7 @@ const researchProfileFromSyncEntity = ({ id: _id, ...person }: ProfileSyncEntity
 const localPreviewAuth: SymposiumAuthState = {
   clerkEnabled: false,
   authLoaded: true,
+  getAccessToken: async () => null,
   isSignedIn: false,
   userId: null,
   signOut: async () => undefined
@@ -327,41 +332,54 @@ const localPreviewAuth: SymposiumAuthState = {
 export function SymposiumV0({
   clerkEnabled = false,
   initialRoute = { kind: "hall" },
-  initialShouldPlayEntrance = null
+  initialShouldPlayEntrance = null,
+  liveBackendUrl = null
 }: {
   clerkEnabled?: boolean;
   initialRoute?: CanonicalRoute;
   initialShouldPlayEntrance?: boolean | null;
+  liveBackendUrl?: string | null;
 }) {
   if (clerkEnabled) {
-    return <ClerkSymposiumV0 initialRoute={initialRoute} initialShouldPlayEntrance={initialShouldPlayEntrance} />;
+    return (
+      <ClerkSymposiumV0
+        initialRoute={initialRoute}
+        initialShouldPlayEntrance={initialShouldPlayEntrance}
+        liveBackendUrl={liveBackendUrl}
+      />
+    );
   }
   return (
     <SymposiumExperience
       auth={localPreviewAuth}
       initialRoute={initialRoute}
       initialShouldPlayEntrance={initialShouldPlayEntrance}
+      liveBackendUrl={liveBackendUrl}
     />
   );
 }
 
 function ClerkSymposiumV0({
   initialRoute,
-  initialShouldPlayEntrance
+  initialShouldPlayEntrance,
+  liveBackendUrl
 }: {
   initialRoute: CanonicalRoute;
   initialShouldPlayEntrance: boolean | null;
+  liveBackendUrl: string | null;
 }) {
-  const { isLoaded: authLoaded, isSignedIn, signOut: clerkSignOut } = useAuth();
+  const { getToken, isLoaded: authLoaded, isSignedIn, signOut: clerkSignOut } = useAuth();
   const { user } = useUser();
 
   return (
     <SymposiumExperience
       initialRoute={initialRoute}
       initialShouldPlayEntrance={initialShouldPlayEntrance}
+      liveBackendUrl={liveBackendUrl}
       auth={{
         clerkEnabled: true,
         authLoaded,
+        getAccessToken: () => getToken(),
         isSignedIn: Boolean(isSignedIn),
         userId: user?.id ?? null,
         signOut: async () => {
@@ -375,11 +393,13 @@ function ClerkSymposiumV0({
 function SymposiumExperience({
   auth,
   initialRoute,
-  initialShouldPlayEntrance
+  initialShouldPlayEntrance,
+  liveBackendUrl
 }: {
   auth: SymposiumAuthState;
   initialRoute: CanonicalRoute;
   initialShouldPlayEntrance: boolean | null;
+  liveBackendUrl: string | null;
 }) {
   const { authLoaded, clerkEnabled, isSignedIn, userId } = auth;
   const [theme, setTheme] = useState<Theme>("day");
@@ -1104,6 +1124,56 @@ function SymposiumExperience({
     return true;
   };
 
+  const mergeLiveMetricPatch = (payload: LiveEventPayload) => {
+    if (!payload.itemId || !payload.metrics || typeof payload.metrics !== "object") return false;
+    const applyMetricPatch = <T extends { signal: string; forks: string; saves: string; reads: string }>(
+      current: T
+    ): T => ({
+      ...current,
+      signal: typeof payload.metrics?.signal === "string" ? payload.metrics.signal : current.signal,
+      forks: typeof payload.metrics?.forks === "string" ? payload.metrics.forks : current.forks,
+      saves: typeof payload.metrics?.saves === "string" ? payload.metrics.saves : current.saves,
+      reads: typeof payload.metrics?.reads === "string" ? payload.metrics.reads : current.reads
+    });
+    let changed = false;
+    const nextItems = itemsRef.current.map((item) => {
+      if (item.id !== payload.itemId) return item;
+      const itemRevision = item.revision ?? 0;
+      if (typeof payload.revision === "number" && itemRevision > payload.revision) return item;
+      if (!payload.commentId) {
+        changed = true;
+        return {
+          ...item,
+          metrics: applyMetricPatch(item.metrics),
+          revision: typeof payload.revision === "number" ? Math.max(itemRevision, payload.revision) : item.revision
+        };
+      }
+      const mapped = mapCommentTree(item.comments, payload.commentId, (comment) => {
+        const commentRevision = comment.revision ?? 0;
+        if (typeof payload.commentRevision === "number" && commentRevision > payload.commentRevision) return comment;
+        changed = true;
+        return {
+          ...comment,
+          metrics: applyMetricPatch({ ...commentMetricsFallback, ...(comment.metrics ?? {}) }),
+          revision:
+            typeof payload.commentRevision === "number"
+              ? Math.max(commentRevision, payload.commentRevision)
+              : comment.revision
+        };
+      });
+      if (!mapped.updated) return item;
+      return {
+        ...item,
+        comments: mapped.comments,
+        revision: typeof payload.revision === "number" ? Math.max(itemRevision, payload.revision) : item.revision
+      };
+    });
+    if (!changed) return false;
+    replaceItems(nextItems);
+    persistLocalSnapshot(nextItems, profilesRef.current, currentProfileRef.current);
+    return true;
+  };
+
   const mergeLiveFollow = (record: ProfileFollowRecord | undefined, active: boolean) => {
     const followerHandle = cleanHandle(String(record?.followerHandle ?? ""));
     const followingHandle = cleanHandle(String(record?.followingHandle ?? ""));
@@ -1174,6 +1244,10 @@ function SymposiumExperience({
 
   const mergeLiveEvent = (event: SymposiumLiveEvent) => {
     const payload = event.payload ?? {};
+    if (payload.action && payload.metrics && !isLiveInquiryItem(payload.item)) {
+      mergeLiveMetricPatch(payload);
+      return;
+    }
     if (event.kind === "post.deleted") {
       const deletedPostId = isLiveInquiryItem(payload.item)
         ? payload.item.id
@@ -1222,7 +1296,7 @@ function SymposiumExperience({
     if (isLiveInquiryItem(payload.item)) {
       const action = payload.action;
       if (action === "read") {
-        scheduleLiveRefresh();
+        mergeLiveItem(payload.item);
         return;
       }
       const canonicalActivity = isCanonicalActionActivity(payload.activity) ? payload.activity : null;
@@ -1339,7 +1413,10 @@ function SymposiumExperience({
   };
 
   useLiveEventStream<SymposiumLiveEvent>({
+    authSessionKey: authLoaded ? (isSignedIn ? userId ?? "signed-in" : "anonymous") : "loading",
+    backendUrl: liveBackendUrl,
     enabled: entryMode !== "loading",
+    getAccessToken: auth.getAccessToken,
     onConnected: markLiveDataConnected,
     onEvent: mergeLiveEvent,
     onMalformedEvent: scheduleLiveRefresh,
@@ -2573,8 +2650,8 @@ function SymposiumExperience({
 
     const actorHandle = currentProfile.handle;
     if (isViewAction) {
-      const synced = await recordPassiveView("post", itemId, null, actorHandle, options);
-      if (synced) scheduleLiveRefresh();
+      const synced = await recordPassiveView<{ item?: InquiryItem }>("post", itemId, null, actorHandle, options);
+      if (synced?.item) mergeLiveItem(synced.item);
       else releaseClientViewClaim("post", itemId);
       return;
     }
@@ -2723,8 +2800,8 @@ function SymposiumExperience({
 
     const actorHandle = currentProfile.handle;
     if (isViewAction) {
-      const synced = await recordPassiveView("comment", itemId, commentId, actorHandle, options);
-      if (synced) scheduleLiveRefresh();
+      const synced = await recordPassiveView<{ item?: InquiryItem }>("comment", itemId, commentId, actorHandle, options);
+      if (synced?.item) mergeLiveItem(synced.item);
       else releaseClientViewClaim("comment", commentId);
       return;
     }

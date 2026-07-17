@@ -5,7 +5,7 @@ This repo now has two runtime surfaces:
 - `next dev` / Vercel: the laptop-first SYMPOSIUM interface.
 - `npm run api:dev` / Render: the live TypeScript backend.
 
-The existing Next API routes remain in place as a bridge. When `SYMPOSIUM_API_URL` is set on Vercel, those routes proxy to the Render backend. When it is not set, local development keeps using the existing `.data/symposium.json` fallback.
+The existing Next API routes remain in place as a compatibility bridge. When `SYMPOSIUM_API_URL` is set on Vercel, ordinary requests can proxy to the Render backend, while the browser's authenticated live-event stream connects directly to Render so Vercel never holds a long-running relay function open. When the backend URL is not set, local development keeps using the existing `.data/symposium.json` fallback.
 
 Current production endpoints:
 
@@ -160,7 +160,9 @@ This creates verification posts, comments, post actions, community calls, opport
 
 ## Integrity Architecture
 
-The durable API follows one mutation rule: domain changes, idempotency receipts, audit records, and durable live events are committed in the same Postgres transaction. Live publication happens only after commit. If local or Redis publication fails, the event remains in Postgres and the SSE poller recovers it.
+The durable API follows one mutation rule: domain changes, idempotency receipts, audit records, and durable live events are committed in the same Postgres transaction. Live publication happens only after commit. The active process bus delivers new events without polling Postgres; the initial stream connection and every reconnect replay durable events from the last cursor.
+
+Passive post and comment views return their canonical item directly to the initiating browser. Public action events carry revisioned metric patches, so read, save, signal, and fork convergence does not download the full bootstrap snapshot.
 
 The current guarantees are:
 
@@ -177,7 +179,7 @@ The current guarantees are:
 - Migration `0012_operational_integrity` backfills event audiences, removes impossible self-follows and duplicate publication links, normalizes legacy enum values conservatively, adds database checks, and adds compound/GIN indexes for the live read paths.
 - Migration `0013_authoritative_entity_revisions` adds monotonic revisions to posts, comments, profiles, and follow relationships so clients can deterministically reject stale snapshots across tabs, browsers, devices, bootstrap refreshes, and delayed live events.
 - Migration `0014_note_revision_guards` adds authoritative note and note-block revisions. Existing-note writes must supply the revisions they loaded, so delayed autosaves fail with a conflict instead of overwriting newer work.
-- Migration `0015_durable_r2_deletion` adds a leased, retry-safe object-deletion queue and backfills attachments belonging to existing post tombstones. Post deletion keeps its database tombstone and live event, but atomically removes the attachment from read projections and queues both canonical and staging R2 keys before commit. Removal is attempted before the delete request returns and retried every minute after transient provider failures.
+- Migration `0015_durable_r2_deletion` adds a leased, retry-safe object-deletion queue and backfills attachments belonging to existing post tombstones. Post deletion keeps its database tombstone and live event, but atomically removes the attachment from read projections and queues both canonical and staging R2 keys before commit. Removal is attempted before the delete request returns; transient failures are recovered by the shared six-hour maintenance pass so an idle scale-to-zero database is not woken every minute.
 - Migration `0016_comment_attachment_ownership` extends the attachment-owner constraint to comments. Comment and reply creation claims verified staged objects in the comment transaction; post/comment edits replace a content-version-guarded desired attachment set; comment deletion and parent-post deletion queue every canonical and staging object durably.
 - Migration `0017_content_quotes` adds the shared post/comment quote snapshot columns. Quote resolution rejects private, deleted, or self-referential sources; source deletion sanitizes dependent snapshots, and live deletion events converge the unavailable state across active tabs.
 - Migration `0018_comment_quote_kind` backfills the source post kind into existing comment quote snapshots so paper/thought presentation remains consistent without exposing parent-post content.
@@ -254,7 +256,7 @@ Current provider-plan boundaries:
 
 - The public site currently uses Clerk development keys. Readiness reports this as a warning until the Clerk application and Vercel/Render environment variables are migrated to production keys.
 - Neon Free provides a six-hour point-in-time restore window. One manual production snapshot is retained without expiry; scheduled snapshots require a paid plan.
-- Upstash Redis is an acceleration layer for shared rate limits and event publication, not a source of truth. Eviction is disabled, and Postgres-backed polling recovers live events if Redis is unavailable.
+- Upstash Redis is an acceleration layer for shared rate limits and event publication, not a source of truth. Eviction is disabled, and cursor-based Postgres replay recovers live events when a client initially connects or reconnects.
 - R2 currently delivers public attachment objects through Cloudflare's rate-limited `r2.dev` URL. Moving to a production custom domain requires choosing a domain on a Cloudflare-managed zone.
 
 ## First Live Provider Sequence

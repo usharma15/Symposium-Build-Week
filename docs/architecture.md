@@ -134,7 +134,7 @@ Profiles reuse the same collection coordinator and ordered browser transport as 
 - `features/entities`, `features/live-sync`, `features/navigation`, `features/actions`: shared client invariants and contracts
 - `features/api`: same-origin JSON requests, structured failures, and retry-safe mutation identities
 
-Feature modules cannot import the application shell or Next routes, must stay bounded in size, and must form an acyclic dependency graph. These constraints are executable architecture checks.
+Feature modules cannot import the application shell or Next routes and must form an acyclic dependency graph. Architecture checks enforce dependency direction and ownership without imposing arbitrary file-length ceilings.
 
 `app/globals.css` is an ordered manifest. Styles are split into numbered foundation, established, immersive, overlay, and responsive layers under `styles/`. Numbering preserves the proven cascade while each layer declares ownership and has an enforced size ceiling.
 

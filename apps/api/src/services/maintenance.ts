@@ -9,9 +9,7 @@ import {
 } from "./storageDeletion";
 
 const maintenanceIntervalMs = 6 * 60 * 60 * 1000;
-const storageDeletionIntervalMs = 60 * 1000;
 let maintenanceTimer: NodeJS.Timeout | null = null;
-let storageDeletionTimer: NodeJS.Timeout | null = null;
 let lastCompletedAt: string | null = null;
 let lastErrorAt: string | null = null;
 let lastStartedAt: string | null = null;
@@ -19,7 +17,7 @@ let lastStorageDeletionAt: string | null = null;
 let lastStorageDeletionResult: { claimed: number; deleted: number; failed: number } | null = null;
 
 export const getMaintenanceStatus = () => ({
-  active: Boolean(maintenanceTimer && storageDeletionTimer),
+  active: Boolean(maintenanceTimer),
   lastCompletedAt,
   lastErrorAt,
   lastStartedAt,
@@ -179,31 +177,25 @@ export const runDatabaseMaintenance = async () => {
   if (committed && storageAttachmentIds.length) {
     await triggerStorageDeletion(storageAttachmentIds);
   }
+
+  // Mutations attempt object deletion immediately. This batched recovery pass
+  // preserves durable retries without waking a scale-to-zero database every minute.
+  await runStorageDeletionMaintenance();
 };
 
 export const startDatabaseMaintenance = () => {
-  if (maintenanceTimer || storageDeletionTimer || !hasDatabase()) return;
+  if (maintenanceTimer || !hasDatabase()) return;
   const execute = () => {
     void runDatabaseMaintenance().catch((error) => {
       console.warn("SYMPOSIUM database maintenance failed.", error);
     });
   };
-  const executeStorageDeletion = () => {
-    void runStorageDeletionMaintenance().catch((error) => {
-      console.warn("SYMPOSIUM durable R2 deletion maintenance failed.", error);
-    });
-  };
   execute();
-  executeStorageDeletion();
   maintenanceTimer = setInterval(execute, maintenanceIntervalMs);
-  storageDeletionTimer = setInterval(executeStorageDeletion, storageDeletionIntervalMs);
   maintenanceTimer.unref();
-  storageDeletionTimer.unref();
 };
 
 export const stopDatabaseMaintenance = () => {
   if (maintenanceTimer) clearInterval(maintenanceTimer);
-  if (storageDeletionTimer) clearInterval(storageDeletionTimer);
   maintenanceTimer = null;
-  storageDeletionTimer = null;
 };

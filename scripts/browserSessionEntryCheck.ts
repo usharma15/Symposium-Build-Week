@@ -45,8 +45,9 @@ const main = async () => {
 
   const component = await readFile(path.join(process.cwd(), "components/SymposiumV0.tsx"), "utf8");
   const symposiumPage = await readFile(path.join(process.cwd(), "app/SymposiumPage.tsx"), "utf8");
-  assert.match(symposiumPage, /cookies\(\)/);
-  assert.match(symposiumPage, /initialShouldPlayEntrance={browserSessionSeen \? false : null}/);
+  assert.doesNotMatch(symposiumPage, /cookies\(\)/);
+  assert.match(symposiumPage, /initialShouldPlayEntrance={null}/);
+  assert.match(symposiumPage, /liveBackendUrl={liveBackendUrl}/);
   assert.match(component, /hydrateCachedBootstrap\(storedProfileHandle\);/);
   assert.match(component, /const sessionEntryMode = entryModeForBrowserSession\(shouldPlayEntrance\);/);
   assert.match(component, /if \(sessionEntryMode === "complete"\) \{\s+applyInitialRouteState\(\);/);
@@ -60,6 +61,7 @@ const main = async () => {
         checked: [
           "first browser-session entrance",
           "instant subsequent-tab entry",
+          "static server shell with client-side session detection",
           "cached bootstrap selection",
           "non-fatal cached-bootstrap quota pressure",
           "canonical route hydration",

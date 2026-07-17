@@ -68,7 +68,6 @@ export const registerEventRoutes = (app: FastifyInstance) => {
 
     const stream = reply.raw;
     let closed = false;
-    let flushing = false;
 
     const send = (eventName: string, data: unknown, id?: string) => {
       if (closed || stream.destroyed) return;
@@ -92,14 +91,9 @@ export const registerEventRoutes = (app: FastifyInstance) => {
     };
 
     const flushMissedEvents = async () => {
-      if (flushing || closed) return;
-      flushing = true;
-      try {
-        const events = await listEventsSince(cursor, limitFromQuery(request.query.limit), actorHandle);
-        for (const event of events) sendLiveEvent(event);
-      } finally {
-        flushing = false;
-      }
+      if (closed) return;
+      const events = await listEventsSince(cursor, limitFromQuery(request.query.limit), actorHandle);
+      for (const event of events) sendLiveEvent(event);
     };
 
     stream.writeHead(200, {
@@ -127,11 +121,6 @@ export const registerEventRoutes = (app: FastifyInstance) => {
       }
       sendLiveEvent(event);
     });
-    const poll = setInterval(() => {
-      void flushMissedEvents().catch((error) => {
-        app.log.warn(error, "Could not flush missed live events.");
-      });
-    }, 2000);
     const heartbeat = setInterval(() => {
       send("symposium-heartbeat", { ok: true, cursor, time: new Date().toISOString() });
     }, 15000);
@@ -140,7 +129,6 @@ export const registerEventRoutes = (app: FastifyInstance) => {
       if (closed) return;
       closed = true;
       unsubscribe();
-      clearInterval(poll);
       clearInterval(heartbeat);
       releaseStream(clientKey);
     };
