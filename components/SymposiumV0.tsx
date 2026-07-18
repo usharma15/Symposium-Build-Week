@@ -66,6 +66,7 @@ import {
   emptyProfileActivityCounts,
   isCanonicalActionActivity,
   mergeCanonicalActivities,
+  profileItemIsInActivityScope,
   reconcileCanonicalActivityRefresh
 } from "@/lib/profileActivity";
 import {
@@ -2019,14 +2020,7 @@ function SymposiumExperience({
   const profileReshareAddsToAll = (activity: CanonicalActionActivityContract) => {
     if (activity.action !== "fork") return false;
     const item = itemsRef.current.find((candidate) => candidate.id === activity.postId);
-    if (!item) return false;
-    if (activity.subjectType === "post") {
-      return cleanHandle(item.authorHandle ?? item.author) !== cleanHandle(activity.actorHandle);
-    }
-    const comment = findCommentById(item.comments, activity.subjectId);
-    return Boolean(
-      comment && cleanHandle(comment.authorHandle ?? comment.author) !== cleanHandle(activity.actorHandle)
-    );
+    return Boolean(item && profileItemIsInActivityScope(item));
   };
 
   const acceptCanonicalActivity = (activity: CanonicalActionActivityContract) => {

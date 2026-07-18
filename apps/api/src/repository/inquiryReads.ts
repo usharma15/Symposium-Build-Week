@@ -141,6 +141,7 @@ const localItemIsReadable = (
   communities: NonNullable<BootstrapResponseContract["communities"]>
 ) => {
   const isOwner = Boolean(requesterHandle && cleanHandle(item.authorHandle ?? "") === requesterHandle);
+  if (query.authorHandle && (item.room === "office" || item.kind === "draft")) return false;
   if ((item.room === "office" || item.kind === "draft") && !isOwner) return false;
   if (item.communityId && item.postType !== "paper") {
     const community = communities.find((candidate) => candidate.id === item.communityId);
@@ -461,7 +462,10 @@ export const listPostPage = async (
   const postTypes = query.postTypes ?? (query.postType ? [query.postType] : []);
   if (postTypes.length) conditions.push(`post.post_type = ANY(${bind(postTypes)}::text[])`);
   if (query.communityId) conditions.push(`post.community_id = ${bind(query.communityId)}`);
-  if (query.authorHandle) conditions.push(`post.author_handle = ${bind(cleanHandle(query.authorHandle))}`);
+  if (query.authorHandle) {
+    conditions.push(`post.author_handle = ${bind(cleanHandle(query.authorHandle))}`);
+    conditions.push(`post.room <> 'office' AND post.kind <> 'draft'`);
+  }
   if (query.saved) {
     conditions.push(`$1::text IS NOT NULL AND EXISTS (
       SELECT 1 FROM post_actions saved_action

@@ -2,7 +2,7 @@ import { getSnapshot } from "@/lib/dataStore";
 import { proxyLiveBackend } from "@/lib/liveBackendClient";
 import { cleanHandle } from "@/lib/symposiumCore";
 import type { ToggleActionContract } from "@/packages/contracts/src";
-import { buildLegacyProfileAuthoredComments, emptyProfileActivityCounts, hiddenCommunityActivityCounts, profileActivityCounts, profileCommentsArePubliclyListable, profileItemIsPubliclyListable } from "@/lib/profileActivity";
+import { buildLegacyProfileAuthoredComments, emptyProfileActivityCounts, hiddenCommunityActivityCounts, profileActivityCounts, profileCommentsArePubliclyListable, profileItemIsInActivityScope, profileItemIsPubliclyListable } from "@/lib/profileActivity";
 import { listLocalCommunities } from "@/lib/localCommunityStore";
 
 export const runtime = "nodejs";
@@ -68,8 +68,8 @@ export async function GET(request: Request, context: Context) {
       (activity) =>
         cleanHandle(activity.actorHandle) === targetHandle &&
         allowed.has(activity.action) &&
-        (ownProfile || activity.active) &&
-        Boolean(itemById.get(activity.postId) && (ownProfile || (
+        activity.active &&
+        Boolean(itemById.get(activity.postId) && profileItemIsInActivityScope(itemById.get(activity.postId)!) && (ownProfile || (
           activity.subjectType === "comment"
             ? profileCommentsArePubliclyListable(itemById.get(activity.postId)!, communities)
             : profileItemIsPubliclyListable(itemById.get(activity.postId)!, communities)
@@ -86,7 +86,7 @@ export async function GET(request: Request, context: Context) {
   const nextOffset = offset + page.length;
   const authoredCommentEntries = includeComments
     ? buildLegacyProfileAuthoredComments(
-        snapshot.items.filter((item) => ownProfile || profileCommentsArePubliclyListable(item, communities)),
+        snapshot.items.filter((item) => profileItemIsInActivityScope(item) && (ownProfile || profileCommentsArePubliclyListable(item, communities))),
         targetHandle
       )
     : [];
@@ -108,7 +108,7 @@ export async function GET(request: Request, context: Context) {
       hiddenCommunityCounts: ownProfile
         ? emptyProfileActivityCounts()
         : hiddenCommunityActivityCounts(snapshot.items, communities, targetHandle, allowedActions),
-      totals: profileActivityCounts(snapshot.items, targetHandle, allowedActions, { includePrivateWorkspace: ownProfile })
+      totals: profileActivityCounts(snapshot.items, targetHandle, allowedActions)
     } : {})
   });
 }

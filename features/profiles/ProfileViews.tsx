@@ -33,6 +33,7 @@ import {
   emptyProfileActivityCounts,
   itemMatchesProfilePostAction,
   profileCommentsArePubliclyListable,
+  profileItemIsInActivityScope,
   profileItemIsPubliclyListable,
   reconcileProfileActivitySlots,
   selectProfileActivitySlots,
@@ -87,10 +88,10 @@ type ProfileCommentActivity = {
   recency: number;
 };
 type ProfileActivityEntry =
-  | { id: string; type: "post"; item: InquiryItem; recency: number }
+  | { id: string; type: "post"; item: InquiryItem; kind: ProfileActivityKind; recency: number }
   | { id: string; type: "comment"; activity: ProfileCommentActivity; recency: number };
 type ProfileActivitySlot =
-  | { id: string; type: "post"; itemId: string; recency: number }
+  | { id: string; type: "post"; itemId: string; kind: ProfileActivityKind; recency: number }
   | {
       id: string;
       type: "comment";
@@ -278,9 +279,10 @@ export function ProfileView({
 }) {
   const [visibleSlots, setVisibleSlots] = useState<ProfileActivitySlot[]>([]);
   const visibleSlotContextRef = useRef("");
+  const activityScopedItems = items.filter(profileItemIsInActivityScope);
   const profileItems = isOwnProfile
-    ? items
-    : items.filter((item) => profileItemIsPubliclyListable(item, communities));
+    ? activityScopedItems
+    : activityScopedItems.filter((item) => profileItemIsPubliclyListable(item, communities));
   const profileCommentItems = isOwnProfile
     ? profileItems
     : profileItems.filter((item) => profileCommentsArePubliclyListable(item, communities));
@@ -289,10 +291,11 @@ export function ProfileView({
     [...nextItems].sort((a, b) => getProfileRecency(b, person.handle, "authored") - getProfileRecency(a, person.handle, "authored"));
   const byProfileRecency = (nextItems: InquiryItem[], kind: ProfileActivityKind) =>
     [...nextItems].sort((a, b) => getProfileRecency(b, person.handle, kind) - getProfileRecency(a, person.handle, kind));
-  const postEntry = (item: InquiryItem, recency: number): ProfileActivityEntry => ({
-    id: `post:${item.id}`,
+  const postEntry = (item: InquiryItem, recency: number, kind: ProfileActivityKind): ProfileActivityEntry => ({
+    id: `post:${kind}:${item.id}`,
     type: "post",
     item,
+    kind,
     recency
   });
   const commentEntry = (activity: ProfileCommentActivity): ProfileActivityEntry => ({
@@ -307,7 +310,7 @@ export function ProfileView({
   });
   const entryToSlot = (entry: ProfileActivityEntry): ProfileActivitySlot =>
     entry.type === "post"
-      ? { id: entry.id, type: "post", itemId: entry.item.id, recency: entry.recency }
+      ? { id: entry.id, type: "post", itemId: entry.item.id, kind: entry.kind, recency: entry.recency }
       : {
           id: entry.id,
           type: "comment",
@@ -396,25 +399,24 @@ export function ProfileView({
         "save"
       )
     : [];
-  const authoredEntries = authored.map((item) => postEntry(item, getProfileRecency(item, person.handle, "authored")));
-  const paperEntries = papers.map((item) => postEntry(item, getProfileRecency(item, person.handle, "authored")));
-  const thoughtEntries = thoughts.map((item) => postEntry(item, getProfileRecency(item, person.handle, "authored")));
-  const proposalEntries = proposals.map((item) => postEntry(item, getProfileRecency(item, person.handle, "authored")));
-  const opportunityEntries = opportunities.map((item) => postEntry(item, getProfileRecency(item, person.handle, "authored")));
-  const reshareEntries = reshares.map((item) => postEntry(item, postActionRecency(item, "fork")));
-  const likeEntries = likes.map((item) => postEntry(item, postActionRecency(item, "signal")));
-  const savedEntries = saved.map((item) => postEntry(item, postActionRecency(item, "save")));
+  const authoredEntries = authored.map((item) => postEntry(item, getProfileRecency(item, person.handle, "authored"), "authored"));
+  const paperEntries = papers.map((item) => postEntry(item, getProfileRecency(item, person.handle, "authored"), "authored"));
+  const thoughtEntries = thoughts.map((item) => postEntry(item, getProfileRecency(item, person.handle, "authored"), "authored"));
+  const proposalEntries = proposals.map((item) => postEntry(item, getProfileRecency(item, person.handle, "authored"), "authored"));
+  const opportunityEntries = opportunities.map((item) => postEntry(item, getProfileRecency(item, person.handle, "authored"), "authored"));
+  const reshareEntries = reshares.map((item) => postEntry(item, postActionRecency(item, "fork"), "fork"));
+  const likeEntries = likes.map((item) => postEntry(item, postActionRecency(item, "signal"), "signal"));
+  const savedEntries = saved.map((item) => postEntry(item, postActionRecency(item, "save"), "save"));
   const commentEntries = commentActivities.map(commentEntry);
   const commentReshareEntries = commentReshares.map(commentEntry);
   const commentLikeEntries = commentLikes.map(commentEntry);
   const commentSavedEntries = commentSaved.map(commentEntry);
-  const allActivity = uniqueProfileActivityEntries(
-    [...authoredEntries, ...commentEntries, ...reshareEntries, ...commentReshareEntries],
-    (entry) =>
-      entry.type === "post"
-        ? `post:${entry.item.id}`
-        : `comment:${entry.activity.item.id}:${entry.activity.comment.id}`
-  );
+  const allActivity = sortEntries([
+    ...authoredEntries,
+    ...commentEntries,
+    ...reshareEntries,
+    ...commentReshareEntries
+  ]);
 
   const reshareTabEntries = uniqueProfileActivityEntries(
     sortEntries([...reshareEntries, ...commentReshareEntries]),
@@ -476,7 +478,7 @@ export function ProfileView({
     if (!item) return null;
 
     if (slot.type === "post") {
-      return { id: slot.id, type: "post", item, recency: slot.recency };
+      return { id: slot.id, type: "post", item, kind: slot.kind, recency: slot.recency };
     }
 
     const comment = findCommentById(item.comments, slot.commentId);
@@ -624,6 +626,7 @@ export function ProfileView({
                 onOpenCommunity={onOpenCommunity}
                 showCommunityContext={Boolean(entry.item.communityId)}
                 surface="profile"
+                activityLabel={entry.kind === "fork" ? "Reshared" : undefined}
                 onOpenAttachmentPreview={onOpenAttachmentPreview}
               />
             )

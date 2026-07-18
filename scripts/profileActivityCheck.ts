@@ -15,6 +15,7 @@ import {
   mergeCanonicalActivities,
   profileActivityCounts,
   profileCommentsArePubliclyListable,
+  profileItemIsInActivityScope,
   profileItemIsPubliclyListable,
   reconcileProfileActivitySlots,
   selectProfileActivitySlots,
@@ -112,7 +113,7 @@ const exactCounts = profileActivityCounts([
   }
 ], person.handle);
 assert.deepEqual(exactCounts, {
-  all: 3,
+  all: 4,
   papers: 0,
   thoughts: 1,
   proposals: 0,
@@ -177,6 +178,29 @@ assert.deepEqual(quoteOnlyCounts, {
 assert.deepEqual(
   applyProfileActivityActionTotalTransition(exactCounts, "signal", true, false, false),
   { ...exactCounts, likes: 2 }
+);
+assert.deepEqual(
+  applyProfileActivityActionTotalTransition(exactCounts, "fork", false, true, true),
+  { ...exactCounts, all: 5, reshares: 3 },
+  "Every profile-scoped reshare is its own additive All activity."
+);
+
+const workspaceItem = { ...item, id: "workspace-draft", kind: "draft" as const, room: "office" as const };
+assert.equal(profileItemIsInActivityScope(workspaceItem), false);
+assert.deepEqual(
+  profileActivityCounts([item, workspaceItem], person.handle),
+  {
+    all: 2,
+    papers: 0,
+    thoughts: 1,
+    proposals: 0,
+    opportunities: 0,
+    comments: 0,
+    reshares: 1,
+    likes: 1,
+    saved: 1
+  },
+  "Private workspace records must never change profile totals, including for the owner."
 );
 
 const unique = uniqueProfileActivityEntries(
@@ -358,8 +382,17 @@ assert.ok(
   PROFILE_ACTIVITY_SQL.includes("$8::boolean OR post.community_id IS NULL"),
   "A profile owner must receive their complete private-community activity ledger."
 );
+assert.ok(PROFILE_ACTIVITY_SQL.includes("post_action.active = true"));
+assert.ok(PROFILE_ACTIVITY_SQL.includes("comment_action.active = true"));
+assert.doesNotMatch(
+  PROFILE_ACTIVITY_SQL,
+  /\$8::boolean OR (?:post_action|comment_action)\.active = true/,
+  "Owner profile reads must not restore inactive action-ledger rows."
+);
 for (const authoredCommentBoundary of [
   "comment.author_handle = $1",
+  "post.room <> 'office'",
+  "post.kind <> 'draft'",
   "(comment.created_at, comment.id) <",
   "ORDER BY comment.created_at DESC, comment.id DESC",
   "post.post_type = 'paper' OR community.visibility = 'public'"
@@ -373,6 +406,10 @@ assert.doesNotMatch(
   PROFILE_ACTIVITY_COUNTS_SQL,
   /quote\s+IS\s+NOT\s+NULL/i,
   "Exact reshare totals must come only from active fork ledger rows."
+);
+assert.ok(
+  PROFILE_ACTIVITY_COUNTS_SQL.includes("UNION ALL SELECT key, hidden FROM fork_subjects"),
+  "All must add authored content, authored comments, and reshares without subject deduplication."
 );
 for (const exactCountBoundary of [
   "totalAll",
@@ -397,7 +434,8 @@ console.log(
         "self-authored profile actions",
         "quote and reshare semantic separation",
         "authored comment paging and hydration",
-        "activity deduplication",
+        "additive All activity semantics",
+        "owner-independent workspace exclusion",
         "persisted action-timestamp ordering",
         "deterministic equal-timestamp ordering",
         "live slot reconciliation",

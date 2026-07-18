@@ -6,7 +6,7 @@ import {
   type ProfileActivityResponseContract,
   type ToggleActionContract
 } from "../../../../packages/contracts/src";
-import { buildLegacyProfileActivity, buildLegacyProfileAuthoredComments, emptyProfileActivityCounts, hiddenCommunityActivityCounts, profileActivityCounts, profileCommentsArePubliclyListable, profileItemIsPubliclyListable } from "@/lib/profileActivity";
+import { buildLegacyProfileActivity, buildLegacyProfileAuthoredComments, emptyProfileActivityCounts, hiddenCommunityActivityCounts, profileActivityCounts, profileCommentsArePubliclyListable, profileItemIsInActivityScope, profileItemIsPubliclyListable } from "@/lib/profileActivity";
 import { researchCommunities } from "@/lib/mockData";
 import { cleanHandle } from "@/lib/symposiumCore";
 import { getPool, hasDatabase } from "../db/client";
@@ -48,8 +48,9 @@ export const listProfileActivity = async (
     const requestedActions = new Set(query.actions ?? allowedActions);
     const activityActions = allowedActions.filter((action) => requestedActions.has(action));
     const activityCursor = decodeActivityCursor(query.cursor);
+    const profileItems = snapshot.items.filter(profileItemIsInActivityScope);
     const allEntries = buildLegacyProfileActivity(
-        snapshot.items.filter((item) => ownProfile || profileItemIsPubliclyListable(item, researchCommunities)),
+        profileItems.filter((item) => ownProfile || profileItemIsPubliclyListable(item, researchCommunities)),
         handle,
         activityActions
       ).filter((activity) => !activityCursor || (
@@ -62,7 +63,7 @@ export const listProfileActivity = async (
     const commentCursor = decodeProfileCommentCursor(query.commentsCursor);
     const allAuthoredComments = query.includeComments
       ? buildLegacyProfileAuthoredComments(
-          snapshot.items.filter((item) => ownProfile || profileCommentsArePubliclyListable(item, researchCommunities)),
+          profileItems.filter((item) => ownProfile || profileCommentsArePubliclyListable(item, researchCommunities)),
           handle
         ).filter((activity) => !commentCursor || (
           activity.occurredAt < commentCursor.occurredAt ||
@@ -83,7 +84,7 @@ export const listProfileActivity = async (
         hiddenCommunityCounts: ownProfile
           ? emptyProfileActivityCounts()
           : hiddenCommunityActivityCounts(snapshot.items, researchCommunities, handle, allowedActions),
-        totals: profileActivityCounts(snapshot.items, handle, allowedActions, { includePrivateWorkspace: ownProfile })
+        totals: profileActivityCounts(snapshot.items, handle, allowedActions)
       } : {})
     };
   }

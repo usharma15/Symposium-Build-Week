@@ -622,7 +622,8 @@ export function FeedPost({
   community,
   onOpenCommunity,
   showCommunityContext = false,
-  surface = "feed"
+  surface = "feed",
+  activityLabel
 }: {
   item: InquiryItem;
   onSelect: (id: string, commentId?: string | null) => void;
@@ -639,6 +640,7 @@ export function FeedPost({
   onOpenCommunity?: (communityId: string) => void;
   showCommunityContext?: boolean;
   surface?: ViewSurface;
+  activityLabel?: "Reshared";
 }) {
   const postRef = useRef<HTMLElement | null>(null);
   const scribble = useScribble();
@@ -676,6 +678,7 @@ export function FeedPost({
           <PostAuthor item={item} profiles={profiles} onOpenProfile={onOpenProfile} onClickStop={(event) => event.stopPropagation()} />
           <div className="profile-post-header-actions">
             {showCommunityContext && community && onOpenCommunity ? <CommunityActivityBadge community={community} onOpenCommunity={onOpenCommunity} onClick={(event) => event.stopPropagation()} compact className="profile-community-provenance" /> : null}
+            {activityLabel ? <span className="profile-post-activity-label"><Repeat2 size={14} />{activityLabel}</span> : null}
             {!interactionLocked ? <PostOwnerControls item={item} actorHandle={actorHandle} onEditPost={onEditPost} onDeletePost={onDeletePost} inline /> : null}
           </div>
         </div>

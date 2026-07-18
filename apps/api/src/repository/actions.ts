@@ -245,7 +245,8 @@ export const PROFILE_AUTHORED_COMMENTS_SQL = `SELECT
      WHERE comment.author_handle = $1
        AND comment.deleted_at IS NULL
        AND post.deleted_at IS NULL
-       AND ($5::boolean OR (post.room <> 'office' AND post.kind <> 'draft'))
+       AND post.room <> 'office'
+       AND post.kind <> 'draft'
        AND ($5::boolean OR post.community_id IS NULL OR post.post_type = 'paper' OR community.visibility = 'public')
        AND (
          $2::timestamptz IS NULL OR
@@ -263,7 +264,8 @@ export const PROFILE_ACTIVITY_COUNTS_SQL = `WITH scoped_posts AS (
        FROM posts post
        LEFT JOIN communities community ON community.id = post.community_id
        WHERE post.deleted_at IS NULL
-         AND ($2::boolean OR (post.room <> 'office' AND post.kind <> 'draft'))
+         AND post.room <> 'office'
+         AND post.kind <> 'draft'
      ),
      authored_posts AS (
        SELECT ('post:' || post.id) AS key, post.post_type, post.hidden
@@ -316,11 +318,11 @@ export const PROFILE_ACTIVITY_COUNTS_SQL = `WITH scoped_posts AS (
      ),
      base_all AS (
        SELECT key, hidden FROM authored_posts
-       UNION SELECT key, hidden FROM authored_comments
+       UNION ALL SELECT key, hidden FROM authored_comments
      ),
      complete_all AS (
        SELECT key, hidden FROM base_all
-       UNION SELECT key, hidden FROM fork_subjects
+       UNION ALL SELECT key, hidden FROM fork_subjects
      )
      SELECT
        (SELECT count(*)::int FROM complete_all) AS "totalAll",
@@ -364,16 +366,16 @@ const profileActivityCountSummary = async (
   client: PoolClient,
   actorHandle: string,
   allowedActions: ToggleActionContract[],
-  includePrivateWorkspace: boolean
+  includeHiddenCommunityActivity: boolean
 ) => {
   const result = await client.query<Record<string, unknown>>(
     PROFILE_ACTIVITY_COUNTS_SQL,
-    [actorHandle, includePrivateWorkspace]
+    [actorHandle]
   );
   const row = result.rows[0] ?? {};
   return {
     totals: activityCountsFromRow(row, "total", allowedActions),
-    hiddenCommunityCounts: includePrivateWorkspace
+    hiddenCommunityCounts: includeHiddenCommunityActivity
       ? { all: 0, papers: 0, thoughts: 0, proposals: 0, opportunities: 0, comments: 0, reshares: 0, likes: 0, saved: 0 }
       : activityCountsFromRow(row, "hidden", allowedActions)
   };
@@ -395,9 +397,10 @@ export const PROFILE_ACTIVITY_SQL = `WITH profile_activity AS (
        LEFT JOIN communities AS community ON community.id = post.community_id
        WHERE post_action.actor_handle = $1
          AND post_action.action = ANY($2::text[])
-         AND ($8::boolean OR post_action.active = true)
+         AND post_action.active = true
          AND post.deleted_at IS NULL
-         AND ($8::boolean OR (post.room <> 'office' AND post.kind <> 'draft'))
+         AND post.room <> 'office'
+         AND post.kind <> 'draft'
          AND ($8::boolean OR post.community_id IS NULL OR post.post_type = 'paper' OR community.visibility = 'public')
        UNION ALL
        SELECT
@@ -415,9 +418,10 @@ export const PROFILE_ACTIVITY_SQL = `WITH profile_activity AS (
        LEFT JOIN communities AS community ON community.id = post.community_id
        WHERE comment_action.actor_handle = $1
          AND comment_action.action = ANY($2::text[])
-         AND ($8::boolean OR comment_action.active = true)
+         AND comment_action.active = true
          AND post.deleted_at IS NULL
-         AND ($8::boolean OR (post.room <> 'office' AND post.kind <> 'draft'))
+         AND post.room <> 'office'
+         AND post.kind <> 'draft'
          AND ($8::boolean OR post.community_id IS NULL OR post.post_type = 'paper' OR community.visibility = 'public')
      )
      SELECT *
@@ -433,7 +437,7 @@ const listAuthoredProfileComments = async (
   client: PoolClient,
   actorHandle: string,
   query: ProfileActivityQueryContract,
-  includePrivateWorkspace: boolean
+  includeHiddenCommunityActivity: boolean
 ) => {
   if (!query.includeComments) {
     return { authoredComments: [], commentsNextCursor: null };
@@ -446,7 +450,7 @@ const listAuthoredProfileComments = async (
       cursor?.occurredAt ?? null,
       cursor?.commentId ?? "",
       query.limit + 1,
-      includePrivateWorkspace
+      includeHiddenCommunityActivity
     ]
   );
   const activities = result.rows.map((row): ProfileAuthoredCommentActivityContract => ({
@@ -469,14 +473,14 @@ export const listCanonicalProfileActivity = async (
   actorHandle: string,
   allowedActions: ToggleActionContract[],
   query: ProfileActivityQueryContract,
-  includeInactive: boolean
+  includeHiddenCommunityActivity: boolean
 ): Promise<ProfileActivityResponseContract> => {
   const countSummary = query.includeSummary
-    ? await profileActivityCountSummary(client, actorHandle, allowedActions, includeInactive)
+    ? await profileActivityCountSummary(client, actorHandle, allowedActions, includeHiddenCommunityActivity)
     : {};
   const requestedActions = new Set(query.actions ?? allowedActions);
   const activityActions = allowedActions.filter((action) => requestedActions.has(action));
-  const commentSummary = await listAuthoredProfileComments(client, actorHandle, query, includeInactive);
+  const commentSummary = await listAuthoredProfileComments(client, actorHandle, query, includeHiddenCommunityActivity);
   if (!activityActions.length) {
     return { entries: [], nextCursor: null, ...commentSummary, ...countSummary };
   }
@@ -491,7 +495,7 @@ export const listCanonicalProfileActivity = async (
       cursor?.subjectId ?? "",
       cursor?.action ?? "save",
       query.limit + 1,
-      includeInactive
+      includeHiddenCommunityActivity
     ]
   );
 

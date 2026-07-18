@@ -15,6 +15,9 @@ export const emptyProfileActivityCounts = (): ProfileActivityCountsContract => (
   saved: 0
 });
 
+export const profileItemIsInActivityScope = (item: InquiryItem) =>
+  item.room !== "office" && item.kind !== "draft";
+
 export const profileItemIsPubliclyListable = (
   item: InquiryItem,
   communities: ResearchCommunity[]
@@ -88,11 +91,11 @@ const scopedProfileActivityCounts = (
       const key = `comment:${comment.id}`;
       if (cleanHandle(comment.authorHandle ?? comment.author) === actorHandle) {
         comments.add(key);
-        all.add(key);
+        all.add(`comments:${key}`);
       }
       if (allowed.has("fork") && hasHandle(comment.forkedBy, actorHandle)) {
         reshares.add(key);
-        all.add(key);
+        all.add(`fork:${key}`);
       }
       if (allowed.has("signal") && hasHandle(comment.signaledBy, actorHandle)) likes.add(key);
       if (allowed.has("save") && hasHandle(comment.savedBy, actorHandle)) saved.add(key);
@@ -106,7 +109,7 @@ const scopedProfileActivityCounts = (
     if (!includePost && !includeComments) continue;
     const key = `post:${item.id}`;
     if (includePost && cleanHandle(item.authorHandle ?? item.author) === actorHandle) {
-      all.add(key);
+      all.add(`authored:${key}`);
       if (itemHasPostType(item, "paper")) authored.papers.add(key);
       if (itemHasPostType(item, "thought")) authored.thoughts.add(key);
       if (itemHasPostType(item, "proposal")) authored.proposals.add(key);
@@ -114,7 +117,7 @@ const scopedProfileActivityCounts = (
     }
     if (includePost && allowed.has("fork") && hasHandle(item.forkedBy, actorHandle)) {
       reshares.add(key);
-      all.add(key);
+      all.add(`fork:${key}`);
     }
     if (includePost && allowed.has("signal") && hasHandle(item.signaledBy, actorHandle)) likes.add(key);
     if (includePost && allowed.has("save") && hasHandle(item.savedBy, actorHandle)) saved.add(key);
@@ -137,10 +140,9 @@ const scopedProfileActivityCounts = (
 export const profileActivityCounts = (
   items: InquiryItem[],
   rawActorHandle: string,
-  allowedActions: ToggleActionContract[] = ["save", "signal", "fork"],
-  options: { includePrivateWorkspace?: boolean } = {}
+  allowedActions: ToggleActionContract[] = ["save", "signal", "fork"]
 ) => scopedProfileActivityCounts(items, rawActorHandle, allowedActions, (item) => {
-  const included = Boolean(options.includePrivateWorkspace) || (item.room !== "office" && item.kind !== "draft");
+  const included = profileItemIsInActivityScope(item);
   return { includeComments: included, includePost: included };
 });
 
@@ -150,8 +152,8 @@ export const hiddenCommunityActivityCounts = (
   rawActorHandle: string,
   allowedActions: ToggleActionContract[] = ["save", "signal", "fork"]
 ) => scopedProfileActivityCounts(items, rawActorHandle, allowedActions, (item) => ({
-  includePost: !profileItemIsPubliclyListable(item, communities),
-  includeComments: !profileCommentsArePubliclyListable(item, communities)
+  includePost: profileItemIsInActivityScope(item) && !profileItemIsPubliclyListable(item, communities),
+  includeComments: profileItemIsInActivityScope(item) && !profileCommentsArePubliclyListable(item, communities)
 }));
 
 export const applyProfileActivityActionTotalTransition = (

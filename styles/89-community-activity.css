@@ -64,6 +64,15 @@
   gap: 7px;
 }
 
+.profile-post-activity-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 820;
+}
+
 .profile-community-provenance {
   align-self: flex-start;
   margin: 0 0 0 auto;
