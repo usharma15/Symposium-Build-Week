@@ -42,7 +42,8 @@ export const buildApp = async (options: { logger?: boolean } = {}) => {
 
   await app.register(cors, {
     origin: webOrigins,
-    credentials: true
+    credentials: true,
+    methods: ["GET", "HEAD", "POST", "PATCH", "DELETE", "OPTIONS"]
   });
 
   app.setErrorHandler((error, _request, reply) => sendError(app, reply, error));

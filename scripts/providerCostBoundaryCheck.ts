@@ -48,6 +48,7 @@ assert.match(auth, /syncedHandleCacheTtlMs = 5 \* 60 \* 1000/);
 assert.match(dbClient, /max: env\.DATABASE_POOL_MAX/);
 assert.doesNotMatch(events, /getRedis|redis\.publish|symposium:events/);
 assert.doesNotMatch(server, /fastifyTRPCPlugin|attachRealtime|\/trpc\//);
+assert.match(server, /methods: \["GET", "HEAD", "POST", "PATCH", "DELETE", "OPTIONS"\]/);
 assert.doesNotMatch(packageJson, /"socket\.io"/);
 assert.match(apiClient, /source\.pathname\.replace/);
 assert.match(apiClient, /Authorization", `Bearer \$\{token\}`/);
