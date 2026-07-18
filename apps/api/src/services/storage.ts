@@ -74,6 +74,50 @@ const ruleAllowsBrowserUploads = (rule: CORSRule, origins: string[]) => {
     origins.every((origin) => allowedOrigins.has(origin));
 };
 
+const corsHeaderValues = (value: string | null) => new Set((value ?? "")
+  .split(",")
+  .map((entry) => entry.trim().toLowerCase())
+  .filter(Boolean));
+
+const verifyBrowserUploadPreflights = async (origins: string[]) => {
+  const probeUrl = await getSignedUrl(
+    getS3Client(),
+    new PutObjectCommand({
+      Bucket: env.R2_BUCKET,
+      Key: `system/cors-probe-${randomUUID()}`,
+      ContentType: "application/octet-stream"
+    }),
+    { expiresIn: 60 }
+  );
+  const missingOrigins: string[] = [];
+
+  for (const origin of origins) {
+    const response = await fetch(probeUrl, {
+      method: "OPTIONS",
+      headers: {
+        Origin: origin,
+        "Access-Control-Request-Method": "PUT",
+        "Access-Control-Request-Headers": "content-type"
+      }
+    });
+    const allowedOrigin = response.headers.get("access-control-allow-origin");
+    const allowedMethods = corsHeaderValues(response.headers.get("access-control-allow-methods"));
+    const allowedHeaders = corsHeaderValues(response.headers.get("access-control-allow-headers"));
+    if (
+      !response.ok ||
+      allowedOrigin !== origin ||
+      !allowedMethods.has("put") ||
+      (!allowedHeaders.has("*") && !allowedHeaders.has("content-type"))
+    ) {
+      missingOrigins.push(origin);
+    }
+  }
+
+  if (missingOrigins.length) {
+    throw new Error(`Missing exact R2 upload CORS for: ${missingOrigins.join(", ")}`);
+  }
+};
+
 export const getR2UploadCorsStatus = () => ({ ...uploadCorsStatus, origins: [...uploadCorsStatus.origins] });
 
 export const ensureR2BrowserUploadCors = async () => {
@@ -130,6 +174,22 @@ export const ensureR2BrowserUploadCors = async () => {
     };
     return uploadCorsStatus;
   } catch (error) {
+    const statusCode = (error as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
+    const name = error instanceof Error ? error.name : "";
+    if (statusCode === 403 || name === "AccessDenied") {
+      try {
+        await verifyBrowserUploadPreflights(origins);
+        uploadCorsStatus = {
+          checkedAt: new Date().toISOString(),
+          configured: true,
+          error: null,
+          origins
+        };
+        return uploadCorsStatus;
+      } catch (preflightError) {
+        error = preflightError;
+      }
+    }
     uploadCorsStatus = {
       checkedAt: new Date().toISOString(),
       configured: false,

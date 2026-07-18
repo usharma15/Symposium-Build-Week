@@ -140,6 +140,9 @@ const main = async () => {
   assert.match(storage, /origins\.every\(\(origin\) => allowedOrigins\.has\(origin\)\)/);
   assert.match(storage, /AllowedMethods:[\s\S]*"PUT"/);
   assert.match(storage, /AllowedHeaders:[\s\S]*"Content-Type"/);
+  assert.match(storage, /"Access-Control-Request-Method": "PUT"/);
+  assert.match(storage, /allowedOrigin !== origin/);
+  assert.match(storage, /statusCode === 403 \|\| name === "AccessDenied"/);
   assert.match(readiness, /key: "r2_upload_cors"/);
 
   const app = await buildApp({ logger: false });
