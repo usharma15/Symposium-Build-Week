@@ -1,6 +1,6 @@
 import { Pool, type PoolClient } from "pg";
 import { databaseUrl, env } from "../config/env";
-import { recordDatabaseQuery } from "../services/requestCosts";
+import { currentRequestCost, recordDatabaseQuery } from "../services/requestCosts";
 
 let pool: Pool | null = null;
 const instrumentedClient = Symbol("symposium.instrumented-pg-client");
@@ -12,11 +12,12 @@ const instrumentPoolClient = (client: PoolClient) => {
   const originalQuery = client.query.bind(client) as (...args: unknown[]) => unknown;
   (client as unknown as { query: (...args: unknown[]) => unknown }).query = (...rawArgs: unknown[]) => {
     const startedAt = performance.now();
+    const requestCost = currentRequestCost();
     const args = [...rawArgs];
     const callback = args.at(-1);
     if (typeof callback === "function") {
       args[args.length - 1] = (error: unknown, result: unknown) => {
-        recordDatabaseQuery(performance.now() - startedAt, Boolean(error));
+        recordDatabaseQuery(performance.now() - startedAt, Boolean(error), requestCost);
         (callback as (nextError: unknown, nextResult: unknown) => void)(error, result);
       };
       return originalQuery(...args);
@@ -26,19 +27,19 @@ const instrumentPoolClient = (client: PoolClient) => {
       if (result && typeof (result as PromiseLike<unknown>).then === "function") {
         return Promise.resolve(result).then(
           (value) => {
-            recordDatabaseQuery(performance.now() - startedAt);
+            recordDatabaseQuery(performance.now() - startedAt, false, requestCost);
             return value;
           },
           (error) => {
-            recordDatabaseQuery(performance.now() - startedAt, true);
+            recordDatabaseQuery(performance.now() - startedAt, true, requestCost);
             throw error;
           }
         );
       }
-      recordDatabaseQuery(performance.now() - startedAt);
+      recordDatabaseQuery(performance.now() - startedAt, false, requestCost);
       return result;
     } catch (error) {
-      recordDatabaseQuery(performance.now() - startedAt, true);
+      recordDatabaseQuery(performance.now() - startedAt, true, requestCost);
       throw error;
     }
   };

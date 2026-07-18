@@ -58,8 +58,14 @@ export const createRequestCostState = (): RequestCostState => ({
 export const runWithRequestCost = <T>(state: RequestCostState, callback: () => T): T =>
   requestCostStorage.run(state, callback);
 
-export const recordDatabaseQuery = (durationMs: number, failed = false) => {
-  const state = requestCostStorage.getStore();
+export const currentRequestCost = () => requestCostStorage.getStore();
+
+export const recordDatabaseQuery = (
+  durationMs: number,
+  failed = false,
+  capturedState: RequestCostState | undefined = requestCostStorage.getStore()
+) => {
+  const state = capturedState;
   if (!state) return;
   state.queryCount += 1;
   state.queryDurationMs += Math.max(0, durationMs);

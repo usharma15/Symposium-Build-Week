@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   completeRequestCost,
   createRequestCostState,
+  currentRequestCost,
   recordDatabaseQuery,
   requestCostBudget,
   responsePayloadBytes,
@@ -103,5 +104,15 @@ assert.equal(measuredSnapshot.queryDurationMs, 20);
 assert.deepEqual(measuredSnapshot.violations, []);
 assert.equal(requestCostBudget("GET", "/v1/profiles/:handle/activity").queryCount, 14);
 assert.equal(responsePayloadBytes("measured"), 8);
+
+const delayedCost = createRequestCostState();
+let finishDelayedQuery: (() => void) | undefined;
+runWithRequestCost(delayedCost, () => {
+  const capturedState = currentRequestCost();
+  finishDelayedQuery = () => recordDatabaseQuery(9, false, capturedState);
+});
+finishDelayedQuery?.();
+assert.equal(delayedCost.queryCount, 1, "Database timing must retain the originating request after async context changes.");
+assert.equal(delayedCost.queryDurationMs, 9);
 
 console.log("Provider cost boundary checks passed.");
