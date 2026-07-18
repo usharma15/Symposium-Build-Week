@@ -851,7 +851,8 @@ export const profileActivityCountsSchema = z.object({
 export const profileActivityResponseSchema = z.object({
   entries: z.array(canonicalActionActivitySchema),
   nextCursor: z.string().nullable(),
-  hiddenCommunityCounts: profileActivityCountsSchema
+  hiddenCommunityCounts: profileActivityCountsSchema,
+  totals: profileActivityCountsSchema.optional()
 });
 
 export const joinCommunityInputSchema = z.object({

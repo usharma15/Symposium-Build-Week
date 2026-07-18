@@ -6,7 +6,7 @@ import {
   type ProfileActivityResponseContract,
   type ToggleActionContract
 } from "../../../../packages/contracts/src";
-import { buildLegacyProfileActivity, emptyProfileActivityCounts, hiddenCommunityActivityCounts, profileItemIsPubliclyListable } from "@/lib/profileActivity";
+import { buildLegacyProfileActivity, emptyProfileActivityCounts, hiddenCommunityActivityCounts, profileActivityCounts, profileItemIsPubliclyListable } from "@/lib/profileActivity";
 import { researchCommunities } from "@/lib/mockData";
 import { cleanHandle } from "@/lib/symposiumCore";
 import { getPool, hasDatabase } from "../db/client";
@@ -50,7 +50,8 @@ export const listProfileActivity = async (
       nextCursor: null,
       hiddenCommunityCounts: ownProfile
         ? emptyProfileActivityCounts()
-        : hiddenCommunityActivityCounts(snapshot.items, researchCommunities, handle, allowedActions)
+        : hiddenCommunityActivityCounts(snapshot.items, researchCommunities, handle, allowedActions),
+      totals: profileActivityCounts(snapshot.items, handle, allowedActions, { includePrivateWorkspace: ownProfile })
     };
   }
 

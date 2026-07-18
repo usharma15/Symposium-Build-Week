@@ -62,11 +62,11 @@ export const itemHasProfileActivity = (item: InquiryItem, rawActorHandle: string
     || (item.comments ?? []).some((comment) => commentHasProfileActivity(comment, actorHandle));
 };
 
-export const hiddenCommunityActivityCounts = (
+const scopedProfileActivityCounts = (
   items: InquiryItem[],
-  communities: ResearchCommunity[],
   rawActorHandle: string,
-  allowedActions: ToggleActionContract[] = ["save", "signal", "fork"]
+  allowedActions: ToggleActionContract[],
+  scopeForItem: (item: InquiryItem) => { includeComments: boolean; includePost: boolean }
 ): ProfileActivityCountsContract => {
   const actorHandle = cleanHandle(rawActorHandle);
   const allowed = new Set(allowedActions);
@@ -103,11 +103,10 @@ export const hiddenCommunityActivityCounts = (
 
   for (const item of items) {
     if (isDeletedPost(item)) continue;
-    const hiddenPost = !profileItemIsPubliclyListable(item, communities);
-    const hiddenComments = !profileCommentsArePubliclyListable(item, communities);
-    if (!hiddenPost && !hiddenComments) continue;
+    const { includeComments, includePost } = scopeForItem(item);
+    if (!includePost && !includeComments) continue;
     const key = `post:${item.id}`;
-    if (hiddenPost && cleanHandle(item.authorHandle ?? item.author) === actorHandle) {
+    if (includePost && cleanHandle(item.authorHandle ?? item.author) === actorHandle) {
       all.add(key);
       if (itemHasPostType(item, "paper")) authored.papers.add(key);
       if (itemHasPostType(item, "thought")) authored.thoughts.add(key);
@@ -115,13 +114,13 @@ export const hiddenCommunityActivityCounts = (
       if (itemHasPostType(item, "opportunity")) authored.opportunities.add(key);
       if (item.quote && allowed.has("fork")) reshares.add(key);
     }
-    if (hiddenPost && allowed.has("fork") && hasHandle(item.forkedBy, actorHandle)) {
+    if (includePost && allowed.has("fork") && hasHandle(item.forkedBy, actorHandle)) {
       reshares.add(key);
       all.add(key);
     }
-    if (hiddenPost && allowed.has("signal") && hasHandle(item.signaledBy, actorHandle)) likes.add(key);
-    if (hiddenPost && allowed.has("save") && hasHandle(item.savedBy, actorHandle)) saved.add(key);
-    if (hiddenComments) visitComments(item, item.comments);
+    if (includePost && allowed.has("signal") && hasHandle(item.signaledBy, actorHandle)) likes.add(key);
+    if (includePost && allowed.has("save") && hasHandle(item.savedBy, actorHandle)) saved.add(key);
+    if (includeComments) visitComments(item, item.comments);
   }
 
   return {
@@ -134,6 +133,43 @@ export const hiddenCommunityActivityCounts = (
     reshares: reshares.size,
     likes: likes.size,
     saved: saved.size
+  };
+};
+
+export const profileActivityCounts = (
+  items: InquiryItem[],
+  rawActorHandle: string,
+  allowedActions: ToggleActionContract[] = ["save", "signal", "fork"],
+  options: { includePrivateWorkspace?: boolean } = {}
+) => scopedProfileActivityCounts(items, rawActorHandle, allowedActions, (item) => {
+  const included = Boolean(options.includePrivateWorkspace) || (item.room !== "office" && item.kind !== "draft");
+  return { includeComments: included, includePost: included };
+});
+
+export const hiddenCommunityActivityCounts = (
+  items: InquiryItem[],
+  communities: ResearchCommunity[],
+  rawActorHandle: string,
+  allowedActions: ToggleActionContract[] = ["save", "signal", "fork"]
+) => scopedProfileActivityCounts(items, rawActorHandle, allowedActions, (item) => ({
+  includePost: !profileItemIsPubliclyListable(item, communities),
+  includeComments: !profileCommentsArePubliclyListable(item, communities)
+}));
+
+export const applyProfileActivityActionTotalTransition = (
+  totals: ProfileActivityCountsContract,
+  action: ToggleActionContract,
+  previousActive: boolean,
+  nextActive: boolean,
+  includeReshareInAll: boolean
+): ProfileActivityCountsContract => {
+  const delta = Number(nextActive) - Number(previousActive);
+  if (!delta) return totals;
+  const key = action === "signal" ? "likes" : action === "save" ? "saved" : "reshares";
+  return {
+    ...totals,
+    [key]: Math.max(0, totals[key] + delta),
+    all: action === "fork" && includeReshareInAll ? Math.max(0, totals.all + delta) : totals.all
   };
 };
 

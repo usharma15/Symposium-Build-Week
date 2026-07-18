@@ -2,7 +2,7 @@ import { getSnapshot } from "@/lib/dataStore";
 import { proxyLiveBackend } from "@/lib/liveBackendClient";
 import { cleanHandle } from "@/lib/symposiumCore";
 import type { ToggleActionContract } from "@/packages/contracts/src";
-import { emptyProfileActivityCounts, hiddenCommunityActivityCounts, profileCommentsArePubliclyListable, profileItemIsPubliclyListable } from "@/lib/profileActivity";
+import { emptyProfileActivityCounts, hiddenCommunityActivityCounts, profileActivityCounts, profileCommentsArePubliclyListable, profileItemIsPubliclyListable } from "@/lib/profileActivity";
 import { listLocalCommunities } from "@/lib/localCommunityStore";
 
 export const runtime = "nodejs";
@@ -83,6 +83,7 @@ export async function GET(request: Request, context: Context) {
         : null,
     hiddenCommunityCounts: ownProfile
       ? emptyProfileActivityCounts()
-      : hiddenCommunityActivityCounts(snapshot.items, communities, targetHandle, allowedActions)
+      : hiddenCommunityActivityCounts(snapshot.items, communities, targetHandle, allowedActions),
+    totals: profileActivityCounts(snapshot.items, targetHandle, allowedActions, { includePrivateWorkspace: ownProfile })
   });
 }

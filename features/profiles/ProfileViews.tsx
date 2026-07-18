@@ -215,6 +215,8 @@ export function ProfileView({
   canonicalActivityLoaded,
   canonicalActivityError,
   canonicalActivityComplete,
+  canonicalActivityTotals,
+  authoredActivityComplete,
   activityLoadingMore,
   hiddenCommunityCounts,
   communities,
@@ -259,6 +261,8 @@ export function ProfileView({
   canonicalActivityLoaded: boolean;
   canonicalActivityError: boolean;
   canonicalActivityComplete: boolean;
+  canonicalActivityTotals?: ProfileActivityCountsContract;
+  authoredActivityComplete: boolean;
   activityLoadingMore: boolean;
   hiddenCommunityCounts: ProfileActivityCountsContract;
   communities: ResearchCommunity[];
@@ -425,6 +429,8 @@ export function ProfileView({
     likes: likeEntries.length + commentLikeEntries.length + hiddenCounts.likes,
     saved: savedEntries.length + commentSavedEntries.length + hiddenCounts.saved
   };
+  const activityTotals = canonicalActivityTotals ?? tabCounts;
+  const hasMoreActivity = !canonicalActivityComplete || !authoredActivityComplete;
 
   const tabs: Array<{ id: ProfileTab; label: string }> = [
     { id: "all", label: "All" },
@@ -539,7 +545,13 @@ export function ProfileView({
                 className={activeTab === tab.id ? "active" : ""}
                 onNavigate={() => onActiveTabChange(tab.id)}
               >
-                <strong>{canonicalActivityLoaded ? `${tabCounts[tab.id]}${canonicalActivityComplete ? "" : "+"}` : "—"}</strong>
+                <strong>
+                  {canonicalActivityLoaded
+                    ? canonicalActivityTotals
+                      ? activityTotals[tab.id]
+                      : `${tabCounts[tab.id]}${canonicalActivityComplete ? "" : "+"}`
+                    : "—"}
+                </strong>
                 <span>{tab.label}</span>
               </CanonicalLink>
             ))}
@@ -606,17 +618,25 @@ export function ProfileView({
             )
           )}
           <InfiniteFeedBoundary
-            hasMore={!canonicalActivityComplete}
+            hasMore={hasMoreActivity}
             loading={activityLoadingMore}
             onLoadMore={onLoadMoreActivity}
             label="activity"
           />
           </>
         ) : (
+          <>
           <div className="empty-feed">
             <strong>No items here yet.</strong>
             <span>This section will fill as the profile has more activity.</span>
           </div>
+          <InfiniteFeedBoundary
+            hasMore={hasMoreActivity}
+            loading={activityLoadingMore}
+            onLoadMore={onLoadMoreActivity}
+            label="activity"
+          />
+          </>
         )}
       </section>
 

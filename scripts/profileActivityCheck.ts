@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { PROFILE_ACTIVITY_SQL } from "@/apps/api/src/repository/actions";
+import { PROFILE_ACTIVITY_COUNTS_SQL, PROFILE_ACTIVITY_SQL } from "@/apps/api/src/repository/actions";
 import type { InquiryItem, ResearchProfile } from "@/lib/mockData";
 import {
+  applyProfileActivityActionTotalTransition,
   itemMatchesProfilePostAction,
+  profileActivityCounts,
   profileCommentsArePubliclyListable,
   profileItemIsPubliclyListable,
   reconcileProfileActivitySlots,
@@ -82,6 +84,42 @@ assert.equal(itemMatchesProfilePostAction(item, person, "signal"), true);
 assert.equal(itemMatchesProfilePostAction(item, person, "fork"), true);
 assert.equal(itemMatchesProfilePostAction({ ...item, deletedAt: new Date().toISOString() }, person, "save"), false);
 
+const exactCounts = profileActivityCounts([
+  item,
+  {
+    ...item,
+    id: "other-work",
+    author: "Grace Hopper",
+    authorHandle: "@grace",
+    comments: [{
+      id: "ada-comment",
+      author: person.name,
+      authorHandle: person.handle,
+      body: "A canonical profile comment.",
+      stance: "Comment",
+      replies: [],
+      savedBy: [person.handle],
+      signaledBy: [person.handle],
+      forkedBy: []
+    }]
+  }
+], person.handle);
+assert.deepEqual(exactCounts, {
+  all: 3,
+  papers: 0,
+  thoughts: 1,
+  proposals: 0,
+  opportunities: 0,
+  comments: 1,
+  reshares: 2,
+  likes: 3,
+  saved: 3
+});
+assert.deepEqual(
+  applyProfileActivityActionTotalTransition(exactCounts, "signal", true, false, false),
+  { ...exactCounts, likes: 2 }
+);
+
 const unique = uniqueProfileActivityEntries(
   [
     { id: "authored", contentId: item.id, recency: 10 },
@@ -131,7 +169,9 @@ assert.deepEqual(
 
 const profileViews = readFileSync(path.join(process.cwd(), "features/profiles/ProfileViews.tsx"), "utf8");
 assert.match(profileViews, /aria-busy={!canonicalActivityLoaded}/);
-assert.match(profileViews, /canonicalActivityLoaded \? `\$\{tabCounts\[tab\.id\]\}/);
+assert.match(profileViews, /canonicalActivityTotals\s+\? activityTotals\[tab\.id\]/);
+assert.match(profileViews, /canonicalActivityComplete \? "" : "\+"/);
+assert.match(profileViews, /!canonicalActivityComplete \|\| !authoredActivityComplete/);
 assert.match(profileViews, /InfiniteFeedBoundary/);
 assert.match(profileViews, /onLoadMore=\{onLoadMoreActivity\}/);
 assert.match(profileViews, /Counts and post order will appear together when they are authoritative\./);
@@ -158,6 +198,20 @@ assert.ok(
   PROFILE_ACTIVITY_SQL.includes("$8::boolean OR post.community_id IS NULL"),
   "A profile owner must receive their complete private-community activity ledger."
 );
+for (const exactCountBoundary of [
+  "totalAll",
+  "totalPapers",
+  "totalComments",
+  "totalReshares",
+  "totalLikes",
+  "totalSaved",
+  "hiddenAll"
+]) {
+  assert.ok(
+    PROFILE_ACTIVITY_COUNTS_SQL.includes(exactCountBoundary),
+    `Profile activity must project ${exactCountBoundary} independently of cursor pagination.`
+  );
+}
 
 console.log(
   JSON.stringify(
@@ -169,6 +223,9 @@ console.log(
         "live slot reconciliation",
         "loading-to-canonical first-frame replacement",
         "authoritative profile count and order loading boundary",
+        "cursor-independent exact activity totals",
+        "instant optimistic total transitions",
+        "independent authored-post and action-ledger pagination",
         "profile tab isolation",
         "public-community authored post visibility",
         "private-community paper discussion visibility",

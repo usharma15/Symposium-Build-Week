@@ -58,6 +58,7 @@ import {
   updateSignalValue
 } from "@/lib/symposiumCore";
 import {
+  applyProfileActivityActionTotalTransition,
   canonicalActionState,
   canonicalActivityKey,
   createLocalCanonicalActivity,
@@ -250,7 +251,13 @@ type LiveEventPayload = {
   revision?: number;
 };
 
-type ProfileActivitySnapshot = { entries: CanonicalActionActivityContract[]; loaded: boolean; nextCursor: string | null; hiddenCommunityCounts: ProfileActivityCountsContract };
+type ProfileActivitySnapshot = {
+  entries: CanonicalActionActivityContract[];
+  loaded: boolean;
+  nextCursor: string | null;
+  hiddenCommunityCounts: ProfileActivityCountsContract;
+  totals?: ProfileActivityCountsContract;
+};
 
 type SymposiumLiveEvent = {
   id?: string;
@@ -1427,6 +1434,18 @@ function SymposiumExperience({
       ...(selected?.handle ? [refreshProfileFollows(selected.handle), refreshProfileActivity(selected.handle, handle)] : [])];
   });
 
+  const scheduleProfileActivityRefresh = useCoalescedRefresh(() => {
+    const viewerHandle = currentProfileRef.current.handle;
+    const selectedKey = selectedProfileNameRef.current;
+    const selected = selectedKey
+      ? profilesRef.current[selectedKey]
+        ?? Object.values(profilesRef.current).find((person) => person.name === selectedKey)
+        ?? getProfileForName(selectedKey)
+      : null;
+    const handles = Array.from(new Set([viewerHandle, selected?.handle].filter((handle): handle is string => Boolean(handle))));
+    return handles.map((handle) => refreshProfileActivity(handle, viewerHandle));
+  });
+
   const invalidateLiveQuotedSource = (source: QuoteSelection) => {
     const current = itemsRef.current;
     const next = invalidateQuotedSource(current, source);
@@ -1463,6 +1482,7 @@ function SymposiumExperience({
       } else {
         scheduleLiveRefresh();
       }
+      scheduleProfileActivityRefresh();
       return;
     }
 
@@ -1537,6 +1557,7 @@ function SymposiumExperience({
       }
 
       mergeLiveItem(payload.item);
+      scheduleProfileActivityRefresh();
       return;
     }
 
@@ -1865,6 +1886,19 @@ function SymposiumExperience({
     if (update) recordActivityRecency(update, Boolean(selectedProfileNameRef.current));
   };
 
+  const profileReshareAddsToAll = (activity: CanonicalActionActivityContract) => {
+    if (activity.action !== "fork") return false;
+    const item = itemsRef.current.find((candidate) => candidate.id === activity.postId);
+    if (!item) return false;
+    if (activity.subjectType === "post") {
+      return cleanHandle(item.authorHandle ?? item.author) !== cleanHandle(activity.actorHandle);
+    }
+    const comment = findCommentById(item.comments, activity.subjectId);
+    return Boolean(
+      comment && cleanHandle(comment.authorHandle ?? comment.author) !== cleanHandle(activity.actorHandle)
+    );
+  };
+
   const acceptCanonicalActivity = (activity: CanonicalActionActivityContract) => {
     const key = canonicalActivityKey(activity);
     const currentRevision = canonicalActionRevisionRef.current[key] ?? 0;
@@ -1875,9 +1909,25 @@ function SymposiumExperience({
     const handle = cleanHandle(activity.actorHandle);
     const current = profileActivityByHandleRef.current[handle]
       ?? { entries: [], loaded: false, nextCursor: null, hiddenCommunityCounts: emptyProfileActivityCounts() };
+    const previous = canonicalActionState(
+      current.entries,
+      activity.subjectType,
+      activity.subjectId,
+      handle,
+      activity.action
+    );
     setProfileActivitySnapshot(handle, {
       ...current,
-      entries: mergeCanonicalActivities(current.entries, [activity])
+      entries: mergeCanonicalActivities(current.entries, [activity]),
+      totals: current.totals
+        ? applyProfileActivityActionTotalTransition(
+            current.totals,
+            activity.action,
+            previous?.active ?? false,
+            activity.active,
+            profileReshareAddsToAll(activity)
+          )
+        : undefined
     });
     recordCanonicalActivityRecency(activity);
     return true;
@@ -1917,7 +1967,8 @@ function SymposiumExperience({
       entries,
       loaded: true,
       nextCursor: response.nextCursor,
-      hiddenCommunityCounts: response.hiddenCommunityCounts
+      hiddenCommunityCounts: response.hiddenCommunityCounts,
+      totals: response.totals
     });
   };
 
@@ -1979,7 +2030,8 @@ function SymposiumExperience({
       replaceCanonicalProfileActivity(clean, {
         entries,
         nextCursor: typeof data.nextCursor === "string" ? data.nextCursor : null,
-        hiddenCommunityCounts: data.hiddenCommunityCounts ?? existingSnapshot?.hiddenCommunityCounts ?? emptyProfileActivityCounts()
+        hiddenCommunityCounts: data.hiddenCommunityCounts ?? existingSnapshot?.hiddenCommunityCounts ?? emptyProfileActivityCounts(),
+        totals: data.totals ?? existingSnapshot?.totals
       }, requestStartRevisions, append);
     })().catch((error) => {
       if (profileActivityRequestRef.current[clean] === requestId) {
@@ -2017,7 +2069,16 @@ function SymposiumExperience({
     };
     setProfileActivitySnapshot(handle, {
       ...current,
-      entries: mergeCanonicalActivities(current.entries, [optimistic])
+      entries: mergeCanonicalActivities(current.entries, [optimistic]),
+      totals: current.totals
+        ? applyProfileActivityActionTotalTransition(
+            current.totals,
+            action,
+            previous?.active ?? false,
+            active,
+            profileReshareAddsToAll(optimistic)
+          )
+        : undefined
     });
     return previous;
   };
@@ -2034,9 +2095,23 @@ function SymposiumExperience({
     if (!current) return;
     const key = canonicalActivityKey({ subjectType, subjectId, actorHandle: handle, action });
     pendingCanonicalActionKeysRef.current.delete(key);
+    const optimistic = canonicalActionState(current.entries, subjectType, subjectId, handle, action);
+    const subjectActivity = optimistic ?? previous;
     const entries = current.entries.filter((activity) => canonicalActivityKey(activity) !== key);
     if (previous) entries.push(previous);
-    setProfileActivitySnapshot(handle, { ...current, entries: mergeCanonicalActivities([], entries) });
+    setProfileActivitySnapshot(handle, {
+      ...current,
+      entries: mergeCanonicalActivities([], entries),
+      totals: current.totals
+        ? applyProfileActivityActionTotalTransition(
+            current.totals,
+            action,
+            optimistic?.active ?? false,
+            previous?.active ?? false,
+            subjectActivity ? profileReshareAddsToAll(subjectActivity) : false
+          )
+        : undefined
+    });
   };
 
   const canonicalActionWasCommitted = (
@@ -3744,9 +3819,13 @@ function SymposiumExperience({
             canonicalActivityLoaded={profileActivityByHandle[selectedProfile.handle]?.loaded ?? false}
             canonicalActivityError={Boolean(profileActivityErrors[selectedProfile.handle])}
             canonicalActivityComplete={!profileActivityByHandle[selectedProfile.handle]?.nextCursor}
-            activityLoadingMore={Boolean(profileActivityInFlightRef.current[
-              `${selectedProfile.handle}:${currentProfile.handle}:${profileActivityByHandle[selectedProfile.handle]?.nextCursor ?? "first"}`
-            ])}
+            canonicalActivityTotals={profileActivityByHandle[selectedProfile.handle]?.totals}
+            authoredActivityComplete={!feedPages[`profile:${selectedProfile.handle}:authored`]?.nextCursor}
+            activityLoadingMore={Boolean(
+              profileActivityInFlightRef.current[
+                `${selectedProfile.handle}:${currentProfile.handle}:${profileActivityByHandle[selectedProfile.handle]?.nextCursor ?? "first"}`
+              ] || feedPages[`profile:${selectedProfile.handle}:authored`]?.loading
+            )}
             hiddenCommunityCounts={profileActivityByHandle[selectedProfile.handle]?.hiddenCommunityCounts ?? emptyProfileActivityCounts()}
             communities={communities}
             onOpenCommunity={openCommunity}
@@ -3755,7 +3834,15 @@ function SymposiumExperience({
               void refreshProfileActivity(selectedProfile.handle, currentProfile.handle).catch(() => undefined);
             }}
             onLoadMoreActivity={() => {
-              void refreshProfileActivity(selectedProfile.handle, currentProfile.handle, true).catch(() => undefined);
+              const tasks: Promise<unknown>[] = [];
+              if (profileActivityByHandle[selectedProfile.handle]?.nextCursor) {
+                tasks.push(refreshProfileActivity(selectedProfile.handle, currentProfile.handle, true));
+              }
+              const postPageKey = `profile:${selectedProfile.handle}:authored`;
+              if (feedPages[postPageKey]?.nextCursor) {
+                tasks.push(loadPostPage(postPageKey, { authorHandle: selectedProfile.handle, limit: 24 }, true));
+              }
+              void Promise.all(tasks).catch(() => setSyncStatus("More profile activity could not load"));
             }}
             onSocialViewChange={changeProfileSocialView}
             onEditPost={setEditingPost}

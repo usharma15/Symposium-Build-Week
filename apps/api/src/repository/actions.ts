@@ -196,122 +196,133 @@ type ProfileActivityRow = ActionLedgerRow & {
   postId: string;
 };
 
-type HiddenCommunityActivityRow = ProfileActivityCountsContract & { allWithoutReshares: number };
-
-const hiddenCommunityActivityCounts = async (
-  client: PoolClient,
-  actorHandle: string,
-  allowedActions: ToggleActionContract[]
-): Promise<ProfileActivityCountsContract> => {
-  const result = await client.query<HiddenCommunityActivityRow>(
-    `WITH private_community_posts AS (
-       SELECT post.id, post.post_type, post.author_handle, post.quote
+export const PROFILE_ACTIVITY_COUNTS_SQL = `WITH scoped_posts AS (
+       SELECT
+         post.id,
+         post.post_type,
+         post.author_handle,
+         post.quote,
+         COALESCE(community.visibility = 'private' AND post.post_type IS DISTINCT FROM 'paper', false) AS hidden
        FROM posts post
-       INNER JOIN communities community ON community.id = post.community_id
-       WHERE community.visibility = 'private'
-         AND post.deleted_at IS NULL
-         AND post.room <> 'office'
-         AND post.kind <> 'draft'
-     ),
-     hidden_posts AS (
-       SELECT * FROM private_community_posts WHERE post_type IS DISTINCT FROM 'paper'
+       LEFT JOIN communities community ON community.id = post.community_id
+       WHERE post.deleted_at IS NULL
+         AND ($2::boolean OR (post.room <> 'office' AND post.kind <> 'draft'))
      ),
      authored_posts AS (
-       SELECT ('post:' || post.id) AS key, post.post_type, post.quote
-       FROM hidden_posts post
+       SELECT ('post:' || post.id) AS key, post.post_type, post.quote, post.hidden
+       FROM scoped_posts post
        WHERE post.author_handle = $1
      ),
-     hidden_comments AS (
-       SELECT comment.id, comment.author_handle, comment.quote
+     scoped_comments AS (
+       SELECT comment.id, comment.author_handle, comment.quote, post.hidden
        FROM comments comment
-       INNER JOIN hidden_posts post ON post.id = comment.post_id
+       INNER JOIN scoped_posts post ON post.id = comment.post_id
        WHERE comment.deleted_at IS NULL
      ),
      authored_comments AS (
-       SELECT ('comment:' || comment.id) AS key, comment.quote
-       FROM hidden_comments comment
+       SELECT ('comment:' || comment.id) AS key, comment.quote, comment.hidden
+       FROM scoped_comments comment
        WHERE comment.author_handle = $1
      ),
      fork_subjects AS (
-       SELECT ('post:' || action.post_id) AS key
+       SELECT ('post:' || action.post_id) AS key, post.hidden
        FROM post_actions action
-       INNER JOIN hidden_posts post ON post.id = action.post_id
+       INNER JOIN scoped_posts post ON post.id = action.post_id
        WHERE action.actor_handle = $1 AND action.action = 'fork' AND action.active = true
        UNION
-       SELECT ('comment:' || action.comment_id) AS key
+       SELECT ('comment:' || action.comment_id) AS key, comment.hidden
        FROM comment_actions action
-       INNER JOIN hidden_comments comment ON comment.id = action.comment_id
+       INNER JOIN scoped_comments comment ON comment.id = action.comment_id
        WHERE action.actor_handle = $1 AND action.action = 'fork' AND action.active = true
        UNION
-       SELECT key FROM authored_posts WHERE quote IS NOT NULL
+       SELECT key, hidden FROM authored_posts WHERE quote IS NOT NULL
        UNION
-       SELECT key FROM authored_comments WHERE quote IS NOT NULL
+       SELECT key, hidden FROM authored_comments WHERE quote IS NOT NULL
      ),
      like_subjects AS (
-       SELECT ('post:' || action.post_id) AS key
+       SELECT ('post:' || action.post_id) AS key, post.hidden
        FROM post_actions action
-       INNER JOIN hidden_posts post ON post.id = action.post_id
+       INNER JOIN scoped_posts post ON post.id = action.post_id
        WHERE action.actor_handle = $1 AND action.action = 'signal' AND action.active = true
        UNION
-       SELECT ('comment:' || action.comment_id) AS key
+       SELECT ('comment:' || action.comment_id) AS key, comment.hidden
        FROM comment_actions action
-       INNER JOIN hidden_comments comment ON comment.id = action.comment_id
+       INNER JOIN scoped_comments comment ON comment.id = action.comment_id
        WHERE action.actor_handle = $1 AND action.action = 'signal' AND action.active = true
      ),
      saved_subjects AS (
-       SELECT ('post:' || action.post_id) AS key
+       SELECT ('post:' || action.post_id) AS key, post.hidden
        FROM post_actions action
-       INNER JOIN hidden_posts post ON post.id = action.post_id
+       INNER JOIN scoped_posts post ON post.id = action.post_id
        WHERE action.actor_handle = $1 AND action.action = 'save' AND action.active = true
        UNION
-       SELECT ('comment:' || action.comment_id) AS key
+       SELECT ('comment:' || action.comment_id) AS key, comment.hidden
        FROM comment_actions action
-       INNER JOIN hidden_comments comment ON comment.id = action.comment_id
+       INNER JOIN scoped_comments comment ON comment.id = action.comment_id
        WHERE action.actor_handle = $1 AND action.action = 'save' AND action.active = true
      ),
      base_all AS (
-       SELECT key FROM authored_posts
-       UNION SELECT key FROM authored_comments
+       SELECT key, hidden FROM authored_posts
+       UNION SELECT key, hidden FROM authored_comments
      ),
      complete_all AS (
-       SELECT key FROM base_all
-       UNION SELECT key FROM fork_subjects
+       SELECT key, hidden FROM base_all
+       UNION SELECT key, hidden FROM fork_subjects
      )
      SELECT
-       (SELECT count(*)::int FROM complete_all) AS "all",
-       (SELECT count(*)::int FROM base_all) AS "allWithoutReshares",
-       0::int AS papers,
-       (SELECT count(*)::int FROM authored_posts WHERE post_type = 'thought') AS thoughts,
-       (SELECT count(*)::int FROM authored_posts WHERE post_type = 'proposal') AS proposals,
-       (SELECT count(*)::int FROM authored_posts WHERE post_type = 'opportunity') AS opportunities,
-       (SELECT count(*)::int FROM authored_comments) AS comments,
-       (SELECT count(*)::int FROM fork_subjects) AS reshares,
-       (SELECT count(*)::int FROM like_subjects) AS likes,
-       (SELECT count(*)::int FROM saved_subjects) AS saved`,
-    [actorHandle]
+       (SELECT count(*)::int FROM complete_all) AS "totalAll",
+       (SELECT count(*)::int FROM base_all) AS "totalAllWithoutReshares",
+       (SELECT count(*)::int FROM authored_posts WHERE post_type = 'paper') AS "totalPapers",
+       (SELECT count(*)::int FROM authored_posts WHERE post_type = 'thought') AS "totalThoughts",
+       (SELECT count(*)::int FROM authored_posts WHERE post_type = 'proposal') AS "totalProposals",
+       (SELECT count(*)::int FROM authored_posts WHERE post_type = 'opportunity') AS "totalOpportunities",
+       (SELECT count(*)::int FROM authored_comments) AS "totalComments",
+       (SELECT count(*)::int FROM fork_subjects) AS "totalReshares",
+       (SELECT count(*)::int FROM like_subjects) AS "totalLikes",
+       (SELECT count(*)::int FROM saved_subjects) AS "totalSaved",
+       (SELECT count(*)::int FROM complete_all WHERE hidden) AS "hiddenAll",
+       (SELECT count(*)::int FROM base_all WHERE hidden) AS "hiddenAllWithoutReshares",
+       (SELECT count(*)::int FROM authored_posts WHERE hidden AND post_type = 'paper') AS "hiddenPapers",
+       (SELECT count(*)::int FROM authored_posts WHERE hidden AND post_type = 'thought') AS "hiddenThoughts",
+       (SELECT count(*)::int FROM authored_posts WHERE hidden AND post_type = 'proposal') AS "hiddenProposals",
+       (SELECT count(*)::int FROM authored_posts WHERE hidden AND post_type = 'opportunity') AS "hiddenOpportunities",
+       (SELECT count(*)::int FROM authored_comments WHERE hidden) AS "hiddenComments",
+       (SELECT count(*)::int FROM fork_subjects WHERE hidden) AS "hiddenReshares",
+       (SELECT count(*)::int FROM like_subjects WHERE hidden) AS "hiddenLikes",
+       (SELECT count(*)::int FROM saved_subjects WHERE hidden) AS "hiddenSaved"`;
+
+const activityCountsFromRow = (
+  row: Record<string, unknown>,
+  prefix: "total" | "hidden",
+  allowedActions: ToggleActionContract[]
+): ProfileActivityCountsContract => ({
+  all: Number(row[allowedActions.includes("fork") ? `${prefix}All` : `${prefix}AllWithoutReshares`] ?? 0),
+  papers: Number(row[`${prefix}Papers`] ?? 0),
+  thoughts: Number(row[`${prefix}Thoughts`] ?? 0),
+  proposals: Number(row[`${prefix}Proposals`] ?? 0),
+  opportunities: Number(row[`${prefix}Opportunities`] ?? 0),
+  comments: Number(row[`${prefix}Comments`] ?? 0),
+  reshares: allowedActions.includes("fork") ? Number(row[`${prefix}Reshares`] ?? 0) : 0,
+  likes: allowedActions.includes("signal") ? Number(row[`${prefix}Likes`] ?? 0) : 0,
+  saved: allowedActions.includes("save") ? Number(row[`${prefix}Saved`] ?? 0) : 0
+});
+
+const profileActivityCountSummary = async (
+  client: PoolClient,
+  actorHandle: string,
+  allowedActions: ToggleActionContract[],
+  includePrivateWorkspace: boolean
+) => {
+  const result = await client.query<Record<string, unknown>>(
+    PROFILE_ACTIVITY_COUNTS_SQL,
+    [actorHandle, includePrivateWorkspace]
   );
-  const counts = result.rows[0] ?? {
-    all: 0,
-    allWithoutReshares: 0,
-    papers: 0,
-    thoughts: 0,
-    proposals: 0,
-    opportunities: 0,
-    comments: 0,
-    reshares: 0,
-    likes: 0,
-    saved: 0
-  };
+  const row = result.rows[0] ?? {};
   return {
-    all: allowedActions.includes("fork") ? Number(counts.all) : Number(counts.allWithoutReshares),
-    papers: 0,
-    thoughts: Number(counts.thoughts),
-    proposals: Number(counts.proposals),
-    opportunities: Number(counts.opportunities),
-    comments: Number(counts.comments),
-    reshares: allowedActions.includes("fork") ? Number(counts.reshares) : 0,
-    likes: allowedActions.includes("signal") ? Number(counts.likes) : 0,
-    saved: allowedActions.includes("save") ? Number(counts.saved) : 0
+    totals: activityCountsFromRow(row, "total", allowedActions),
+    hiddenCommunityCounts: includePrivateWorkspace
+      ? { all: 0, papers: 0, thoughts: 0, proposals: 0, opportunities: 0, comments: 0, reshares: 0, likes: 0, saved: 0 }
+      : activityCountsFromRow(row, "hidden", allowedActions)
   };
 };
 
@@ -372,10 +383,8 @@ export const listCanonicalProfileActivity = async (
   query: ProfileActivityQueryContract,
   includeInactive: boolean
 ): Promise<ProfileActivityResponseContract> => {
-  const hiddenCommunityCounts = includeInactive
-    ? { all: 0, papers: 0, thoughts: 0, proposals: 0, opportunities: 0, comments: 0, reshares: 0, likes: 0, saved: 0 }
-    : await hiddenCommunityActivityCounts(client, actorHandle, allowedActions);
-  if (!allowedActions.length) return { entries: [], nextCursor: null, hiddenCommunityCounts };
+  const countSummary = await profileActivityCountSummary(client, actorHandle, allowedActions, includeInactive);
+  if (!allowedActions.length) return { entries: [], nextCursor: null, ...countSummary };
   const cursor = decodeActivityCursor(query.cursor);
   const result = await client.query<ProfileActivityRow>(
     PROFILE_ACTIVITY_SQL,
@@ -399,6 +408,6 @@ export const listCanonicalProfileActivity = async (
   return {
     entries,
     nextCursor: hasNextPage && entries.length ? encodeActivityCursor(entries[entries.length - 1]) : null,
-    hiddenCommunityCounts
+    ...countSummary
   };
 };
