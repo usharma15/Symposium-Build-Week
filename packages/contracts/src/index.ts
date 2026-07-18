@@ -848,6 +848,10 @@ export const profileActivityQuerySchema = z.object({
   includeComments: z.preprocess(
     (value) => value === "true" ? true : value === "false" ? false : value,
     z.boolean().default(true)
+  ),
+  commentQuotesOnly: z.preprocess(
+    (value) => value === "true" ? true : value === "false" ? false : value,
+    z.boolean().default(false)
   )
 });
 

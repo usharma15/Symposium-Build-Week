@@ -62,7 +62,8 @@ export const listProfileActivity = async (
     const allAuthoredComments = query.includeComments
       ? buildLegacyProfileAuthoredComments(
           snapshot.items.filter((item) => ownProfile || profileCommentsArePubliclyListable(item, researchCommunities)),
-          handle
+          handle,
+          { quotesOnly: query.commentQuotesOnly }
         ).filter((activity) => !commentCursor || (
           activity.occurredAt < commentCursor.occurredAt ||
           (activity.occurredAt === commentCursor.occurredAt && activity.commentId < commentCursor.commentId)

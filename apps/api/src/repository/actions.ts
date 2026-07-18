@@ -247,6 +247,7 @@ export const PROFILE_AUTHORED_COMMENTS_SQL = `SELECT
        AND post.deleted_at IS NULL
        AND ($5::boolean OR (post.room <> 'office' AND post.kind <> 'draft'))
        AND ($5::boolean OR post.community_id IS NULL OR post.post_type = 'paper' OR community.visibility = 'public')
+       AND ($6::boolean = false OR comment.quote IS NOT NULL)
        AND (
          $2::timestamptz IS NULL OR
          (comment.created_at, comment.id) < ($2::timestamptz, $3::text)
@@ -451,7 +452,8 @@ const listAuthoredProfileComments = async (
       cursor?.occurredAt ?? null,
       cursor?.commentId ?? "",
       query.limit + 1,
-      includePrivateWorkspace
+      includePrivateWorkspace,
+      query.commentQuotesOnly
     ]
   );
   const activities = result.rows.map((row): ProfileAuthoredCommentActivityContract => ({

@@ -392,7 +392,8 @@ export const buildLegacyProfileActivity = (
 
 export const buildLegacyProfileAuthoredComments = (
   items: InquiryItem[],
-  actorHandle: string
+  actorHandle: string,
+  options: { quotesOnly?: boolean } = {}
 ): ProfileAuthoredCommentActivityContract[] => {
   const cleanActor = cleanHandle(actorHandle);
   const entries: ProfileAuthoredCommentActivityContract[] = [];
@@ -401,7 +402,8 @@ export const buildLegacyProfileAuthoredComments = (
       if (
         comment.id &&
         !isDeletedComment(comment) &&
-        cleanHandle(comment.authorHandle ?? comment.author) === cleanActor
+        cleanHandle(comment.authorHandle ?? comment.author) === cleanActor &&
+        (!options.quotesOnly || Boolean(comment.quote))
       ) {
         entries.push({
           commentId: comment.id,

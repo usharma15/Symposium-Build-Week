@@ -280,8 +280,13 @@ const profileActivityActionsForScope = (scope: ProfileActivityPageScope): Toggle
   return [];
 };
 
+const profileActivityCommentModeForScope = (scope: ProfileActivityPageScope): "all" | "quotes" | "none" => {
+  if (scope === "all" || scope === "comments") return "all";
+  return scope === "reshares" ? "quotes" : "none";
+};
+
 const profileActivityScopeIncludesComments = (scope: ProfileActivityPageScope) =>
-  scope === "all" || scope === "comments";
+  profileActivityCommentModeForScope(scope) !== "none";
 
 const profileTabUsesAuthoredPosts = (tab: ProfileTab) =>
   tab === "all" || tab === "papers" || tab === "thoughts" || tab === "proposals" ||
@@ -2074,7 +2079,8 @@ function SymposiumExperience({
     const existingSnapshot = profileActivityByHandleRef.current[clean] ?? emptyProfileActivitySnapshot();
     const existingPage = existingSnapshot.pages[scope];
     const configuredActions = profileActivityActionsForScope(scope);
-    const includeComments = profileActivityScopeIncludesComments(scope);
+    const commentMode = profileActivityCommentModeForScope(scope);
+    const includeComments = commentMode !== "none";
     const startCursor = append ? existingPage?.nextCursor ?? null : null;
     const commentsCursor = append ? existingPage?.commentsNextCursor ?? null : null;
     const requestedActions = append && !startCursor ? [] : configuredActions;
@@ -2111,7 +2117,8 @@ function SymposiumExperience({
         limit: "50",
         actorHandle: cleanActor,
         actions: requestedActions.join(","),
-        includeComments: String(requestComments)
+        includeComments: String(requestComments),
+        commentQuotesOnly: String(commentMode === "quotes")
       });
       if (startCursor) params.set("cursor", startCursor);
       if (commentsCursor) params.set("commentsCursor", commentsCursor);

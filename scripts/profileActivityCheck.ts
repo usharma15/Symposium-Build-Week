@@ -188,33 +188,44 @@ assert.deepEqual(
   ["newest", "tie-b", "tie-a", "oldest"]
 );
 
-const authoredComments = buildLegacyProfileAuthoredComments([
-  {
-    ...item,
-    id: "comment-host",
-    comments: [
-      {
-        id: "older-comment",
-        author: person.name,
-        authorHandle: person.handle,
-        body: "Older comment",
-        stance: "Comment",
-        createdAt: "2026-07-15T12:00:00.000Z",
-        replies: []
+const authoredCommentHost: InquiryItem = {
+  ...item,
+  id: "comment-host",
+  comments: [
+    {
+      id: "older-comment",
+      author: person.name,
+      authorHandle: person.handle,
+      body: "Older comment",
+      stance: "Comment",
+      createdAt: "2026-07-15T12:00:00.000Z",
+      replies: []
+    },
+    {
+      id: "newer-comment",
+      author: person.name,
+      authorHandle: person.handle,
+      body: "Newer comment",
+      stance: "Comment",
+      createdAt: "2026-07-17T12:00:00.000Z",
+      quote: {
+        sourceType: "post",
+        sourceId: "quoted-source",
+        sourcePostId: "quoted-source",
+        available: true,
+        attachmentCount: 0
       },
-      {
-        id: "newer-comment",
-        author: person.name,
-        authorHandle: person.handle,
-        body: "Newer comment",
-        stance: "Comment",
-        createdAt: "2026-07-17T12:00:00.000Z",
-        replies: []
-      }
-    ]
-  }
-], person.handle);
+      replies: []
+    }
+  ]
+};
+const authoredComments = buildLegacyProfileAuthoredComments([authoredCommentHost], person.handle);
 assert.deepEqual(authoredComments.map((entry) => entry.commentId), ["newer-comment", "older-comment"]);
+assert.deepEqual(
+  buildLegacyProfileAuthoredComments([authoredCommentHost], person.handle, { quotesOnly: true })
+    .map((entry) => entry.commentId),
+  ["newer-comment"]
+);
 
 const allSlots = [
   { id: "authored", recency: 12 },
@@ -255,6 +266,7 @@ const profileShell = readFileSync(path.join(process.cwd(), "components/Symposium
 for (const scopedPagingBoundary of [
   "commentsCursor",
   "includeComments",
+  "commentQuotesOnly",
   "actions: requestedActions.join(\",\")",
   "const requestKey = `${clean}:${scope}`"
 ]) {
@@ -289,6 +301,7 @@ for (const authoredCommentBoundary of [
   "comment.author_handle = $1",
   "(comment.created_at, comment.id) <",
   "ORDER BY comment.created_at DESC, comment.id DESC",
+  "$6::boolean = false OR comment.quote IS NOT NULL",
   "post.post_type = 'paper' OR community.visibility = 'public'"
 ]) {
   assert.ok(

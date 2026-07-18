@@ -17,7 +17,11 @@ import type { HandleParams } from "./types";
 
 type ProfileActivityQuery = {
   cursor?: string;
+  commentsCursor?: string;
   limit?: string;
+  actions?: string;
+  includeComments?: string;
+  commentQuotesOnly?: string;
 };
 
 export const registerProfileRoutes = (app: FastifyInstance) => {

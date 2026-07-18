@@ -60,6 +60,7 @@ export async function GET(request: Request, context: Context) {
   const activityActions = allowedActions.filter((action) => requestedActions.has(action));
   const allowed = new Set(activityActions);
   const includeComments = url.searchParams.get("includeComments") !== "false";
+  const commentQuotesOnly = url.searchParams.get("commentQuotesOnly") === "true";
   const communities = await listLocalCommunities(actorHandle === "@" ? undefined : actorHandle);
   const itemById = new Map(snapshot.items.map((item) => [item.id, item]));
   const entries = Object.values(snapshot.actionLedger)
@@ -86,7 +87,8 @@ export async function GET(request: Request, context: Context) {
   const authoredCommentEntries = includeComments
     ? buildLegacyProfileAuthoredComments(
         snapshot.items.filter((item) => ownProfile || profileCommentsArePubliclyListable(item, communities)),
-        targetHandle
+        targetHandle,
+        { quotesOnly: commentQuotesOnly }
       )
     : [];
   const authoredComments = authoredCommentEntries.slice(commentsOffset, commentsOffset + limit);
