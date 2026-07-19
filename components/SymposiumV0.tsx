@@ -5,7 +5,6 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperti
 import {
   ArrowLeft,
   BrainCircuit,
-  MessageCircle,
   Moon,
   NotebookPen,
   Search,
@@ -190,6 +189,7 @@ import { savePostDraftToWorkspace } from "@/features/workspace/savePostDraftToWo
 import type { WorkspacePublicationResponse } from "@/lib/workspaceTypes";
 import { SearchModal } from "@/features/search/SearchModal";
 import { MessagesQuickAccess, MessagesStage } from "@/features/messages/MessagesSection";
+import { MessagesUnreadButton } from "@/features/messages/MessagesUnreadButton";
 import { NotificationsControl } from "@/features/notifications/NotificationsPanel";
 import { RoomView } from "@/features/rooms/RoomView";
 import { opportunityApplicationsView, opportunityPostView, OpportunityApplicationsStage, useOpportunityApplicationComposer } from "@/features/opportunities/OpportunityExperience";
@@ -4065,18 +4065,15 @@ function SymposiumExperience({
               navigateView({ messagesOpen: true, selectedConversationId: conversationId });
             }}
           />
-          <button
-            className="icon-button"
-            type="button"
-            title="Quick messages"
-            aria-expanded={messagesQuickOpen}
-            onClick={() => {
+          <MessagesUnreadButton
+            actorHandle={currentProfile.handle}
+            expanded={messagesQuickOpen}
+            liveEvents={messagingEvents}
+            onOpen={() => {
               setQuickConversationId(null);
               setMessagesQuickOpen(true);
             }}
-          >
-            <MessageCircle size={18} />
-          </button>
+          />
           <CanonicalLink
             className="profile-button"
             title="Open your profile"

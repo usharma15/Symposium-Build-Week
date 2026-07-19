@@ -23,6 +23,11 @@ import {
   messagingEventRequiresRefresh
 } from "@/features/messages/messageLiveState";
 import {
+  compactMessageUnreadCount,
+  latestUnreadChangingEventKey,
+  messagingEventCanChangeUnread
+} from "@/features/messages/messageUnreadState";
+import {
   conversationListQuerySchema,
   createGroupConversationInputSchema,
   deleteMessageInputSchema,
@@ -150,6 +155,16 @@ const main = async () => {
   })?.id, firstLiveMessage.id);
   assert.equal(messagingEventRequiresRefresh({ kind: "conversation.draft.updated", subjectId: validConversationId }), false);
   assert.equal(messagingEventRequiresRefresh({ kind: "conversation.participant.updated", subjectId: validConversationId }), true);
+  assert.equal(messagingEventCanChangeUnread({ kind: "message.sent", subjectId: validConversationId }), true);
+  assert.equal(messagingEventCanChangeUnread({ kind: "message.edited", subjectId: validConversationId }), false);
+  assert.equal(messagingEventCanChangeUnread({ kind: "conversation.read", subjectId: validConversationId }), true);
+  assert.equal(compactMessageUnreadCount(7), "7");
+  assert.equal(compactMessageUnreadCount(100), "99+");
+  assert.equal(latestUnreadChangingEventKey([
+    { id: "older", kind: "message.sent", subjectId: validConversationId },
+    { id: "irrelevant", kind: "conversation.draft.updated", subjectId: validConversationId },
+    { id: "newer", kind: "conversation.read", subjectId: validConversationId }
+  ]), "newer");
 
   const participants = [
     { handle: "@mira", name: "Mira", role: "member", status: "active" },
@@ -193,6 +208,7 @@ const main = async () => {
   const attachmentRoutes = readFileSync("apps/api/src/routes/attachmentRoutes.ts", "utf8");
   const attachmentClient = readFileSync("features/attachments/attachmentUploadClient.ts", "utf8");
   const client = readFileSync("features/messages/MessagesSection.tsx", "utf8");
+  const unreadButton = readFileSync("features/messages/MessagesUnreadButton.tsx", "utf8");
   const eventRoutes = readFileSync("apps/api/src/routes/eventRoutes.ts", "utf8");
   const events = readFileSync("apps/api/src/services/events.ts", "utf8");
   const styles = readFileSync("styles/89-messages.css", "utf8");
@@ -297,6 +313,13 @@ const main = async () => {
   assert.doesNotMatch(shell, /event\.kind === "conversation\.invited"/);
   assert.match(shell, /event\.kind === "note\.access\.granted"/);
   assert.match(routes, /\/v1\/conversations\/:id\/participants/);
+  assert.match(routes, /\/v1\/conversations\/unread/);
+  assert.match(repository, /SELECT count\(\*\)::int AS "unreadCount"[\s\S]*?viewer\.hidden_at IS NULL[\s\S]*?message\.sender_handle IS DISTINCT FROM \$1/);
+  assert.match(unreadButton, /\/api\/conversations\/unread/);
+  assert.match(unreadButton, /latestUnreadChangingEventKey/);
+  assert.match(unreadButton, /aria-label=\{title\}/);
+  assert.match(shell, /<MessagesUnreadButton/);
+  assert.match(styles, /\.quick-messages-button > b\s*\{[^}]*background:\s*#197f88/);
   assert.match(messageAttachmentRoute, /record\.ownerType !== "message"/);
   assert.match(messageAttachmentRoute, /Cache-Control": "private, no-store"/);
   assert.match(attachmentRoutes, /\/v1\/attachments\/:attachmentId\/content/);
@@ -328,6 +351,14 @@ const main = async () => {
       headers: { "x-symposium-handle": "@boundary" }
     });
     assert.equal(malformedConversation.statusCode, 400);
+
+    const unreadMessages = await app.inject({
+      method: "GET",
+      url: "/v1/conversations/unread",
+      headers: { "x-symposium-handle": "@boundary" }
+    });
+    assert.equal(unreadMessages.statusCode, 200);
+    assert.equal(unreadMessages.json<{ unreadCount: number }>().unreadCount, 0);
 
     const oversizedGroup = await app.inject({
       method: "POST",

@@ -23,7 +23,8 @@ import {
   type ConversationSummaryContract,
   type InquiryAttachmentContract,
   type MessageContract,
-  type MessagePageContract
+  type MessagePageContract,
+  type MessageUnreadCountContract
 } from "../../../../packages/contracts/src";
 import { cleanHandle } from "@/lib/symposiumCore";
 import { getPool, hasDatabase } from "../db/client";
@@ -327,6 +328,31 @@ export const listConversations = async (rawQuery: unknown, actor: Actor): Promis
     conversations: await summariesForMemberships(rows, handle),
     nextCursor: hasMore && last ? encodeConversationCursor(last) : null
   };
+};
+
+export const getUnreadMessageCount = async (actor: Actor): Promise<MessageUnreadCountContract> => {
+  const handle = actorHandle(actor);
+  if (!hasDatabase()) return { unreadCount: 0 };
+  await ensureLiveData();
+  const result = await getPool().query<{ unreadCount: number }>(
+    `SELECT count(*)::int AS "unreadCount"
+     FROM messages message
+     JOIN conversation_participants viewer
+       ON viewer.conversation_id = message.conversation_id
+      AND viewer.profile_handle = $1
+     WHERE viewer.hidden_at IS NULL
+       AND viewer.status <> 'invited'
+       AND message.sequence > GREATEST(viewer.last_read_sequence, viewer.cleared_through_sequence)
+       AND (viewer.removed_through_sequence IS NULL OR message.sequence <= viewer.removed_through_sequence)
+       AND message.sender_handle IS DISTINCT FROM $1
+       AND message.deleted_at IS NULL
+       AND NOT EXISTS (
+         SELECT 1 FROM message_hidden_for hidden
+         WHERE hidden.message_id = message.id AND hidden.profile_handle = $1
+       )`,
+    [handle]
+  );
+  return { unreadCount: numberValue(result.rows[0]?.unreadCount) };
 };
 
 export const getConversation = async (conversationId: string, actor: Actor) => {

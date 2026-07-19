@@ -11,6 +11,7 @@ import {
   deleteMessage,
   editMessage,
   getConversation,
+  getUnreadMessageCount,
   inviteConversationParticipants,
   listConversations,
   listMessages,
@@ -42,6 +43,14 @@ export const registerMessageRoutes = (app: FastifyInstance) => {
   app.get<{ Querystring: Query }>("/v1/conversations", async (request, reply) => {
     try {
       return reply.send(await listConversations(request.query, await withWriteActor(request, { scope: "message-read", limit: 180 })));
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.get("/v1/conversations/unread", async (request, reply) => {
+    try {
+      return reply.send(await getUnreadMessageCount(await withWriteActor(request, { scope: "message-unread", limit: 180 })));
     } catch (error) {
       return sendError(app, reply, error);
     }

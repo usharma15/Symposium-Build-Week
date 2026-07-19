@@ -1283,6 +1283,10 @@ export const conversationPageSchema = z.object({
   nextCursor: z.string().nullable()
 });
 
+export const messageUnreadCountSchema = z.object({
+  unreadCount: z.number().int().nonnegative()
+});
+
 export const messageListQuerySchema = z.object({
   cursor: z.string().trim().max(500).optional(),
   limit: z.coerce.number().int().positive().max(100).default(40)
@@ -1546,6 +1550,7 @@ export type MessageContract = z.infer<typeof messageSchema>;
 export type ConversationSummaryContract = z.infer<typeof conversationSummarySchema>;
 export type ConversationListQueryContract = z.infer<typeof conversationListQuerySchema>;
 export type ConversationPageContract = z.infer<typeof conversationPageSchema>;
+export type MessageUnreadCountContract = z.infer<typeof messageUnreadCountSchema>;
 export type MessageListQueryContract = z.infer<typeof messageListQuerySchema>;
 export type MessagePageContract = z.infer<typeof messagePageSchema>;
 export type SendMessageInputContract = z.infer<typeof sendMessageInputSchema>;

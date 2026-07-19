@@ -1596,11 +1596,13 @@
   position: relative;
 }
 
-.notifications-button {
+.notifications-button,
+.quick-messages-button {
   position: relative;
 }
 
-.notifications-button > b {
+.notifications-button > b,
+.quick-messages-button > b {
   position: absolute;
   top: -5px;
   right: -5px;
@@ -1611,9 +1613,20 @@
   border: 2px solid rgba(255, 253, 245, 0.94);
   border-radius: 999px;
   padding: 0 4px;
-  background: #c05a45;
   color: white;
   font-size: 0.58rem;
+}
+
+.notifications-button > b {
+  background: #c05a45;
+}
+
+.quick-messages-button > b {
+  background: #197f88;
+}
+
+.symposium-shell.night :is(.notifications-button, .quick-messages-button) > b {
+  border-color: rgba(12, 17, 19, 0.94);
 }
 
 .notifications-panel {
