@@ -12,6 +12,7 @@ import {
   Link2,
   LoaderCircle,
   MessageCircle,
+  MoreHorizontal,
   Paperclip,
   Pencil,
   Pin,
@@ -228,11 +229,16 @@ function MessageBubble({
   const [editing, setEditing] = useState(false);
   const [editBody, setEditBody] = useState(message.body);
   const [savingEdit, setSavingEdit] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
   const editTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     if (!editing) setEditBody(message.body);
   }, [editing, message.body]);
+
+  useEffect(() => {
+    setActionsOpen(false);
+  }, [message.deletedAt, message.revision]);
 
   useEffect(() => {
     const textarea = editTextareaRef.current;
@@ -317,21 +323,30 @@ function MessageBubble({
           </>
         )}
         <footer>
+          {!message.deletedAt && !editing ? (
+            <button
+              className="message-actions-toggle"
+              type="button"
+              title="Message options"
+              aria-expanded={actionsOpen}
+              onClick={() => setActionsOpen((open) => !open)}
+            ><MoreHorizontal size={13} /></button>
+          ) : null}
           <time dateTime={message.createdAt}>{displayTime(message.createdAt)}</time>
           {message.editedAt && !message.deletedAt ? <span>Edited</span> : null}
           {message.starred ? <Star size={11} fill="currentColor" /> : null}
         </footer>
         {!message.deletedAt && !editing ? (
-          <div className="message-bubble-actions" aria-label="Message actions">
-            <button type="button" title={message.starred ? "Unstar" : "Star"} onClick={() => onStar(message)}>
+          <div className={`message-bubble-actions ${actionsOpen ? "open" : ""}`} aria-label="Message actions">
+            <button type="button" title={message.starred ? "Unstar" : "Star"} onClick={() => { setActionsOpen(false); onStar(message); }}>
               <Star size={13} fill={message.starred ? "currentColor" : "none"} />
             </button>
             {own && withinMutationWindow && message.body ? (
-              <button type="button" title="Edit message" onClick={() => { setEditBody(message.body); setEditing(true); }}><Pencil size={13} /></button>
+              <button type="button" title="Edit message" onClick={() => { setActionsOpen(false); setEditBody(message.body); setEditing(true); }}><Pencil size={13} /></button>
             ) : null}
-            <button type="button" title="Delete for me" onClick={() => onDelete(message, "self")}><ArchiveX size={13} /></button>
+            <button type="button" title="Delete for me" onClick={() => { setActionsOpen(false); onDelete(message, "self"); }}><ArchiveX size={13} /></button>
             {own && withinMutationWindow ? (
-              <button type="button" title="Unsend for everyone" onClick={() => onDelete(message, "everyone")}><Trash2 size={13} /></button>
+              <button type="button" title="Unsend for everyone" onClick={() => { setActionsOpen(false); onDelete(message, "everyone"); }}><Trash2 size={13} /></button>
             ) : null}
           </div>
         ) : null}

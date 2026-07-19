@@ -231,6 +231,8 @@ const main = async () => {
   assert.match(client, />Add people</);
   assert.match(client, /function AddPeopleDialog/);
   assert.match(client, /className="message-inline-edit"/);
+  assert.match(client, /title="Message options"/);
+  assert.match(styles, /\.message-bubble-actions\.open/);
   assert.match(client, /messageSenderProfile\(message, conversation\?\.participants/);
   assert.doesNotMatch(client, /window\.prompt/);
   assert.match(styles, /\.message-composer\.has-attachments/);
