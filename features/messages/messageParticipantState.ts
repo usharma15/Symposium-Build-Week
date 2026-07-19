@@ -19,6 +19,18 @@ export const currentConversationParticipant = (
     : participant;
 };
 
+export const conversationIdentityParticipant = (
+  conversation: ConversationSummaryContract | null,
+  actorHandle: string,
+  profiles: Record<string, ResearchProfile>
+): ConversationParticipantContract | undefined => {
+  if (!conversation || conversation.kind !== "direct") return undefined;
+  const peer = conversation.participants.find(
+    (participant) => cleanHandle(participant.handle) !== cleanHandle(actorHandle)
+  );
+  return peer ? currentConversationParticipant(peer, profiles) : undefined;
+};
+
 export const messageSenderProfile = (
   message: MessageContract,
   participants: ConversationParticipantContract[],

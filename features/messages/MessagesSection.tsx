@@ -77,6 +77,7 @@ import {
 } from "@/features/messages/messageDiscoveryState";
 import {
   activeConversationParticipants,
+  conversationIdentityParticipant,
   currentConversationParticipant,
   messageSenderProfile,
   withoutConversationParticipant
@@ -186,10 +187,20 @@ function CompactAttachmentFileName({ fileName, maxStemCharacters = 18 }: { fileN
   );
 }
 
-function Avatar({ person, name, size = "small" }: { person?: { avatarUrl?: string; name: string }; name: string; size?: "small" | "large" }) {
+function Avatar({
+  person,
+  name,
+  size = "small",
+  group = false
+}: {
+  person?: { avatarUrl?: string; name: string };
+  name: string;
+  size?: "small" | "large";
+  group?: boolean;
+}) {
   return (
-    <span className={`avatar ${size} messaging-avatar`} aria-hidden="true">
-      {person?.avatarUrl ? <img src={person.avatarUrl} alt="" /> : profileInitials(name)}
+    <span className={`avatar ${size} messaging-avatar${group ? " group" : ""}`} aria-hidden="true">
+      {group ? <Users size={size === "large" ? 25 : 16} strokeWidth={1.8} /> : person?.avatarUrl ? <img src={person.avatarUrl} alt="" /> : profileInitials(name)}
     </span>
   );
 }
@@ -441,8 +452,7 @@ function ConversationListItem({
   profiles: Record<string, ResearchProfile>;
   onSelect: () => void;
 }) {
-  const peer = conversationPeer(conversation, actorHandle);
-  const currentPeer = peer ? currentConversationParticipant(peer, profiles) : undefined;
+  const currentPeer = conversationIdentityParticipant(conversation, actorHandle, profiles);
   const title = conversation.kind === "direct" ? currentPeer?.name ?? conversationName(conversation, actorHandle) : conversationName(conversation, actorHandle);
   const preview = conversation.draftBody
     ? `Draft: ${conversation.draftBody}`
@@ -451,7 +461,7 @@ function ConversationListItem({
       : conversation.lastMessage?.body || (conversation.lastMessage?.attachments.length ? "Shared an attachment" : "No messages yet");
   return (
     <button className={`conversation-list-item ${active ? "active" : ""}`} type="button" onClick={onSelect}>
-      <Avatar person={currentPeer} name={title} />
+      <Avatar person={currentPeer} name={title} group={conversation.kind === "group"} />
       <span className="conversation-list-copy">
         <span>
           <strong>{title}</strong>
@@ -1326,8 +1336,7 @@ export function MessagingExperience({
     } catch (actionError) { setError(errorText(actionError)); }
   };
 
-  const peer = conversationPeer(conversation, actor.handle);
-  const currentPeer = peer ? currentConversationParticipant(peer, profiles) : undefined;
+  const currentPeer = conversationIdentityParticipant(conversation, actor.handle, profiles);
   const syntheticHandle = selectedConversationId && !messageIdPattern.test(selectedConversationId)
     ? cleanHandle(selectedConversationId.replace(/^direct:/, ""))
     : null;
@@ -1475,7 +1484,7 @@ export function MessagingExperience({
               const handle = currentPeer?.handle ?? syntheticHandle;
               if (handle) onOpenProfile(handle);
             }}>
-              <Avatar person={currentPeer ?? syntheticProfile} name={selectedTitle} />
+              <Avatar person={currentPeer ?? syntheticProfile} name={selectedTitle} group={conversation?.kind === "group"} />
               <span><strong>{selectedTitle}</strong><small>{conversation?.kind === "group" ? `${activeParticipants.length} people` : currentPeer?.handle ?? syntheticHandle ?? (conversationLoading ? "Syncing chat…" : "")}</small></span>
             </button>
             {quick && onOpenFull ? <button type="button" title="Open full messages" onClick={() => onOpenFull(selectedConversationId)}><ExternalLink size={16} /></button> : null}
@@ -1595,7 +1604,7 @@ export function MessagingExperience({
       {!quick && selectedConversationId ? (
         <aside className="messages-info-panel">
           <header>
-            <Avatar person={currentPeer ?? syntheticProfile} name={selectedTitle} size="large" />
+            <Avatar person={currentPeer ?? syntheticProfile} name={selectedTitle} size="large" group={conversation?.kind === "group"} />
             <strong>{selectedTitle}</strong>
             <small>{conversation?.kind === "group" ? `${activeParticipants.length} people · Private group` : currentPeer?.handle ?? syntheticHandle ?? (conversationLoading ? "Syncing chat…" : "")}</small>
           </header>

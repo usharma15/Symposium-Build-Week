@@ -12,6 +12,7 @@ import {
 } from "@/features/messages/messageDiscoveryState";
 import {
   activeConversationParticipants,
+  conversationIdentityParticipant,
   currentConversationParticipant,
   messageSenderProfile,
   withoutConversationParticipant
@@ -176,6 +177,11 @@ const main = async () => {
     draftUpdatedAt: null,
     updatedAt: firstLiveMessage.createdAt
   };
+  assert.equal(conversationIdentityParticipant(groupSummary, "@viewer", { "@mira": liveMira }), undefined);
+  assert.equal(
+    conversationIdentityParticipant({ ...groupSummary, kind: "direct", title: null }, "@viewer", { "@mira": liveMira })?.avatarUrl,
+    liveMira.avatarUrl
+  );
   assert.deepEqual(withoutConversationParticipant(groupSummary, "lin").participants.map((participant) => participant.handle), ["@mira"]);
 
   const repository = readFileSync("apps/api/src/repository/conversations.ts", "utf8");
