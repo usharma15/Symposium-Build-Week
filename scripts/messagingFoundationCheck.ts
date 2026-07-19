@@ -281,6 +281,7 @@ const main = async () => {
   assert.match(styles, /\.messaging-experience\.full > \.messages-conversations-panel\s*\{[^}]*height:\s*calc\(100% - var\(--messages-side-controls-clearance\)\)/);
   assert.match(styles, /\.messaging-experience\.full > :is\([\s\S]*?\.messages-thread-panel,[\s\S]*?\.messages-no-selection[\s\S]*?\)\s*\{[^}]*height:\s*100%/);
   assert.match(styles, /\.messaging-experience\.full > \.messages-info-panel\s*\{[^}]*margin-top:\s*var\(--messages-info-status-clearance\)/);
+  assert.match(styles, /@media \(max-width:\s*960px\) and \(min-width:\s*761px\) and \(min-height:\s*761px\)[\s\S]*?\.messaging-experience\.full > :is\([\s\S]*?\.messages-thread-panel,[\s\S]*?\.messages-no-selection[\s\S]*?height:\s*calc\(100% - var\(--messages-side-controls-clearance\)\)/);
   assert.match(client, /ownerType: "message"/);
   assert.match(client, /Open full messages/);
   assert.match(client, /IntersectionObserver/);
