@@ -4,6 +4,11 @@ import { buildApp } from "@/apps/api/src/server";
 import { compactAttachmentFileName } from "@/lib/attachmentRules";
 import { emptyMessageDraftState, reduceMessageDraft } from "@/features/messages/messageDraftState";
 import {
+  activeConversationParticipants,
+  messageSenderProfile,
+  withoutConversationParticipant
+} from "@/features/messages/messageParticipantState";
+import {
   canonicalMessageFromLiveEvent,
   mergeCanonicalMessage,
   messagingEventRequiresRefresh
@@ -17,7 +22,8 @@ import {
   markConversationReadInputSchema,
   notificationListQuerySchema,
   saveConversationDraftInputSchema,
-  sendMessageInputSchema
+  sendMessageInputSchema,
+  type ConversationSummaryContract
 } from "@/packages/contracts/src";
 
 const validConversationId = "00000000-0000-4000-8000-000000000001";
@@ -123,6 +129,31 @@ const main = async () => {
   assert.equal(messagingEventRequiresRefresh({ kind: "conversation.draft.updated", subjectId: validConversationId }), false);
   assert.equal(messagingEventRequiresRefresh({ kind: "conversation.participant.updated", subjectId: validConversationId }), true);
 
+  const participants = [
+    { handle: "@mira", name: "Mira", role: "member", status: "active" },
+    { handle: "@lin", name: "Lin", role: "member", status: "removed" }
+  ] as const;
+  assert.deepEqual(activeConversationParticipants([...participants]).map((participant) => participant.handle), ["@mira"]);
+  assert.equal(messageSenderProfile(firstLiveMessage, [...participants], {})?.name, "Mira");
+  const groupSummary: ConversationSummaryContract = {
+    id: validConversationId,
+    revision: 2,
+    kind: "group",
+    title: "Lab",
+    role: "owner",
+    status: "active",
+    muted: false,
+    pinned: false,
+    blockedByViewer: false,
+    unreadCount: 0,
+    participants: [...participants],
+    lastMessage: firstLiveMessage,
+    draftBody: "",
+    draftUpdatedAt: null,
+    updatedAt: firstLiveMessage.createdAt
+  };
+  assert.deepEqual(withoutConversationParticipant(groupSummary, "lin").participants.map((participant) => participant.handle), ["@mira"]);
+
   const repository = readFileSync("apps/api/src/repository/conversations.ts", "utf8");
   const notifications = readFileSync("apps/api/src/repository/notifications.ts", "utf8");
   const migration = readFileSync("apps/api/src/db/migrate.ts", "utf8");
@@ -165,6 +196,7 @@ const main = async () => {
   assert.match(repository, /'member', 'active', now\(\)/);
   assert.match(repository, /kind: "conversation\.created"/);
   assert.match(repository, /kind: "conversation\.participants\.added"/);
+  assert.match(repository, /participant\.status = 'active'/);
   assert.match(repository, /maxGroupParticipants = 50/);
   assert.match(repository, /kind: "group_removed"/);
   assert.match(notifications, /jsonb_to_recordset/);
@@ -197,6 +229,10 @@ const main = async () => {
   assert.match(client, /compactAttachmentFileName/);
   assert.doesNotMatch(client, /message-invitation-gate/);
   assert.match(client, />Add people</);
+  assert.match(client, /function AddPeopleDialog/);
+  assert.match(client, /className="message-inline-edit"/);
+  assert.match(client, /messageSenderProfile\(message, conversation\?\.participants/);
+  assert.doesNotMatch(client, /window\.prompt/);
   assert.match(styles, /\.message-composer\.has-attachments/);
   assert.match(styles, /grid-area: previews/);
   assert.match(client, /ownerType: "message"/);

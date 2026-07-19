@@ -37,6 +37,7 @@ import {
 } from "react";
 import type {
   AttachmentKindContract,
+  ConversationParticipantContract,
   ConversationPageContract,
   ConversationSummaryContract,
   InquiryAttachmentContract,
@@ -53,8 +54,7 @@ import { cleanHandle } from "@/lib/symposiumCore";
 import { profileInitials } from "@/features/identity/profilePresentation";
 import {
   createClientMutationId,
-  symposiumApi,
-  SymposiumApiError
+  symposiumApi
 } from "@/features/api/symposiumApiClient";
 import { AttachmentPreviewModal } from "@/features/attachments/AttachmentPreviewModal";
 import { uploadConfirmedAttachment } from "@/features/attachments/attachmentUploadClient";
@@ -67,6 +67,11 @@ import {
   reduceMessageDraft,
   type MessageDraftState
 } from "@/features/messages/messageDraftState";
+import {
+  activeConversationParticipants,
+  messageSenderProfile,
+  withoutConversationParticipant
+} from "@/features/messages/messageParticipantState";
 import {
   canonicalMessageFromLiveEvent,
   liveEventConversationId,
@@ -202,7 +207,8 @@ function AttachmentTile({
 function MessageBubble({
   actorHandle,
   message,
-  profiles,
+  sender,
+  showSenderIdentity,
   onEdit,
   onDelete,
   onStar,
@@ -210,15 +216,51 @@ function MessageBubble({
 }: {
   actorHandle: string;
   message: MessageContract;
-  profiles: Record<string, ResearchProfile>;
-  onEdit: (message: MessageContract) => void;
+  sender?: ConversationParticipantContract | ResearchProfile;
+  showSenderIdentity: boolean;
+  onEdit: (message: MessageContract, body: string) => Promise<boolean>;
   onDelete: (message: MessageContract, mode: "self" | "everyone") => void;
   onStar: (message: MessageContract) => void;
   onPreviewAttachment: (message: MessageContract, attachmentId: string) => void;
 }) {
   const own = message.senderHandle ? cleanHandle(message.senderHandle) === cleanHandle(actorHandle) : false;
-  const sender = message.senderHandle ? profiles[cleanHandle(message.senderHandle)] : undefined;
   const withinMutationWindow = Date.now() - new Date(message.createdAt).getTime() <= 15 * 60 * 1000;
+  const [editing, setEditing] = useState(false);
+  const [editBody, setEditBody] = useState(message.body);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const editTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    if (!editing) setEditBody(message.body);
+  }, [editing, message.body]);
+
+  useEffect(() => {
+    const textarea = editTextareaRef.current;
+    if (!editing || !textarea) return;
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 288)}px`;
+    textarea.style.overflowY = textarea.scrollHeight > 288 ? "auto" : "hidden";
+  }, [editBody, editing]);
+
+  const cancelEdit = () => {
+    if (savingEdit) return;
+    setEditBody(message.body);
+    setEditing(false);
+  };
+
+  const saveEdit = async () => {
+    const body = editBody.trim();
+    if (!body || savingEdit) return;
+    if (body === message.body) {
+      cancelEdit();
+      return;
+    }
+    setSavingEdit(true);
+    const saved = await onEdit(message, body);
+    setSavingEdit(false);
+    if (saved) setEditing(false);
+  };
+
   return (
     <article className={`message-bubble-row ${own ? "own" : "received"}`} data-message-id={message.id}>
       {!own ? <Avatar person={sender} name={sender?.name ?? message.senderHandle ?? "System"} /> : null}
@@ -227,7 +269,39 @@ function MessageBubble({
           <p>This message was unsent.</p>
         ) : (
           <>
-            {message.body ? <p>{message.body}</p> : null}
+            {showSenderIdentity && !own ? (
+              <strong className="message-sender-name">{sender?.name ?? message.senderHandle ?? "Unknown sender"}</strong>
+            ) : null}
+            {editing ? (
+              <form className="message-inline-edit" onSubmit={(event) => { event.preventDefault(); void saveEdit(); }}>
+                <textarea
+                  ref={editTextareaRef}
+                  rows={1}
+                  maxLength={8000}
+                  value={editBody}
+                  autoFocus
+                  aria-label="Edit message"
+                  disabled={savingEdit}
+                  onChange={(event) => setEditBody(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      cancelEdit();
+                    } else if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      void saveEdit();
+                    }
+                  }}
+                />
+                <div>
+                  <button type="button" disabled={savingEdit} onClick={cancelEdit}><X size={13} />Cancel</button>
+                  <button type="submit" disabled={savingEdit || !editBody.trim()}>
+                    {savingEdit ? <LoaderCircle className="spin" size={13} /> : <Check size={13} />}Save
+                  </button>
+                </div>
+                <small>Enter to save · Shift + Enter for a new line</small>
+              </form>
+            ) : message.body ? <p>{message.body}</p> : null}
             {message.attachments.length ? (
               <div className="message-attachments">
                 {message.attachments.map((attachment) => (
@@ -247,13 +321,13 @@ function MessageBubble({
           {message.editedAt && !message.deletedAt ? <span>Edited</span> : null}
           {message.starred ? <Star size={11} fill="currentColor" /> : null}
         </footer>
-        {!message.deletedAt ? (
+        {!message.deletedAt && !editing ? (
           <div className="message-bubble-actions" aria-label="Message actions">
             <button type="button" title={message.starred ? "Unstar" : "Star"} onClick={() => onStar(message)}>
               <Star size={13} fill={message.starred ? "currentColor" : "none"} />
             </button>
-            {own && withinMutationWindow ? (
-              <button type="button" title="Edit message" onClick={() => onEdit(message)}><Pencil size={13} /></button>
+            {own && withinMutationWindow && message.body ? (
+              <button type="button" title="Edit message" onClick={() => { setEditBody(message.body); setEditing(true); }}><Pencil size={13} /></button>
             ) : null}
             <button type="button" title="Delete for me" onClick={() => onDelete(message, "self")}><ArchiveX size={13} /></button>
             {own && withinMutationWindow ? (
@@ -375,6 +449,153 @@ function NewConversationPanel({
   );
 }
 
+function AddPeopleDialog({
+  actorHandle,
+  profiles,
+  participants,
+  onClose,
+  onAdd
+}: {
+  actorHandle: string;
+  profiles: Record<string, ResearchProfile>;
+  participants: ConversationParticipantContract[];
+  onClose: () => void;
+  onAdd: (handles: string[]) => Promise<boolean>;
+}) {
+  const activeHandles = useMemo(
+    () => new Set(participants.filter((participant) => participant.status === "active").map((participant) => cleanHandle(participant.handle))),
+    [participants]
+  );
+  const remainingPlaces = Math.max(0, 50 - activeHandles.size);
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<ResearchProfile[]>([]);
+  const [selected, setSelected] = useState<ResearchProfile[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [searchError, setSearchError] = useState("");
+  const [adding, setAdding] = useState(false);
+
+  const eligible = useCallback((person: ResearchProfile) => {
+    const handle = cleanHandle(person.handle);
+    return handle !== cleanHandle(actorHandle) && !activeHandles.has(handle);
+  }, [activeHandles, actorHandle]);
+
+  useEffect(() => {
+    const term = query.trim();
+    if (!term) {
+      setResults(Object.values(profiles).filter(eligible).slice(0, 30));
+      setLoading(false);
+      setSearchError("");
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setLoading(true);
+      const parameters = new URLSearchParams({ q: term, limit: "40", actorHandle });
+      void symposiumApi.request<{ profiles: ResearchProfile[] }>(`/api/search?${parameters.toString()}`, { cache: "no-store" })
+        .then((data) => {
+          if (cancelled) return;
+          setResults(data.profiles.filter(eligible));
+          setSearchError("");
+        })
+        .catch(() => {
+          if (cancelled) return;
+          const normalized = term.toLowerCase();
+          setResults(Object.values(profiles)
+            .filter(eligible)
+            .filter((person) => `${person.name} ${person.handle}`.toLowerCase().includes(normalized))
+            .slice(0, 30));
+          setSearchError("Live search is temporarily unavailable. Showing loaded people.");
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    }, 220);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [actorHandle, eligible, profiles, query]);
+
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !adding) onClose();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [adding, onClose]);
+
+  const toggle = (person: ResearchProfile) => {
+    const handle = cleanHandle(person.handle);
+    setSelected((current) => current.some((entry) => cleanHandle(entry.handle) === handle)
+      ? current.filter((entry) => cleanHandle(entry.handle) !== handle)
+      : current.length < remainingPlaces ? [...current, person] : current);
+  };
+
+  const submit = async () => {
+    if (!selected.length || adding) return;
+    setAdding(true);
+    const added = await onAdd(selected.map((person) => person.handle));
+    setAdding(false);
+    if (added) onClose();
+  };
+
+  return (
+    <div className="message-add-people-backdrop" role="presentation" onClick={() => { if (!adding) onClose(); }}>
+      <section className="message-add-people-dialog" role="dialog" aria-modal="true" aria-labelledby="message-add-people-title" onClick={(event) => event.stopPropagation()}>
+        <header>
+          <span><UserPlus size={18} /><strong id="message-add-people-title">Add people</strong></span>
+          <button type="button" title="Close" disabled={adding} onClick={onClose}><X size={16} /></button>
+        </header>
+        <p>New members join immediately and can see the existing group history.</p>
+        {remainingPlaces ? (
+          <>
+            <label className="message-add-people-search">
+              <Search size={15} />
+              <input value={query} autoFocus placeholder="Search by name or handle" onChange={(event) => setQuery(event.target.value)} />
+              {loading ? <LoaderCircle className="spin" size={15} /> : null}
+            </label>
+            {selected.length ? (
+              <div className="message-add-people-selected" aria-label="Selected people">
+                {selected.map((person) => (
+                  <button type="button" key={person.handle} onClick={() => toggle(person)}>
+                    <Avatar person={person} name={person.name} />
+                    <span>{person.name}</span>
+                    <X size={12} />
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            <div className="message-add-people-results" aria-busy={loading}>
+              {results.map((person) => {
+                const chosen = selected.some((entry) => cleanHandle(entry.handle) === cleanHandle(person.handle));
+                return (
+                  <button type="button" className={chosen ? "selected" : ""} key={person.handle} onClick={() => toggle(person)}>
+                    <Avatar person={person} name={person.name} />
+                    <span><strong>{person.name}</strong><small>{person.handle}</small></span>
+                    {chosen ? <Check size={15} /> : <Plus size={15} />}
+                  </button>
+                );
+              })}
+              {!loading && !results.length ? <p>No eligible people found.</p> : null}
+            </div>
+            {searchError ? <small className="message-add-people-search-error">{searchError}</small> : null}
+          </>
+        ) : <p className="message-add-people-limit">This group has reached its 50-person limit.</p>}
+        <footer>
+          <small>{activeHandles.size} of 50 places used</small>
+          <span>
+            <button type="button" disabled={adding} onClick={onClose}>Cancel</button>
+            <button type="button" disabled={adding || !selected.length} onClick={() => void submit()}>
+              {adding ? <LoaderCircle className="spin" size={14} /> : <UserPlus size={14} />}
+              Add {selected.length ? selected.length : ""}
+            </button>
+          </span>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
 type MessagingExperienceProps = {
   actor: ResearchProfile;
   profiles: Record<string, ResearchProfile>;
@@ -412,6 +633,7 @@ export function MessagingExperience({
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [newConversationOpen, setNewConversationOpen] = useState(false);
+  const [addPeopleOpen, setAddPeopleOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<MessageContract[] | null>(null);
   const [mediaKind, setMediaKind] = useState<AttachmentKindContract | "links" | "starred" | null>(null);
@@ -654,6 +876,7 @@ export function MessagingExperience({
     });
     setPendingAttachments([]);
     setAttachmentPreview(null);
+    setAddPeopleOpen(false);
     shouldStickToBottomRef.current = true;
     setSearchResults(null);
     setMediaKind(null);
@@ -859,15 +1082,18 @@ export function MessagingExperience({
     } catch (actionError) { setError(errorText(actionError)); }
   };
 
-  const edit = async (message: MessageContract) => {
-    const body = window.prompt("Edit message", message.body)?.trim();
-    if (!body || body === message.body) return;
+  const edit = async (message: MessageContract, body: string) => {
+    if (!body || body === message.body) return true;
     try {
       const data = await symposiumApi.request<{ message: MessageContract }>(`/api/conversations/${message.conversationId}/messages/${message.id}`, {
         method: "PATCH", body: { actorHandle: actor.handle, body, expectedRevision: message.revision }
       });
       updateMessage(data.message);
-    } catch (actionError) { setError(errorText(actionError)); }
+      return true;
+    } catch (actionError) {
+      setError(errorText(actionError));
+      return false;
+    }
   };
 
   const removeMessage = async (message: MessageContract, mode: "self" | "everyone") => {
@@ -953,20 +1179,19 @@ export function MessagingExperience({
     } catch (actionError) { setError(errorText(actionError)); }
   };
 
-  const addPerson = async () => {
-    if (!conversation || conversation.kind !== "group") return;
-    const handle = window.prompt("Add a member by handle")?.trim();
-    if (!handle) return;
+  const addPeople = async (handles: string[]) => {
+    if (!conversation || conversation.kind !== "group" || !handles.length) return false;
     try {
-      const body = { actorHandle: actor.handle, handles: [handle] };
-      try {
-        await symposiumApi.request(`/api/conversations/${conversation.id}/participants`, { method: "POST", body });
-      } catch (actionError) {
-        if (!(actionError instanceof SymposiumApiError) || actionError.status !== 404) throw actionError;
-        await symposiumApi.request(`/api/conversations/${conversation.id}/invitations`, { method: "POST", body });
-      }
+      await symposiumApi.request(`/api/conversations/${conversation.id}/participants`, {
+        method: "POST",
+        body: { actorHandle: actor.handle, handles }
+      });
       await loadConversation(conversation.id, { quiet: true });
-    } catch (actionError) { setError(errorText(actionError)); }
+      return true;
+    } catch (actionError) {
+      setError(errorText(actionError));
+      return false;
+    }
   };
 
   const openMessageAttachmentPreview = (message: MessageContract, attachmentId: string) => {
@@ -993,11 +1218,14 @@ export function MessagingExperience({
       await symposiumApi.request(`/api/conversations/${conversation.id}/participants/${encodeURIComponent(handle)}`, {
         method: "DELETE", body: { actorHandle: actor.handle }
       });
+      setConversation((current) => current?.id === conversation.id ? withoutConversationParticipant(current, handle) : current);
+      setConversations((current) => current.map((entry) => entry.id === conversation.id ? withoutConversationParticipant(entry, handle) : entry));
       await loadConversation(conversation.id, { quiet: true });
     } catch (actionError) { setError(errorText(actionError)); }
   };
 
   const compactConversations = quick ? conversations.slice(0, selectedConversationId ? 5 : 8) : conversations;
+  const activeParticipants = activeConversationParticipants(conversation?.participants ?? []);
 
   return (
     <section className={`messaging-experience ${quick ? "quick" : "full"}`} aria-label={quick ? "Quick messages" : "Messages"}>
@@ -1035,7 +1263,7 @@ export function MessagingExperience({
               if (handle) onOpenProfile(handle);
             }}>
               <Avatar person={peer ?? syntheticProfile} name={selectedTitle} />
-              <span><strong>{selectedTitle}</strong><small>{conversation?.kind === "group" ? `${conversation.participants.length} people` : peer?.handle ?? syntheticHandle}</small></span>
+              <span><strong>{selectedTitle}</strong><small>{conversation?.kind === "group" ? `${activeParticipants.length} people` : peer?.handle ?? syntheticHandle}</small></span>
             </button>
             {quick && onOpenFull ? <button type="button" title="Open full messages" onClick={() => onOpenFull(selectedConversationId)}><ExternalLink size={16} /></button> : null}
           </header>
@@ -1050,18 +1278,22 @@ export function MessagingExperience({
           >
             {messageCursor ? <button className="load-older-messages" type="button" disabled={loadingOlder} onClick={() => selectedConversationId && void loadConversation(selectedConversationId, { older: true })}>{loadingOlder ? "Loading…" : "Load older messages"}</button> : null}
             {!loading && !messages.length ? <div className="empty-message-thread"><MessageCircle size={30} /><strong>{syntheticProfile ? `Start a conversation with ${syntheticProfile.name}` : "No messages here yet"}</strong><p>Messages and attachments will appear here.</p></div> : null}
-            {messages.map((message) => (
-              <MessageBubble
-                key={message.id}
-                actorHandle={actor.handle}
-                message={message}
-                profiles={profiles}
-                onEdit={edit}
-                onDelete={removeMessage}
-                onStar={star}
-                onPreviewAttachment={openMessageAttachmentPreview}
-              />
-            ))}
+            {messages.map((message) => {
+              const sender = messageSenderProfile(message, conversation?.participants ?? [], profiles);
+              return (
+                <MessageBubble
+                  key={message.id}
+                  actorHandle={actor.handle}
+                  message={message}
+                  sender={sender}
+                  showSenderIdentity={conversation?.kind === "group"}
+                  onEdit={edit}
+                  onDelete={removeMessage}
+                  onStar={star}
+                  onPreviewAttachment={openMessageAttachmentPreview}
+                />
+              );
+            })}
           </div>
           <div className={`message-composer${pendingAttachments.length ? " has-attachments" : ""}`}>
             {pendingAttachments.length ? (
@@ -1164,12 +1396,12 @@ export function MessagingExperience({
               <div className="message-info-actions">
                 <button type="button" onClick={() => void changePreference({ pinned: !conversation.pinned })}>{conversation.pinned ? <PinOff size={15} /> : <Pin size={15} />}{conversation.pinned ? "Unpin chat" : "Pin chat"}</button>
                 <button type="button" onClick={() => void changePreference({ muted: !conversation.muted })}>{conversation.muted ? <BellRing size={15} /> : <BellOff size={15} />}{conversation.muted ? "Unmute notifications" : "Mute notifications"}</button>
-                {conversation.kind === "group" && ["owner", "admin"].includes(conversation.role) ? <button type="button" onClick={() => void addPerson()}><UserPlus size={15} />Add people</button> : null}
+                {conversation.kind === "group" && ["owner", "admin"].includes(conversation.role) ? <button type="button" onClick={() => setAddPeopleOpen(true)}><UserPlus size={15} />Add people</button> : null}
               </div>
               {conversation.kind === "group" ? (
                 <div className="message-participants">
                   <strong>People</strong>
-                  {conversation.participants.map((participant) => {
+                  {activeParticipants.map((participant) => {
                     const ownParticipant = cleanHandle(participant.handle) === cleanHandle(actor.handle);
                     const canRemove = !ownParticipant && participant.role !== "owner" && (
                       conversation.role === "owner" || (conversation.role === "admin" && participant.role === "member")
@@ -1207,6 +1439,15 @@ export function MessagingExperience({
         </aside>
       ) : null}
       {error ? <div className="messaging-error" role="alert"><span>{error}</span><button type="button" onClick={() => setError("")}><X size={14} /></button></div> : null}
+      {addPeopleOpen && conversation?.kind === "group" ? (
+        <AddPeopleDialog
+          actorHandle={actor.handle}
+          profiles={profiles}
+          participants={conversation.participants}
+          onClose={() => setAddPeopleOpen(false)}
+          onAdd={addPeople}
+        />
+      ) : null}
       {attachmentPreview ? (
         <AttachmentPreviewModal
           attachments={attachmentPreview.attachments}

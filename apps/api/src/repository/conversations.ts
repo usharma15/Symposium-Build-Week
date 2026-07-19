@@ -204,7 +204,7 @@ const participantRows = async (conversationIds: string[]) => {
      FROM conversation_participants participant
      JOIN profiles profile ON profile.handle = participant.profile_handle
      WHERE participant.conversation_id = ANY($1::uuid[])
-       AND NOT (participant.status = 'removed' AND participant.hidden_at IS NOT NULL)
+       AND participant.status = 'active'
      ORDER BY participant.created_at ASC, participant.profile_handle ASC`,
     [conversationIds]
   );
