@@ -1982,6 +1982,35 @@ const migrations: Migration[] = [
 
       DELETE FROM notifications WHERE kind = 'group_invite';
     `
+  },
+  {
+    id: "0037_ai_usage_budget_ledger",
+    sql: `
+      CREATE TABLE IF NOT EXISTS ai_usage (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        conversation_id UUID NOT NULL REFERENCES ai_conversations(id) ON DELETE CASCADE,
+        owner_handle TEXT NOT NULL REFERENCES profiles(handle) ON DELETE CASCADE,
+        model TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'reserved',
+        reserved_cost_micros BIGINT NOT NULL,
+        actual_cost_micros BIGINT,
+        input_tokens INTEGER NOT NULL DEFAULT 0,
+        cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0,
+        provider_response_id TEXT,
+        error_code TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        CONSTRAINT ai_usage_status_check CHECK (status IN ('reserved', 'completed', 'failed')),
+        CONSTRAINT ai_usage_cost_check CHECK (reserved_cost_micros >= 0 AND (actual_cost_micros IS NULL OR actual_cost_micros >= 0)),
+        CONSTRAINT ai_usage_token_check CHECK (input_tokens >= 0 AND cached_input_tokens >= 0 AND cache_write_tokens >= 0 AND output_tokens >= 0)
+      );
+
+      CREATE INDEX IF NOT EXISTS ai_usage_owner_created_idx ON ai_usage (owner_handle, created_at DESC);
+      CREATE INDEX IF NOT EXISTS ai_usage_created_idx ON ai_usage (created_at DESC);
+      CREATE INDEX IF NOT EXISTS ai_usage_status_created_idx ON ai_usage (status, created_at DESC);
+    `
   }
 ];
 

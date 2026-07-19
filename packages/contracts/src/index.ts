@@ -1224,9 +1224,31 @@ export const publishNoteInputSchema = z.object({
 
 export const assistantMessageInputSchema = z.object({
   conversationId: z.string().uuid().optional(),
-  message: z.string().trim().min(1).max(12000),
+  message: z.string().trim().min(1).max(2000),
   contextType: z.enum(["general", "room", "post", "community", "note"]).default("general"),
-  contextId: z.string().trim().min(1).max(240).optional()
+  contextId: z.string().trim().min(1).max(240).optional(),
+  context: z.object({
+    surface: z.enum([
+      "hall",
+      "room",
+      "post",
+      "community",
+      "profile",
+      "workspace",
+      "messages",
+      "search",
+      "opportunity",
+      "attachment"
+    ]),
+    route: z.string().trim().max(500),
+    title: z.string().trim().max(300),
+    summary: z.string().trim().max(3000).default(""),
+    content: z.string().trim().max(12000).default(""),
+    entityType: z.string().trim().max(80).optional(),
+    entityId: z.string().trim().max(240).optional(),
+    selection: z.string().trim().max(4000).optional(),
+    metadata: z.record(z.string().max(80), z.union([z.string().max(1000), z.number(), z.boolean(), z.null()])).default({})
+  })
 });
 
 export const conversationKindSchema = z.enum(["direct", "group"]);
@@ -1474,7 +1496,14 @@ export const assistantResponseSchema = z.object({
   conversationId: z.string(),
   message: assistantMessageSchema,
   providerConfigured: z.boolean(),
-  status: z.enum(["answered", "provider_not_configured"])
+  status: z.enum(["answered", "provider_not_configured", "disabled", "provider_error"]),
+  model: z.string().optional(),
+  quota: z.object({
+    dailyLimit: z.number().int().positive(),
+    remainingToday: z.number().int().nonnegative(),
+    monthlyBudgetUsd: z.number().positive(),
+    extremelyLimited: z.literal(true)
+  }).optional()
 });
 
 export const bootstrapResponseSchema = z.object({

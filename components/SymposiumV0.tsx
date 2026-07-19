@@ -27,6 +27,7 @@ import {
 } from "@/lib/mockData";
 import type { CommentAction, PostAction } from "@/lib/dataStore";
 import type {
+  AssistantMessageInputContract,
   CanonicalActionActivityContract,
   OpportunityPostInputContract,
   PatronageProposalInputContract,
@@ -186,7 +187,7 @@ import { createContentDeletionController } from "@/features/moderation/contentDe
 import { TabletPanel } from "@/features/workspace/WorkspacePanels";
 import { WorkspaceView } from "@/features/workspace/WorkspaceView";
 import { savePostDraftToWorkspace } from "@/features/workspace/savePostDraftToWorkspace";
-import type { WorkspacePublicationResponse } from "@/lib/workspaceTypes";
+import type { WorkspaceDocument, WorkspacePublicationResponse } from "@/lib/workspaceTypes";
 import { SearchModal } from "@/features/search/SearchModal";
 import { MessagesQuickAccess, MessagesStage } from "@/features/messages/MessagesSection";
 import { MessagesUnreadButton } from "@/features/messages/MessagesUnreadButton";
@@ -581,6 +582,8 @@ function SymposiumExperience({
   const [messagesQuickOpen, setMessagesQuickOpen] = useState(false);
   const [quickConversationId, setQuickConversationId] = useState<string | null>(null);
   const [messagingEvents, setMessagingEvents] = useState<SymposiumLiveEvent[]>([]);
+  const [messageTabletContext, setMessageTabletContext] = useState<{ conversationId: string; title: string; content: string } | null>(null);
+  const [workspaceTabletDocument, setWorkspaceTabletDocument] = useState<WorkspaceDocument | null>(null);
   const [notificationRevision, setNotificationRevision] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [remoteSearchResults, setRemoteSearchResults] = useState<SearchResults | null>(null);
@@ -726,6 +729,9 @@ function SymposiumExperience({
     : null;
   const attachmentPreviewComment = attachmentPreviewBaseItem && attachmentPreview?.commentId
     ? findCommentById(attachmentPreviewBaseItem.comments, attachmentPreview.commentId)
+    : null;
+  const attachmentPreviewAttachment = attachmentPreviewBaseItem && attachmentPreview
+    ? (attachmentPreviewComment?.attachments ?? attachmentPreviewBaseItem.attachments ?? []).find((entry) => entry.id === attachmentPreview.attachmentId) ?? null
     : null;
 
   const activeItems = useMemo(() => items.filter((item) => !isDeletedPost(item)), [items]);
@@ -3956,9 +3962,130 @@ function SymposiumExperience({
     );
   };
 
-  const currentContext = selectedItem
-    ? `${selectedItem.title}: ${selectedItem.gatheringReason}`
-    : `${activeRoomData.name}: ${activeRoomData.description}`;
+  const tabletContext = ((): AssistantMessageInputContract["context"] => {
+    const trimContent = (value: string) => value.slice(0, 12000);
+    if (attachmentPreviewAttachment && attachmentPreviewBaseItem) {
+      return {
+        surface: "attachment",
+        route: `/posts/${attachmentPreviewBaseItem.id}`,
+        title: attachmentPreviewAttachment.fileName,
+        summary: `Attachment open inside “${attachmentPreviewBaseItem.title}”.`,
+        content: trimContent([
+          attachmentPreviewBaseItem.body,
+          `Attachment type: ${attachmentPreviewAttachment.contentType}`,
+          `Attachment kind: ${attachmentPreviewAttachment.kind}`,
+          `Attachment metadata: ${JSON.stringify(attachmentPreviewAttachment.metadata ?? {})}`
+        ].join("\n\n")),
+        entityType: "attachment",
+        entityId: attachmentPreviewAttachment.id,
+        metadata: { postId: attachmentPreviewBaseItem.id }
+      };
+    }
+    if (searchOpen) {
+      return {
+        surface: "search",
+        route: "/search",
+        title: searchQuery.trim() ? `Search: ${searchQuery.trim()}` : "Search",
+        summary: "The global Symposium search overlay is open.",
+        content: searchQuery.trim() ? `Current search query: ${searchQuery.trim()}` : "No search query has been entered yet.",
+        metadata: { query: searchQuery.trim() }
+      };
+    }
+    if (messagesOpen) {
+      return {
+        surface: "messages",
+        route: selectedConversationId ? `/messages/${selectedConversationId}` : "/messages",
+        title: messageTabletContext?.title ?? "Messages",
+        summary: messageTabletContext ? "The currently selected private conversation." : "The Messages conversation list.",
+        content: trimContent(messageTabletContext?.content ?? "No conversation is selected."),
+        entityType: messageTabletContext ? "conversation" : undefined,
+        entityId: messageTabletContext?.conversationId,
+        metadata: { privateConversation: Boolean(messageTabletContext) }
+      };
+    }
+    if (applicationReviewItem) {
+      return {
+        surface: "opportunity",
+        route: `/opportunities/${applicationReviewItem.id}/applications`,
+        title: `${applicationReviewItem.title} · applications`,
+        summary: applicationReviewItem.gatheringReason,
+        content: trimContent(applicationReviewItem.body),
+        entityType: "opportunity",
+        entityId: applicationReviewItem.id,
+        metadata: { selectedApplicationId: selectedApplicationId ?? "" }
+      };
+    }
+    if (selectedProfile) {
+      return {
+        surface: "profile",
+        route: `/profiles/${selectedProfile.handle}`,
+        title: `${selectedProfile.name} (${selectedProfile.handle})`,
+        summary: `${selectedProfile.role} · ${selectedProfile.location}`,
+        content: trimContent([selectedProfile.bio, `Fields: ${selectedProfile.fields.join(", ")}`, `Open profile tab: ${profileActiveTab}`].join("\n\n")),
+        entityType: "profile",
+        entityId: selectedProfile.handle,
+        metadata: { tab: profileActiveTab }
+      };
+    }
+    if (selectedItem) {
+      return {
+        surface: "post",
+        route: `/posts/${selectedItem.id}`,
+        title: selectedItem.title,
+        summary: selectedItem.gatheringReason,
+        content: trimContent([
+          selectedItem.body,
+          selectedItem.claims.length ? `Claims:\n- ${selectedItem.claims.join("\n- ")}` : "",
+          selectedItem.evidence.length ? `Evidence:\n- ${selectedItem.evidence.join("\n- ")}` : "",
+          selectedItem.objections.length ? `Objections:\n- ${selectedItem.objections.join("\n- ")}` : "",
+          selectedItem.tests.length ? `Tests:\n- ${selectedItem.tests.join("\n- ")}` : ""
+        ].filter(Boolean).join("\n\n")),
+        entityType: "post",
+        entityId: selectedItem.id,
+        metadata: { kind: selectedItem.kind, status: selectedItem.status, selectedCommentId: selectedCommentId ?? "" }
+      };
+    }
+    if (selectedCommunity) {
+      return {
+        surface: "community",
+        route: `/communities/${selectedCommunity.id}`,
+        title: selectedCommunity.name,
+        summary: selectedCommunity.summary,
+        content: trimContent([
+          `Field: ${selectedCommunity.field}`,
+          `Keywords: ${selectedCommunity.keywords.join(", ")}`,
+          selectedCommunity.guidelines ? `Guidelines:\n${selectedCommunity.guidelines}` : ""
+        ].filter(Boolean).join("\n\n")),
+        entityType: "community",
+        entityId: selectedCommunity.id,
+        metadata: { visibility: selectedCommunity.visibility, membershipStatus: selectedCommunity.membershipStatus ?? "none" }
+      };
+    }
+    if (activeRoom === "office" && officeMode === "notes") {
+      return {
+        surface: "workspace",
+        route: workspaceTabletDocument ? `/workspace/notes/${workspaceTabletDocument.id}` : "/workspace/notes",
+        title: workspaceTabletDocument?.title ?? "Workspace Notes",
+        summary: workspaceTabletDocument
+          ? `${workspaceTabletDocument.kind} draft · revision ${workspaceTabletDocument.revision}`
+          : "Your private notes and drafts workspace.",
+        content: trimContent(workspaceTabletDocument?.body ?? `Workspace section: ${workspaceView.section}. Search: ${workspaceView.query || "none"}.`),
+        entityType: workspaceTabletDocument ? "note" : "workspace",
+        entityId: workspaceTabletDocument?.id,
+        metadata: { section: workspaceView.section, editing: workspaceView.editSelected }
+      };
+    }
+    return {
+      surface: activeRoom === "hall" ? "hall" : "room",
+      route: activeRoom === "hall" ? "/" : `/rooms/${activeRoom}`,
+      title: activeRoomData.name,
+      summary: activeRoomData.description,
+      content: `${activeRoomData.title}\n\nFeed: ${activeRoomData.feedLabel}\nLocation: ${activeRoomData.location}\nAmbient: ${activeRoomData.ambient}`,
+      entityType: "room",
+      entityId: activeRoom,
+      metadata: { feedScope, officeMode }
+    };
+  })();
 
   const localSearchResults = useMemo<SearchResults>(() => {
     const term = normalizeSearchPhrase(searchQuery);
@@ -4109,6 +4236,7 @@ function SymposiumExperience({
             }
             onOpenProfile={openProfile}
             liveEvents={messagingEvents}
+            onTabletContextChange={setMessageTabletContext}
           />
         ) : applicationReviewItem ? (
           <OpportunityApplicationsStage
@@ -4258,6 +4386,7 @@ function SymposiumExperience({
             initialCommentId={initialRoute.kind === "workspace" ? initialRoute.commentId : undefined}
             initialViewState={workspaceView}
             onViewStateChange={setWorkspaceView}
+            onTabletContextChange={setWorkspaceTabletDocument}
           />
         ) : activeRoom === "communities" ? (
           <CommunitiesStage
@@ -4359,9 +4488,8 @@ function SymposiumExperience({
 
       {tabletOpen ? (
         <TabletPanel
-          context={currentContext}
-          selectedItem={selectedItem}
-          room={activeRoomData}
+          actorHandle={currentProfile.handle}
+          context={tabletContext}
           onClose={() => setTabletOpen(false)}
         />
       ) : null}

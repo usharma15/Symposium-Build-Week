@@ -63,7 +63,8 @@ export function WorkspaceView({
   initialDocumentId,
   initialCommentId,
   initialViewState,
-  onViewStateChange
+  onViewStateChange,
+  onTabletContextChange
 }: {
   room: Room;
   actorHandle: string;
@@ -75,6 +76,7 @@ export function WorkspaceView({
   initialCommentId?: string;
   initialViewState?: WorkspaceViewSnapshot;
   onViewStateChange?: (state: WorkspaceViewSnapshot) => void;
+  onTabletContextChange?: (document: WorkspaceDocument | null) => void;
 }) {
   const workspace = useWorkspaceDocuments(actorHandle);
   const [section, setSection] = useState<WorkspaceSection>(initialViewState?.section ?? "all");
@@ -94,6 +96,9 @@ export function WorkspaceView({
   const navigationInFlightRef = useRef(false);
 
   const selectedDocument = workspace.snapshot.documents.find((document) => document.id === selectedDocumentId) ?? null;
+  useEffect(() => {
+    onTabletContextChange?.(selectedDocument);
+  }, [onTabletContextChange, selectedDocument]);
   useEffect(() => {
     onViewStateChange?.({
       section,

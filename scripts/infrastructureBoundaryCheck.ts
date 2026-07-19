@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { buildApp } from "@/apps/api/src/server";
 import { latestMigrationId, migrationIds } from "@/apps/api/src/db/migrate";
 import {
+  aiUsage,
   comments,
   communities,
   conversations,
@@ -32,7 +33,7 @@ import { parseEventCursor } from "@/apps/api/src/services/events";
 import { clerkSecretMode } from "@/apps/api/src/config/preflight";
 
 const main = async () => {
-  assert.equal(latestMigrationId, "0036_immediate_group_membership");
+  assert.equal(latestMigrationId, "0037_ai_usage_budget_ledger");
   assert.equal(clerkSecretMode("sk_test_example"), "development");
   assert.equal(clerkSecretMode("sk_live_example"), "production");
   assert.equal(clerkSecretMode(undefined), "missing");
@@ -58,6 +59,8 @@ const main = async () => {
   assert.ok("sequence" in messages);
   assert.ok("revision" in messages);
   assert.ok("profileHandle" in messageStars);
+  assert.ok("reservedCostMicros" in aiUsage);
+  assert.ok("actualCostMicros" in aiUsage);
   assert.ok("shortlisted" in opportunityApplications);
   assert.ok("revision" in opportunityApplications);
   assert.ok("applicationId" in opportunityApplicationComments);

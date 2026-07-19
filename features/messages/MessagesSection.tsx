@@ -776,6 +776,7 @@ type MessagingExperienceProps = {
   onOpenFull?: (conversationId: string | null) => void;
   onClose?: () => void;
   liveEvents?: MessagingLiveEvent[];
+  onTabletContextChange?: (context: { conversationId: string; title: string; content: string } | null) => void;
   quick?: boolean;
 };
 
@@ -788,6 +789,7 @@ export function MessagingExperience({
   onOpenFull,
   onClose,
   liveEvents = emptyMessagingLiveEvents,
+  onTabletContextChange,
   quick = false
 }: MessagingExperienceProps) {
   const [conversations, setConversations] = useState<ConversationSummaryContract[]>([]);
@@ -838,6 +840,23 @@ export function MessagingExperience({
   pendingAttachmentsRef.current = pendingAttachments;
   conversationsRef.current = conversations;
   messagesRef.current = messages;
+
+  useEffect(() => {
+    if (!onTabletContextChange) return;
+    if (!conversation) {
+      onTabletContextChange(null);
+      return;
+    }
+    onTabletContextChange({
+      conversationId: conversation.id,
+      title: conversationName(conversation, actor.handle),
+      content: messages.slice(-12).map((message) => {
+        const sender = message.senderHandle ? cleanHandle(message.senderHandle) : "system";
+        const body = message.deletedAt ? "[deleted message]" : message.body;
+        return `${sender}: ${body || (message.attachments.length ? "[shared attachments]" : "")}`;
+      }).join("\n")
+    });
+  }, [actor.handle, conversation, messages, onTabletContextChange]);
 
   const loadConversations = useCallback(async (append = false) => {
     const requestEpoch = append ? conversationListEpochRef.current : conversationListEpochRef.current + 1;

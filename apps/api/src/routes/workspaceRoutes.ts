@@ -458,7 +458,7 @@ export const registerWorkspaceRoutes = (app: FastifyInstance) => {
 
   app.post("/v1/assistant/messages", async (request, reply) => {
     try {
-      const actor = await withWriteActor(request, { shared: true, scope: "assistant", limit: 20 });
+      const actor = await withWriteActor(request, { shared: true, scope: "assistant", limit: 10 });
       const response = await askAssistant(
         request.body,
         actor,

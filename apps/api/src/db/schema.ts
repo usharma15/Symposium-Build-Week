@@ -785,6 +785,35 @@ export const aiMessages = pgTable(
   ]
 );
 
+export const aiUsage = pgTable(
+  "ai_usage",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    conversationId: uuid("conversation_id").notNull().references(() => aiConversations.id, { onDelete: "cascade" }),
+    ownerHandle: text("owner_handle").notNull().references(() => profiles.handle, { onDelete: "cascade" }),
+    model: text("model").notNull(),
+    status: text("status").default("reserved").notNull(),
+    reservedCostMicros: bigint("reserved_cost_micros", { mode: "number" }).notNull(),
+    actualCostMicros: bigint("actual_cost_micros", { mode: "number" }),
+    inputTokens: integer("input_tokens").default(0).notNull(),
+    cachedInputTokens: integer("cached_input_tokens").default(0).notNull(),
+    cacheWriteTokens: integer("cache_write_tokens").default(0).notNull(),
+    outputTokens: integer("output_tokens").default(0).notNull(),
+    providerResponseId: text("provider_response_id"),
+    errorCode: text("error_code"),
+    createdAt: createdAtColumn(),
+    updatedAt: updatedAtColumn()
+  },
+  (table) => [
+    index("ai_usage_owner_created_idx").on(table.ownerHandle, table.createdAt),
+    index("ai_usage_created_idx").on(table.createdAt),
+    index("ai_usage_status_created_idx").on(table.status, table.createdAt),
+    check("ai_usage_status_check", sql`${table.status} IN ('reserved', 'completed', 'failed')`),
+    check("ai_usage_cost_check", sql`${table.reservedCostMicros} >= 0 AND (${table.actualCostMicros} IS NULL OR ${table.actualCostMicros} >= 0)`),
+    check("ai_usage_token_check", sql`${table.inputTokens} >= 0 AND ${table.cachedInputTokens} >= 0 AND ${table.cacheWriteTokens} >= 0 AND ${table.outputTokens} >= 0`)
+  ]
+);
+
 export const workspaces = pgTable(
   "workspaces",
   {

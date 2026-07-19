@@ -47,7 +47,14 @@ const envSchema = z.object({
   RENDER_GIT_COMMIT: z.string().max(120).optional(),
   VERCEL_GIT_COMMIT_SHA: z.string().max(120).optional(),
   OPENAI_API_KEY: z.string().optional(),
-  SYMPOSIUM_AI_MODEL: z.string().default("gpt-5.4-mini")
+  SYMPOSIUM_AI_ENABLED: booleanFromEnv(false),
+  SYMPOSIUM_AI_MODEL: z.enum(["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"]).default("gpt-5.6-terra"),
+  SYMPOSIUM_AI_REASONING_EFFORT: z.enum(["none", "low", "medium"]).default("low"),
+  SYMPOSIUM_AI_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(200).max(1200).default(700),
+  SYMPOSIUM_AI_USER_DAILY_LIMIT: z.coerce.number().int().min(1).max(20).default(3),
+  SYMPOSIUM_AI_GLOBAL_DAILY_LIMIT: z.coerce.number().int().min(1).max(500).default(40),
+  SYMPOSIUM_AI_DAILY_BUDGET_USD: z.coerce.number().positive().max(10).default(1.25),
+  SYMPOSIUM_AI_MONTHLY_BUDGET_USD: z.coerce.number().positive().max(40).default(40)
 });
 
 const parsed = envSchema.safeParse(process.env);
