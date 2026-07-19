@@ -3,7 +3,7 @@
 .symposium-shell[data-view="messages"] .stage {
   height: 100dvh;
   min-height: 650px;
-  padding: 88px 16px 146px;
+  padding: 88px 16px 16px;
   overflow: hidden;
 }
 
@@ -37,7 +37,49 @@
 }
 
 .symposium-shell[data-view="messages"] .messaging-experience.full {
+  --messages-panel-gap: 12px;
+  --messages-side-controls-clearance: 126px;
+  --messages-info-status-clearance: 36px;
+  align-items: start;
+  gap: var(--messages-panel-gap);
   min-height: min(520px, calc(100dvh - 234px));
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.symposium-shell[data-view="messages"] .messaging-experience.full > :is(
+  .messages-conversations-panel,
+  .messages-thread-panel,
+  .messages-info-panel,
+  .messages-no-selection
+) {
+  overflow: hidden;
+  border: 1px solid rgba(255, 253, 245, 0.32);
+  border-radius: 12px;
+  box-shadow: 0 28px 86px rgba(5, 11, 12, 0.25);
+  backdrop-filter: blur(26px);
+  -webkit-backdrop-filter: blur(26px);
+}
+
+.symposium-shell[data-view="messages"] .messaging-experience.full > .messages-conversations-panel {
+  height: calc(100% - var(--messages-side-controls-clearance));
+}
+
+.symposium-shell[data-view="messages"] .messaging-experience.full > :is(
+  .messages-thread-panel,
+  .messages-no-selection
+) {
+  height: 100%;
+}
+
+.symposium-shell[data-view="messages"] .messaging-experience.full > .messages-info-panel {
+  height: calc(100% - var(--messages-side-controls-clearance) - var(--messages-info-status-clearance));
+  margin-top: var(--messages-info-status-clearance);
 }
 
 .messaging-experience.quick {
@@ -1879,6 +1921,18 @@
     width: 100%;
   }
 
+  .symposium-shell[data-view="messages"] .messaging-experience.full {
+    --messages-panel-gap: 7px;
+  }
+
+  .symposium-shell[data-view="messages"] .messaging-experience.full > :is(
+    .messages-conversations-panel,
+    .messages-thread-panel,
+    .messages-no-selection
+  ) {
+    height: 100%;
+  }
+
   .messaging-experience.quick {
     width: calc(100vw - 14px);
     height: min(84vh, 720px);
@@ -1983,6 +2037,18 @@
     .pocket.bottom-action-tablet
   ) {
     right: 24px;
+  }
+
+  .symposium-shell[data-view="messages"] .messaging-experience.full > :is(
+    .messages-conversations-panel,
+    .messages-thread-panel,
+    .messages-no-selection
+  ) {
+    height: 100%;
+  }
+
+  .symposium-shell[data-view="messages"] .messaging-experience.full > .messages-info-panel {
+    height: calc(100% - var(--messages-info-status-clearance));
   }
 }
 

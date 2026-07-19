@@ -276,6 +276,11 @@ const main = async () => {
   assert.doesNotMatch(client, /window\.prompt/);
   assert.match(styles, /\.message-composer\.has-attachments/);
   assert.match(styles, /grid-area: previews/);
+  assert.match(styles, /--messages-side-controls-clearance:\s*126px/);
+  assert.match(styles, /--messages-info-status-clearance:\s*36px/);
+  assert.match(styles, /\.messaging-experience\.full > \.messages-conversations-panel\s*\{[^}]*height:\s*calc\(100% - var\(--messages-side-controls-clearance\)\)/);
+  assert.match(styles, /\.messaging-experience\.full > :is\([\s\S]*?\.messages-thread-panel,[\s\S]*?\.messages-no-selection[\s\S]*?\)\s*\{[^}]*height:\s*100%/);
+  assert.match(styles, /\.messaging-experience\.full > \.messages-info-panel\s*\{[^}]*margin-top:\s*var\(--messages-info-status-clearance\)/);
   assert.match(client, /ownerType: "message"/);
   assert.match(client, /Open full messages/);
   assert.match(client, /IntersectionObserver/);
