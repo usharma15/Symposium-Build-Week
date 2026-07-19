@@ -42,6 +42,11 @@ export const communityRenders: Record<Theme, { directory: string; selected: stri
   }
 };
 
+export const messageRenders: Record<Theme, string> = {
+  day: "/symposium-renders/messages-v1.avif",
+  night: "/symposium-renders/messages-night-v1.avif"
+};
+
 const likelyDestination: Record<RoomId, RoomId> = {
   hall: "symposium",
   office: "hall",

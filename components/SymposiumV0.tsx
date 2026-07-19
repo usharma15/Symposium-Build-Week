@@ -215,6 +215,7 @@ import {
   communityRenders,
   entranceRenders,
   getThemePreloadRenders,
+  messageRenders,
   roomRenders,
   useSymposiumRenderPreload,
   type Theme
@@ -706,7 +707,13 @@ function SymposiumExperience({
     activeRoom === "communities" && selectedCommunityId
         ? themedCommunityRenders.selected
         : themedRoomRenders[activeRoom];
-  const themePreloadRenders = useMemo(() => getThemePreloadRenders(theme, activeRoom), [activeRoom, theme]);
+  const activeShellRender = messagesOpen ? messageRenders[theme] : activeRoomRender;
+  const themePreloadRenders = useMemo(
+    () => messagesOpen
+      ? [messageRenders[theme === "day" ? "night" : "day"]]
+      : getThemePreloadRenders(theme, activeRoom),
+    [activeRoom, messagesOpen, theme]
+  );
   const selectedItemCandidate = items.find((item) => item.id === selectedItemId) ?? null;
   if (selectedItemCandidate) selectedItemFallbackRef.current = selectedItemCandidate;
   if (!selectedItemId) selectedItemFallbackRef.current = null;
@@ -754,7 +761,7 @@ function SymposiumExperience({
     : undefined;
   const selectedProfileActivityPage = selectedProfileActivitySnapshot?.pages[selectedProfileActivityScope];
 
-  useSymposiumRenderPreload(themePreloadRenders, activeRoomRender);
+  useSymposiumRenderPreload(themePreloadRenders, activeShellRender);
 
 
   useEffect(() => {
@@ -2884,7 +2891,6 @@ function SymposiumExperience({
     setComposerOpen(false);
     setSettingsOpen(false);
     setSearchOpen(false);
-    setMessagesOpen(false);
     setMessagesQuickOpen(false);
     setTabletOpen(true);
   };
@@ -2893,7 +2899,6 @@ function SymposiumExperience({
     setTabletOpen(false);
     setComposerOpen(false);
     setSettingsOpen(false);
-    setMessagesOpen(false);
     setMessagesQuickOpen(false);
     setSearchOpen(true);
   };
@@ -4018,7 +4023,7 @@ function SymposiumExperience({
       data-room={activeRoom}
       data-community-selected={selectedCommunity ? "true" : undefined}
       data-view={messagesOpen ? "messages" : applicationReviewItem ? "opportunity-applications" : selectedProfile ? "profile" : selectedItem ? "detail" : activeRoom === "hall" ? "hall" : "room"}
-      style={{ "--room-bg": `url(${activeRoomRender})` } as CSSProperties}
+      style={{ "--room-bg": `url(${activeShellRender})` } as CSSProperties}
     >
       <div className="ambient-layer" aria-hidden="true" />
 
@@ -4090,12 +4095,10 @@ function SymposiumExperience({
         {syncStatus}
       </div>
 
-      {!messagesOpen ? (
-        <button className="search-launcher bottom-action bottom-action-search" type="button" onClick={openSearch}>
-          <Search size={17} />
-          <span>Search</span>
-        </button>
-      ) : null}
+      <button className="search-launcher bottom-action bottom-action-search" type="button" onClick={openSearch}>
+        <Search size={17} />
+        <span>Search</span>
+      </button>
 
       <section className="stage">
         <CommunityGovernanceProvider community={selectedCommunity} items={items}>
@@ -4330,37 +4333,32 @@ function SymposiumExperience({
         </CommunityGovernanceProvider>
       </section>
 
-      {!messagesOpen ? (
-        <>
-          <button
-            className="new-post-launcher bottom-action bottom-action-new"
-            type="button"
-            onClick={() => {
-              setTabletOpen(false);
-              setSettingsOpen(false);
-              setSearchOpen(false);
-              setMessagesOpen(false);
-              setComposerCommunityId(selectedCommunity && canParticipateInCommunity(selectedCommunity, currentProfile) ? selectedCommunity.id : null);
-              setComposerOpen(true);
-            }}
-          >
-            <NotebookPen size={18} />
-            <span>New post</span>
-          </button>
+      <button
+        className="new-post-launcher bottom-action bottom-action-new"
+        type="button"
+        onClick={() => {
+          setTabletOpen(false);
+          setSettingsOpen(false);
+          setSearchOpen(false);
+          setComposerCommunityId(selectedCommunity && canParticipateInCommunity(selectedCommunity, currentProfile) ? selectedCommunity.id : null);
+          setComposerOpen(true);
+        }}
+      >
+        <NotebookPen size={18} />
+        <span>New post</span>
+      </button>
 
-          <ScribbleLauncher />
+      <ScribbleLauncher />
 
-          <button
-            className="pocket pocket-right bottom-action bottom-action-tablet"
-            type="button"
-            title="AI tablet"
-            onClick={openTablet}
-          >
-            <BrainCircuit size={18} />
-            <span>AI Tablet</span>
-          </button>
-        </>
-      ) : null}
+      <button
+        className="pocket pocket-right bottom-action bottom-action-tablet"
+        type="button"
+        title="AI tablet"
+        onClick={openTablet}
+      >
+        <BrainCircuit size={18} />
+        <span>AI Tablet</span>
+      </button>
 
       {tabletOpen ? (
         <TabletPanel

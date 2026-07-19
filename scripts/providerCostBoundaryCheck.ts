@@ -79,7 +79,7 @@ assert.doesNotMatch(renderAssets, /roomRenders\.night|preloadRemainingRenders/);
 assert.doesNotMatch(shellViews, /RenderPreloadDeck|loading="eager"/);
 assert.match(nextConfig, /max-age=31536000, immutable/);
 assert.equal(renderFiles.some((file) => file.endsWith(".png")), false);
-assert.equal(avifRenderFiles.length, 20);
+assert.equal(avifRenderFiles.length, 22);
 assert.ok(avifRenderBytes < 4 * 1024 * 1024, "Versioned room renders must stay below a 4 MB deployment budget.");
 assert.match(profileActions, /query\.includeSummary[\s\S]*profileActivityCountSummary/);
 assert.match(profileRepository, /listProfileActivitySubjects/);

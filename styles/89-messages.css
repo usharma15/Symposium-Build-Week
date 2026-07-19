@@ -3,13 +3,19 @@
 .symposium-shell[data-view="messages"] .stage {
   height: 100dvh;
   min-height: 650px;
-  padding: 88px 16px 16px;
+  padding: 88px 16px 146px;
   overflow: hidden;
 }
 
 .symposium-shell[data-view="messages"]::before {
+  background: var(--room-bg) center center / cover no-repeat;
   opacity: 1;
-  filter: saturate(0.82) brightness(0.76);
+  filter: none;
+}
+
+.symposium-shell[data-view="messages"]::after,
+.symposium-shell.night[data-view="messages"]::after {
+  background: transparent;
 }
 
 .messaging-experience {
@@ -28,6 +34,10 @@
   color: var(--ink);
   backdrop-filter: blur(26px);
   -webkit-backdrop-filter: blur(26px);
+}
+
+.symposium-shell[data-view="messages"] .messaging-experience.full {
+  min-height: min(520px, calc(100dvh - 234px));
 }
 
 .messaging-experience.quick {
@@ -1827,7 +1837,40 @@
 @media (max-width: 760px) {
   .symposium-shell[data-view="messages"] .stage {
     min-height: 600px;
-    padding: 82px 7px 7px;
+    padding: 82px 7px 80px;
+  }
+
+  .symposium-shell[data-view="messages"] :is(
+    .bottom-action-search,
+    .pocket.bottom-action-search,
+    .search-launcher.bottom-action-search
+  ) {
+    left: 14px;
+    bottom: 14px;
+  }
+
+  .symposium-shell[data-view="messages"] :is(
+    .bottom-action-notebook,
+    .pocket.bottom-action-notebook
+  ) {
+    left: 80px;
+    bottom: 14px;
+  }
+
+  .symposium-shell[data-view="messages"] :is(
+    .bottom-action-new,
+    .new-post-launcher.bottom-action-new
+  ) {
+    right: 80px;
+    bottom: 14px;
+  }
+
+  .symposium-shell[data-view="messages"] :is(
+    .bottom-action-tablet,
+    .pocket.bottom-action-tablet
+  ) {
+    right: 14px;
+    bottom: 14px;
   }
 
   .messaging-experience.full,
@@ -1883,6 +1926,63 @@
     position: static;
     justify-content: flex-end;
     margin-bottom: 8px;
+  }
+}
+
+@media (max-height: 760px) and (min-width: 761px) {
+  .symposium-shell[data-view="messages"] .stage {
+    padding-bottom: 78px;
+  }
+
+  .symposium-shell[data-view="messages"] :is(
+    .bottom-action,
+    .pocket.bottom-action,
+    .new-post-launcher.bottom-action,
+    .search-launcher.bottom-action
+  ) {
+    width: 52px;
+    min-width: 52px;
+    height: 52px;
+    padding: 0;
+    bottom: 14px;
+  }
+
+  .symposium-shell[data-view="messages"] :is(
+    .bottom-action span,
+    .pocket.bottom-action span,
+    .new-post-launcher.bottom-action span,
+    .search-launcher.bottom-action span
+  ) {
+    display: none;
+  }
+
+  .symposium-shell[data-view="messages"] :is(
+    .bottom-action-search,
+    .pocket.bottom-action-search,
+    .search-launcher.bottom-action-search
+  ) {
+    left: 24px;
+  }
+
+  .symposium-shell[data-view="messages"] :is(
+    .bottom-action-notebook,
+    .pocket.bottom-action-notebook
+  ) {
+    left: 90px;
+  }
+
+  .symposium-shell[data-view="messages"] :is(
+    .bottom-action-new,
+    .new-post-launcher.bottom-action-new
+  ) {
+    right: 90px;
+  }
+
+  .symposium-shell[data-view="messages"] :is(
+    .bottom-action-tablet,
+    .pocket.bottom-action-tablet
+  ) {
+    right: 24px;
   }
 }
 
