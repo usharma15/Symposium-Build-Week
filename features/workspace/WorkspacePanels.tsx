@@ -145,7 +145,7 @@ export function TabletPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [quotaLoading, setQuotaLoading] = useState(true);
-  const [dailyLimit, setDailyLimit] = useState(3);
+  const [dailyLimit, setDailyLimit] = useState(10);
   const [remainingToday, setRemainingToday] = useState(0);
   const [monthlyBudgetUsd, setMonthlyBudgetUsd] = useState(40);
   const transcriptRef = useRef<HTMLDivElement>(null);
@@ -171,6 +171,18 @@ export function TabletPanel({
         if (!cancelled) setQuotaLoading(false);
       });
     return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    const updateQuota = (event: Event) => {
+      const quota = (event as CustomEvent<AssistantQuotaStatusContract["quota"]>).detail;
+      if (!quota) return;
+      setDailyLimit(quota.dailyLimit);
+      setRemainingToday(quota.remainingToday);
+      setMonthlyBudgetUsd(quota.monthlyBudgetUsd);
+    };
+    window.addEventListener("symposium-ai-quota-change", updateQuota);
+    return () => window.removeEventListener("symposium-ai-quota-change", updateQuota);
   }, []);
 
   useEffect(() => {
@@ -216,6 +228,9 @@ export function TabletPanel({
       });
       setConversationId(response.conversationId);
       setRemainingToday(response.quota?.remainingToday ?? Math.max(0, remainingToday - 1));
+      if (response.quota) {
+        window.dispatchEvent(new CustomEvent("symposium-ai-quota-change", { detail: response.quota }));
+      }
       setMessages((current) => [...current, {
         id: response.message.id,
         role: "assistant",

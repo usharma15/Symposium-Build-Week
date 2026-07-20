@@ -530,6 +530,20 @@
   background: #fff;
 }
 
+.attachment-pdf-translation-page {
+  align-self: start;
+  width: min(100%, 720px);
+  min-height: 100%;
+  margin: 0 auto;
+  padding: 38px 44px;
+  background: var(--attachment-paper-surface);
+  color: var(--attachment-paper-ink);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 0.92rem;
+  line-height: 1.62;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.28);
+}
+
 .attachment-pdf-text-layer {
   --min-font-size: 1;
   --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
@@ -613,6 +627,8 @@
 }
 
 .attachment-pagebar {
+  position: relative;
+  z-index: 4;
   min-height: 36px;
   border-bottom: 1px solid var(--line);
   padding: 0 10px;
@@ -620,6 +636,116 @@
   color: var(--attachment-preview-muted);
   font-size: 0.78rem;
   font-weight: 760;
+}
+
+.attachment-page-actions,
+.document-translation-control,
+.document-translation-view-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.document-translation-control {
+  position: relative;
+}
+
+.attachment-pagebar .document-translate-button,
+.attachment-pagebar .document-translation-view-toggle button,
+.attachment-pagebar .document-translation-submit {
+  width: auto;
+  padding: 0 9px;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.attachment-pagebar .document-translation-view-toggle {
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.attachment-pagebar .document-translation-view-toggle button {
+  min-height: 28px;
+  border: 0;
+  border-radius: 0;
+  color: var(--attachment-preview-muted);
+  font-size: 0.7rem;
+}
+
+.attachment-pagebar .document-translation-view-toggle button + button {
+  border-left: 1px solid var(--line);
+}
+
+.attachment-pagebar .document-translation-view-toggle button.active {
+  background: color-mix(in srgb, var(--aqua) 16%, var(--document-control-solid));
+  color: var(--attachment-preview-ink);
+}
+
+.document-translation-popover {
+  position: absolute;
+  top: calc(100% + 7px);
+  right: 0;
+  z-index: 12;
+  display: grid;
+  width: min(290px, calc(100vw - 32px));
+  gap: 7px;
+  border: 1px solid color-mix(in srgb, var(--line) 82%, var(--aqua));
+  border-radius: calc(var(--radius) + 2px);
+  padding: 12px;
+  background: var(--document-surface-solid);
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 650;
+  text-align: left;
+  box-shadow: 0 16px 42px rgba(10, 19, 20, 0.22);
+}
+
+.attachment-pagebar .document-translation-popover-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 10px;
+}
+
+.attachment-pagebar .document-translation-popover-title button {
+  width: 26px;
+  min-height: 26px;
+}
+
+.document-translation-popover label,
+.document-translation-popover small {
+  color: var(--muted);
+}
+
+.document-translation-popover input {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--input-bg);
+  padding: 0 10px;
+  color: var(--ink);
+  font: inherit;
+}
+
+.document-translation-popover input:focus {
+  outline: 2px solid color-mix(in srgb, var(--aqua) 70%, transparent);
+  outline-offset: 1px;
+}
+
+.document-translation-popover p {
+  margin: 0;
+  color: var(--danger, #9f342f);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+.attachment-pagebar .document-translation-submit {
+  justify-self: stretch;
+  min-height: 36px;
 }
 
 .attachment-pagebar div,
@@ -948,6 +1074,30 @@
 
 .attachment-docx-fallback {
   min-height: auto;
+}
+
+.attachment-docx-derived {
+  min-height: 100%;
+}
+
+@media (max-width: 680px) {
+  .attachment-pagebar .document-translate-button span {
+    display: none;
+  }
+
+  .attachment-pagebar .document-translate-button {
+    width: 30px;
+    padding: 0;
+  }
+
+  .attachment-pagebar .document-translation-view-toggle button {
+    padding: 0 6px;
+    font-size: 0.64rem;
+  }
+
+  .attachment-pdf-translation-page {
+    padding: 24px 20px;
+  }
 }
 
 .attachment-document-feed .attachment-docx-scroll,

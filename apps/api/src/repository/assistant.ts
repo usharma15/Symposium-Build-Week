@@ -7,8 +7,8 @@ import {
 } from "../../../../packages/contracts/src";
 import { env } from "../config/env";
 import { getPool, hasDatabase } from "../db/client";
-import { actualCostMicros, reserveCostMicros, usdToMicros } from "../services/aiBudget";
-import { assistantDailyLimitFor } from "../services/assistantQuota";
+import { actualCostMicros } from "../services/aiBudget";
+import { assistantQuota, completeAssistantUsage, reserveAssistantUsage } from "../services/assistantUsage";
 import { mutationAuditMetadata, stageAuditLog } from "../services/audit";
 import type { Actor } from "../services/auth";
 import { stageEvent } from "../services/events";
@@ -38,20 +38,6 @@ type PreparedAssistant = {
   remainingToday: number;
 };
 
-const dailyLimitFor = (owner: string, usageDay: string) => assistantDailyLimitFor(owner, usageDay, {
-  baseLimit: env.SYMPOSIUM_AI_USER_DAILY_LIMIT,
-  ownerHandle: env.SYMPOSIUM_OWNER_HANDLE,
-  ownerOverrideLimit: env.SYMPOSIUM_AI_OWNER_DAILY_LIMIT,
-  ownerOverrideUsageDay: env.SYMPOSIUM_AI_OWNER_DAILY_LIMIT_USAGE_DAY
-});
-
-const quota = (dailyLimit: number, remainingToday: number) => ({
-  dailyLimit,
-  remainingToday: Math.max(0, remainingToday),
-  monthlyBudgetUsd: env.SYMPOSIUM_AI_MONTHLY_BUDGET_USD,
-  extremelyLimited: true as const
-});
-
 const unavailableResponse = (
   input: ParsedInput,
   status: "provider_not_configured" | "disabled",
@@ -63,7 +49,7 @@ const unavailableResponse = (
     providerConfigured: Boolean(env.OPENAI_API_KEY),
     status,
     model: env.SYMPOSIUM_AI_MODEL,
-    quota: quota(env.SYMPOSIUM_AI_USER_DAILY_LIMIT, env.SYMPOSIUM_AI_USER_DAILY_LIMIT),
+    quota: assistantQuota(env.SYMPOSIUM_AI_USER_DAILY_LIMIT, env.SYMPOSIUM_AI_USER_DAILY_LIMIT),
     message: {
       id: randomUUID(),
       conversationId,
@@ -80,7 +66,7 @@ export const getAssistantQuota = async (actor: Actor): Promise<AssistantQuotaSta
       enabled: false,
       providerConfigured: Boolean(env.OPENAI_API_KEY),
       model: env.SYMPOSIUM_AI_MODEL,
-      quota: quota(env.SYMPOSIUM_AI_USER_DAILY_LIMIT, 0)
+      quota: assistantQuota(env.SYMPOSIUM_AI_USER_DAILY_LIMIT, 0)
     };
   }
   const owner = await ensureProfileHandle(actorHandle(actor));
@@ -91,13 +77,12 @@ export const getAssistantQuota = async (actor: Actor): Promise<AssistantQuotaSta
      WHERE owner_handle = $1 AND created_at >= date_trunc('day', now())`,
     [owner]
   );
-  const usageDay = usage.rows[0]?.usageDay ?? "";
-  const dailyLimit = dailyLimitFor(owner, usageDay);
+  const dailyLimit = env.SYMPOSIUM_AI_USER_DAILY_LIMIT;
   return {
     enabled: env.SYMPOSIUM_AI_ENABLED,
     providerConfigured: Boolean(env.OPENAI_API_KEY),
     model: env.SYMPOSIUM_AI_MODEL,
-    quota: quota(dailyLimit, dailyLimit - (usage.rows[0]?.usedToday ?? 0))
+    quota: assistantQuota(dailyLimit, dailyLimit - (usage.rows[0]?.usedToday ?? 0))
   };
 };
 
@@ -138,45 +123,6 @@ const prepareAssistant = async (
     history = historyResult.rows;
   }
 
-  await client.query("SELECT pg_advisory_xact_lock(hashtextextended('symposium:ai-budget', 0))");
-  await client.query("SELECT pg_advisory_xact_lock(hashtextextended('symposium:ai-user:' || $1, 0))", [owner]);
-  const usage = await client.query<{
-    userMinute: number;
-    userDaily: number;
-    globalDaily: number;
-    inFlight: number;
-    dailyCostMicros: string;
-    monthlyCostMicros: string;
-    usageDay: string;
-  }>(
-    `SELECT
-       count(*) FILTER (WHERE owner_handle = $1 AND created_at >= now() - interval '60 seconds')::int AS "userMinute",
-       count(*) FILTER (WHERE owner_handle = $1 AND created_at >= date_trunc('day', now()))::int AS "userDaily",
-       count(*) FILTER (WHERE created_at >= date_trunc('day', now()))::int AS "globalDaily",
-       count(*) FILTER (WHERE owner_handle = $1 AND status = 'reserved' AND created_at >= now() - interval '2 minutes')::int AS "inFlight",
-       COALESCE(sum(CASE WHEN status = 'completed' THEN actual_cost_micros ELSE reserved_cost_micros END)
-         FILTER (WHERE created_at >= date_trunc('day', now())), 0)::text AS "dailyCostMicros",
-       COALESCE(sum(CASE WHEN status = 'completed' THEN actual_cost_micros ELSE reserved_cost_micros END)
-         FILTER (WHERE created_at >= date_trunc('month', now())), 0)::text AS "monthlyCostMicros",
-       current_date::text AS "usageDay"
-     FROM ai_usage`,
-    [owner]
-  );
-  const current = usage.rows[0]!;
-  const dailyLimit = dailyLimitFor(owner, current.usageDay);
-  if (current.inFlight >= 1) {
-    throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "The AI Tablet only allows one request at a time. Wait for the current answer." });
-  }
-  if (current.userMinute >= 2) {
-    throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "Extremely limited AI beta: maximum two attempts per minute." });
-  }
-  if (current.userDaily >= dailyLimit) {
-    throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: `Daily AI limit reached. This account gets ${dailyLimit} answers for the current usage day during the extremely limited beta.` });
-  }
-  if (current.globalDaily >= env.SYMPOSIUM_AI_GLOBAL_DAILY_LIMIT) {
-    throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "The shared AI capacity for today is exhausted. It resets tomorrow." });
-  }
-
   const renderedInput = assistantRenderedInput({
     history,
     context: input.context,
@@ -184,24 +130,12 @@ const prepareAssistant = async (
     intent: input.intent,
     targetLanguage: input.targetLanguage
   });
-  const reservedCostMicros = reserveCostMicros(
-    env.SYMPOSIUM_AI_MODEL,
+  const reservation = await reserveAssistantUsage(client, {
+    owner,
+    conversationId,
     renderedInput,
-    assistantMaxOutputTokens(input.intent)
-  );
-  if (Number(current.dailyCostMicros) + reservedCostMicros > usdToMicros(env.SYMPOSIUM_AI_DAILY_BUDGET_USD)) {
-    throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "The shared AI spending limit for today is exhausted. It resets tomorrow." });
-  }
-  if (Number(current.monthlyCostMicros) + reservedCostMicros > usdToMicros(env.SYMPOSIUM_AI_MONTHLY_BUDGET_USD)) {
-    throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "The AI Tablet monthly spending cap has been reached. AI is paused until the next month." });
-  }
-
-  const reserved = await client.query<{ id: string }>(
-    `INSERT INTO ai_usage (conversation_id, owner_handle, model, reserved_cost_micros)
-     VALUES ($1, $2, $3, $4)
-     RETURNING id`,
-    [conversationId, owner, env.SYMPOSIUM_AI_MODEL, reservedCostMicros]
-  );
+    maxOutputTokens: assistantMaxOutputTokens(input.intent)
+  });
   await client.query(
     `INSERT INTO ai_messages (conversation_id, role, body, metadata)
      VALUES ($1, 'user', $2, $3)`,
@@ -211,12 +145,12 @@ const prepareAssistant = async (
     value: {
       owner,
       conversationId,
-      usageId: reserved.rows[0]!.id,
-      reservedCostMicros,
+      usageId: reservation.usageId,
+      reservedCostMicros: reservation.reservedCostMicros,
       history,
       input,
-      dailyLimit,
-      remainingToday: dailyLimit - current.userDaily - 1
+      dailyLimit: reservation.dailyLimit,
+      remainingToday: reservation.remainingToday
     }
   };
 });
@@ -263,31 +197,18 @@ const finalizeAssistant = async (
       translation: translation ?? null
     })]
   );
-  await client.query(
-    `UPDATE ai_usage SET
-       status = $2,
-       actual_cost_micros = $3,
-       input_tokens = $4,
-       cached_input_tokens = $5,
-       cache_write_tokens = $6,
-       output_tokens = $7,
-       provider_response_id = $8,
-       error_code = $9,
-       updated_at = now()
-     WHERE id = $1 AND owner_handle = $10 AND status = 'reserved'`,
-    [
-      prepared.usageId,
-      providerError ? "failed" : "completed",
-      actualMicros,
-      result?.inputTokens ?? 0,
-      result?.cachedInputTokens ?? 0,
-      result?.cacheWriteTokens ?? 0,
-      result?.outputTokens ?? 0,
-      result?.providerResponseId ?? null,
-      providerError ? failure?.code ?? "provider_error" : null,
-      prepared.owner
-    ]
-  );
+  await completeAssistantUsage(client, {
+    usageId: prepared.usageId,
+    owner: prepared.owner,
+    providerError,
+    actualCostMicros: actualMicros,
+    inputTokens: result?.inputTokens ?? 0,
+    cachedInputTokens: result?.cachedInputTokens ?? 0,
+    cacheWriteTokens: result?.cacheWriteTokens ?? 0,
+    outputTokens: result?.outputTokens ?? 0,
+    providerResponseId: result?.providerResponseId,
+    errorCode: failure?.code
+  });
   await client.query("UPDATE ai_conversations SET updated_at = now() WHERE id = $1 AND owner_handle = $2", [
     prepared.conversationId,
     prepared.owner
@@ -298,7 +219,7 @@ const finalizeAssistant = async (
     providerConfigured: true,
     status: providerError ? "provider_error" : "answered",
     model: result?.model ?? env.SYMPOSIUM_AI_MODEL,
-    quota: quota(prepared.dailyLimit, prepared.remainingToday),
+    quota: assistantQuota(prepared.dailyLimit, prepared.remainingToday),
     message: { ...row, createdAt: new Date(row.createdAt).toISOString() },
     ...(translation ? { translation } : {})
   };

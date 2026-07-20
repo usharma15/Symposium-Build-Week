@@ -1281,6 +1281,48 @@ export const assistantMessageInputSchema = z.object({
   }
 });
 
+export const documentTranslationSourcePageSchema = z.object({
+  pageNumber: z.number().int().positive().max(1000),
+  body: z.string().trim().min(1).max(12000)
+});
+
+export const documentTranslationInputSchema = z.object({
+  attachmentId: z.string().trim().min(1).max(240),
+  sourceTitle: z.string().trim().min(1).max(300),
+  sourceKind: z.enum(["docx", "pdf"]),
+  sourcePages: z.array(documentTranslationSourcePageSchema).min(1).max(40),
+  sourceComplete: z.boolean(),
+  languageInstruction: z.string().trim().min(1).max(120)
+}).superRefine((input, context) => {
+  const pageNumbers = input.sourcePages.map((page) => page.pageNumber);
+  if (new Set(pageNumbers).size !== pageNumbers.length || pageNumbers.some((page, index) => index > 0 && page <= pageNumbers[index - 1]!)) {
+    context.addIssue({ code: "custom", path: ["sourcePages"], message: "Document pages must be unique and ordered." });
+  }
+  if (input.sourcePages.reduce((total, page) => total + page.body.length, 0) > 50000) {
+    context.addIssue({ code: "custom", path: ["sourcePages"], message: "Document translation is limited to 50,000 extracted characters." });
+  }
+});
+
+export const documentTranslationPageSchema = z.object({
+  pageNumber: z.number().int().positive().max(1000),
+  body: z.string().trim().min(1).max(20000)
+});
+
+export const documentTranslationModelOutputSchema = z.object({
+  targetLanguage: z.union([assistantTranslationLanguageSchema, z.literal("unsupported")]),
+  targetLanguageLabel: z.string().trim().max(40),
+  translatedTitle: z.string().trim().max(300),
+  pages: z.array(documentTranslationPageSchema).max(40),
+  message: z.string().trim().max(1000)
+}).superRefine((output, context) => {
+  if (output.targetLanguage === "unsupported" && output.pages.length) {
+    context.addIssue({ code: "custom", path: ["pages"], message: "Unsupported languages cannot contain translated pages." });
+  }
+  if (output.targetLanguage !== "unsupported" && (!output.translatedTitle || !output.pages.length)) {
+    context.addIssue({ code: "custom", message: "A supported translation requires its title and pages." });
+  }
+});
+
 export const saveAssistantQuickNoteInputSchema = z.object({
   assistantMessageId: z.string().uuid(),
   conversationId: z.string().uuid(),
@@ -1563,6 +1605,29 @@ export const assistantResponseSchema = z.object({
   translation: assistantTranslationSchema.optional()
 });
 
+export const documentTranslationResultSchema = z.object({
+  status: z.enum(["translated", "unsupported_language", "provider_error", "disabled"]),
+  attachmentId: z.string(),
+  sourceFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  sourceComplete: z.boolean(),
+  cached: z.boolean(),
+  targetLanguage: assistantTranslationLanguageSchema.nullable(),
+  targetLanguageLabel: z.string().max(40).nullable(),
+  translatedTitle: z.string().max(300),
+  pages: z.array(documentTranslationPageSchema).max(40),
+  message: z.string().max(1000),
+  model: z.string(),
+  createdAt: z.string().datetime(),
+  quota: assistantQuotaSchema
+}).superRefine((result, context) => {
+  if (result.status === "translated" && (!result.targetLanguage || !result.translatedTitle.trim() || !result.pages.length)) {
+    context.addIssue({ code: "custom", message: "A completed document translation requires its language, title, and pages." });
+  }
+  if (result.status !== "translated" && result.pages.length) {
+    context.addIssue({ code: "custom", path: ["pages"], message: "An incomplete document translation cannot contain translated pages." });
+  }
+});
+
 export const bootstrapResponseSchema = z.object({
   profiles: z.record(z.string(), researchProfileSchema),
   items: z.array(inquiryItemSchema).max(50),
@@ -1704,6 +1769,11 @@ export type AssistantQuotaStatusContract = z.infer<typeof assistantQuotaStatusSc
 export type AssistantResponseContract = z.infer<typeof assistantResponseSchema>;
 export type SaveAssistantQuickNoteInputContract = z.infer<typeof saveAssistantQuickNoteInputSchema>;
 export type AssistantQuickNoteResultContract = z.infer<typeof assistantQuickNoteResultSchema>;
+export type DocumentTranslationSourcePageContract = z.infer<typeof documentTranslationSourcePageSchema>;
+export type DocumentTranslationInputContract = z.infer<typeof documentTranslationInputSchema>;
+export type DocumentTranslationPageContract = z.infer<typeof documentTranslationPageSchema>;
+export type DocumentTranslationModelOutputContract = z.infer<typeof documentTranslationModelOutputSchema>;
+export type DocumentTranslationResultContract = z.infer<typeof documentTranslationResultSchema>;
 
 export const procedureNames = [
   "auth.syncUser",

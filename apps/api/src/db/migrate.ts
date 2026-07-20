@@ -2011,6 +2011,36 @@ const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS ai_usage_created_idx ON ai_usage (created_at DESC);
       CREATE INDEX IF NOT EXISTS ai_usage_status_created_idx ON ai_usage (status, created_at DESC);
     `
+  },
+  {
+    id: "0038_document_translation_cache",
+    sql: `
+      CREATE TABLE IF NOT EXISTS document_translations (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        attachment_id TEXT NOT NULL,
+        source_fingerprint TEXT NOT NULL,
+        source_title TEXT NOT NULL,
+        source_kind TEXT NOT NULL,
+        source_complete BOOLEAN NOT NULL,
+        target_language TEXT NOT NULL,
+        target_language_label TEXT NOT NULL,
+        translated_title TEXT NOT NULL,
+        pages JSONB NOT NULL,
+        model TEXT NOT NULL,
+        creator_handle TEXT REFERENCES profiles(handle) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        CONSTRAINT document_translations_source_kind_check CHECK (source_kind IN ('docx', 'pdf')),
+        CONSTRAINT document_translations_language_check CHECK (target_language IN ('english', 'french', 'german', 'spanish')),
+        CONSTRAINT document_translations_fingerprint_check CHECK (source_fingerprint ~ '^[a-f0-9]{64}$'),
+        CONSTRAINT document_translations_pages_check CHECK (jsonb_typeof(pages) = 'array' AND jsonb_array_length(pages) BETWEEN 1 AND 40)
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS document_translations_source_language_unique_idx
+        ON document_translations (attachment_id, source_fingerprint, target_language);
+      CREATE INDEX IF NOT EXISTS document_translations_created_idx
+        ON document_translations (created_at DESC);
+    `
   }
 ];
 

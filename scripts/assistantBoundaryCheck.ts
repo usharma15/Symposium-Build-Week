@@ -8,14 +8,24 @@ import {
   assistantPrompt,
   assistantProviderFailure,
   assistantRenderedInput,
-  assistantTranslationInstructions
+  assistantTranslationInstructions,
+  documentTranslationInstructions,
+  documentTranslationMaxOutputTokens,
+  documentTranslationRenderedInput
 } from "@/apps/api/src/services/openaiResponses";
+import {
+  documentTranslationFingerprint,
+  supportedLanguageFromInstruction
+} from "@/apps/api/src/repository/documentTranslations";
 import {
   assistantMessageInputSchema,
   assistantQuickNoteResultSchema,
   assistantResponseSchema,
   assistantTranslationDraftSchema,
-  saveAssistantQuickNoteInputSchema
+  saveAssistantQuickNoteInputSchema,
+  documentTranslationInputSchema,
+  documentTranslationModelOutputSchema,
+  documentTranslationResultSchema
 } from "@/packages/contracts/src";
 import { buildTabletAttachmentContext, tabletAttachmentTextLimit } from "@/features/assistant/tabletAttachmentContext";
 import { pdfTextItemsToPlainText, resolvePdfDocumentUrl } from "@/features/attachments/pdfAttachmentClient";
@@ -59,17 +69,74 @@ assert.equal(conservativeInputTokenCeiling("abc"), 3);
 assert.equal(reserveCostMicros("gpt-5.6-terra", "a", 700), 10_504);
 assert.equal(actualCostMicros("gpt-5.6-terra", 1000, 100), 4_625);
 assert.equal(usdToMicros(40), 40_000_000);
-const temporaryOwnerPolicy = {
-  baseLimit: 3,
-  ownerHandle: "@udayan",
-  ownerOverrideLimit: 10,
-  ownerOverrideUsageDay: "2026-07-20"
+const permanentUserPolicy = { baseLimit: 10 };
+assert.equal(assistantDailyLimitFor("@udayan", "2026-07-20", permanentUserPolicy), 10);
+assert.equal(assistantDailyLimitFor("@someone_else", "2030-01-01", permanentUserPolicy), 10);
+assert.match(assistantProviderFailure(new DOMException("timed out", "TimeoutError")).body, /AI safety timeout/);
+
+const documentTranslationInput = {
+  attachmentId: "attachment-docx-1",
+  sourceTitle: "Persuasive Framework.docx",
+  sourceKind: "docx" as const,
+  sourcePages: [
+    { pageNumber: 1, body: "Persuasive Framework\nFund independent youth labs." },
+    { pageNumber: 2, body: "Evidence and objections." }
+  ],
+  sourceComplete: true,
+  languageInstruction: "Please put this into Spanish"
 };
-assert.equal(assistantDailyLimitFor("@udayan", "2026-07-20", temporaryOwnerPolicy), 10);
-assert.equal(assistantDailyLimitFor("udayan", "2026-07-21", temporaryOwnerPolicy), 3);
-assert.equal(assistantDailyLimitFor("@someone_else", "2026-07-20", temporaryOwnerPolicy), 3);
-assert.equal(assistantDailyLimitFor("@udayan", "2026-07-20", { ...temporaryOwnerPolicy, ownerOverrideLimit: 2 }), 3);
-assert.match(assistantProviderFailure(new DOMException("timed out", "TimeoutError")).body, /45-second safety timeout/);
+assert.equal(documentTranslationInputSchema.safeParse(documentTranslationInput).success, true);
+assert.equal(documentTranslationInputSchema.safeParse({
+  ...documentTranslationInput,
+  sourcePages: [...documentTranslationInput.sourcePages].reverse()
+}).success, false);
+assert.equal(documentTranslationInputSchema.safeParse({
+  ...documentTranslationInput,
+  sourcePages: [{ pageNumber: 1, body: "x".repeat(12_001) }]
+}).success, false);
+assert.equal(supportedLanguageFromInstruction("en français, s’il vous plaît"), "french");
+assert.equal(supportedLanguageFromInstruction("auf Deutsch"), "german");
+assert.equal(supportedLanguageFromInstruction("Italian"), null);
+assert.equal(supportedLanguageFromInstruction("French or Spanish"), null);
+assert.match(documentTranslationInstructions, /every supplied source page/i);
+assert.match(documentTranslationRenderedInput(documentTranslationInput), /LANGUAGE INSTRUCTION/);
+assert.ok(documentTranslationMaxOutputTokens(documentTranslationInput) >= 1200);
+assert.equal(documentTranslationModelOutputSchema.safeParse({
+  targetLanguage: "spanish",
+  targetLanguageLabel: "Spanish",
+  translatedTitle: "Marco persuasivo",
+  pages: [
+    { pageNumber: 1, body: "Marco persuasivo\nFinanciar laboratorios juveniles independientes." },
+    { pageNumber: 2, body: "Pruebas y objeciones." }
+  ],
+  message: "Spanish translation ready."
+}).success, true);
+assert.equal(documentTranslationModelOutputSchema.safeParse({
+  targetLanguage: "unsupported",
+  targetLanguageLabel: "",
+  translatedTitle: "",
+  pages: [{ pageNumber: 1, body: "Not allowed" }],
+  message: "Use a supported language."
+}).success, false);
+const sourceFingerprint = documentTranslationFingerprint(documentTranslationInput);
+assert.match(sourceFingerprint, /^[a-f0-9]{64}$/);
+assert.equal(sourceFingerprint, documentTranslationFingerprint(documentTranslationInput));
+assert.notEqual(sourceFingerprint, documentTranslationFingerprint({ ...documentTranslationInput, sourceComplete: false }));
+assert.equal(documentTranslationResultSchema.safeParse({
+  status: "translated",
+  attachmentId: documentTranslationInput.attachmentId,
+  sourceFingerprint,
+  sourceComplete: true,
+  cached: false,
+  targetLanguage: "spanish",
+  targetLanguageLabel: "Spanish",
+  translatedTitle: "Marco persuasivo",
+  pages: [{ pageNumber: 1, body: "Marco persuasivo" }],
+  message: "Spanish translation ready.",
+  model: "gpt-5.6-terra",
+  createdAt: new Date().toISOString(),
+  quota: { dailyLimit: 10, remainingToday: 9, monthlyBudgetUsd: 40, extremelyLimited: true }
+}).success, true);
 
 const docxContext = buildTabletAttachmentContext({
   id: "attachment-1",
@@ -180,6 +247,8 @@ assert.equal(assistantQuickNoteResultSchema.safeParse({
 }).success, true);
 
 const repository = readFileSync("apps/api/src/repository/assistant.ts", "utf8");
+const usageService = readFileSync("apps/api/src/services/assistantUsage.ts", "utf8");
+const documentRepository = readFileSync("apps/api/src/repository/documentTranslations.ts", "utf8");
 const scribbles = readFileSync("apps/api/src/repository/workspaceScribbles.ts", "utf8");
 const provider = readFileSync("apps/api/src/services/openaiResponses.ts", "utf8");
 const migration = readFileSync("apps/api/src/db/migrate.ts", "utf8");
@@ -188,6 +257,7 @@ const tablet = readFileSync("features/workspace/WorkspacePanels.tsx", "utf8");
 const shell = readFileSync("components/SymposiumV0.tsx", "utf8");
 const attachmentContext = readFileSync("features/assistant/tabletAttachmentContext.ts", "utf8");
 const attachmentViews = readFileSync("features/attachments/AttachmentViews.tsx", "utf8");
+const documentTranslationControl = readFileSync("features/attachments/DocumentTranslationControl.tsx", "utf8");
 const attachmentModal = readFileSync("features/attachments/AttachmentPreviewModal.tsx", "utf8");
 const pdfClient = readFileSync("features/attachments/pdfAttachmentClient.ts", "utf8");
 const packageManifest = readFileSync("package.json", "utf8");
@@ -204,19 +274,21 @@ assert.match(provider, /symposium-translation-v1/);
 assert.match(provider, /prompt_cache_key: translating \? "symposium-translation-v1" : "symposium-contextual-tablet-v1"/);
 assert.match(provider, /insufficient_quota/);
 assert.match(repository, /providerErrorCode/);
-assert.match(repository, /pg_advisory_xact_lock\(hashtextextended\('symposium:ai-budget'/);
-assert.match(repository, /current\.userMinute >= 2/);
-assert.match(repository, /current\.inFlight >= 1/);
+assert.match(usageService, /pg_advisory_xact_lock\(hashtextextended\('symposium:ai-budget'/);
+assert.match(usageService, /current\.userMinute >= 2/);
+assert.match(usageService, /current\.inFlight >= 1/);
 assert.match(repository, /getAssistantQuota/);
 assert.match(repository, /SYMPOSIUM_AI_USER_DAILY_LIMIT/);
-assert.match(repository, /dailyLimitFor\(owner, current\.usageDay\)/);
-assert.match(repository, /quota\(prepared\.dailyLimit, prepared\.remainingToday\)/);
-assert.match(repository, /SYMPOSIUM_AI_GLOBAL_DAILY_LIMIT/);
-assert.match(repository, /SYMPOSIUM_AI_DAILY_BUDGET_USD/);
-assert.match(repository, /SYMPOSIUM_AI_MONTHLY_BUDGET_USD/);
+assert.match(repository, /assistantQuota\(prepared\.dailyLimit, prepared\.remainingToday\)/);
+assert.match(usageService, /SYMPOSIUM_AI_GLOBAL_DAILY_LIMIT/);
+assert.match(usageService, /SYMPOSIUM_AI_DAILY_BUDGET_USD/);
+assert.match(usageService, /SYMPOSIUM_AI_MONTHLY_BUDGET_USD/);
 assert.match(migration, /0037_ai_usage_budget_ledger/);
 assert.match(migration, /reserved_cost_micros BIGINT NOT NULL/);
+assert.match(migration, /0038_document_translation_cache/);
+assert.match(migration, /CREATE TABLE IF NOT EXISTS document_translations/);
 assert.match(route, /shared: true, scope: "assistant", limit: 10/);
+assert.match(route, /\/v1\/assistant\/document-translations/);
 assert.match(route, /\/v1\/assistant\/quick-notes/);
 assert.match(route, /scope: "assistant-action", limit: 30/);
 assert.match(scribbles, /conversation\.owner_handle = \$3/);
@@ -247,6 +319,14 @@ assert.match(shell, /attachmentPreviewViewContext/);
 assert.doesNotMatch(shell, /const \[attachmentViewContext,/);
 assert.match(attachmentViews, /new pdfjs\.TextLayer/);
 assert.match(attachmentViews, /readPdfPageText\(document, pageNumber\)/);
+assert.match(attachmentViews, /DocumentTranslationControl state=\{translation\}/);
+assert.match(documentTranslationControl, /placeholder="e\.g\. Spanish"/);
+assert.match(documentTranslationControl, /Original/);
+assert.match(documentTranslationControl, /Translation/);
+assert.match(documentTranslationControl, /Translate · uses 1/);
+assert.match(documentRepository, /findCachedTranslation/);
+assert.match(documentRepository, /No AI answer was consumed/);
+assert.match(documentRepository, /reserveAssistantUsage/);
 assert.doesNotMatch(attachmentViews, /<iframe[^>]+title=\{attachment\.fileName\}/);
 assert.match(attachmentModal, /kind: "pdf-text", page, excerpt/);
 assert.match(pdfClient, /maxPdfMetadataPages = 40/);
@@ -255,8 +335,9 @@ assert.match(packageManifest, /"pdfjs-dist": "6\.1\.200"/);
 assert.match(nextConfig, /source: "\/attachment-assets\/:path\*"/);
 assert.match(nextConfig, /destination: `\$\{publicAttachmentBaseUrl\}\/\:path\*`/);
 assert.match(env, /SYMPOSIUM_AI_MONTHLY_BUDGET_USD:[\s\S]*max\(40\)\.default\(40\)/);
-assert.match(env, /SYMPOSIUM_AI_OWNER_DAILY_LIMIT_USAGE_DAY/);
-assert.match(renderBlueprint, /SYMPOSIUM_AI_OWNER_DAILY_LIMIT[\s\S]*value: "10"/);
-assert.match(renderBlueprint, /SYMPOSIUM_AI_OWNER_DAILY_LIMIT_USAGE_DAY[\s\S]*value: "2026-07-20"/);
+assert.match(env, /SYMPOSIUM_AI_USER_DAILY_LIMIT:[\s\S]*min\(10\)\.max\(10\)\.default\(10\)/);
+assert.doesNotMatch(env, /SYMPOSIUM_AI_OWNER_DAILY_LIMIT/);
+assert.match(renderBlueprint, /SYMPOSIUM_AI_USER_DAILY_LIMIT[\s\S]*value: "10"/);
+assert.doesNotMatch(renderBlueprint, /SYMPOSIUM_AI_OWNER_DAILY_LIMIT/);
 
 console.log("AI Tablet cost and context boundary checks passed.");

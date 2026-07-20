@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -32,6 +33,11 @@ import {
 import { buildStructuredAttachmentMetadata } from "@/lib/structuredAttachmentPreview";
 import { StructuredAttachmentPreviewPane } from "@/features/attachments/StructuredAttachmentPreviews";
 import { AttachmentScribbleButton } from "@/features/attachments/AttachmentScribbleButton";
+import {
+  DocumentTranslationControl,
+  useDocumentTranslation,
+  type DocumentTranslationSource
+} from "@/features/attachments/DocumentTranslationControl";
 import {
   extractPdfAttachmentMetadata,
   loadPdfModule,
@@ -75,6 +81,48 @@ const metadataString = (metadata: Record<string, unknown> | undefined, key: stri
 const metadataFiniteNumber = (metadata: Record<string, unknown> | undefined, key: string) => {
   const value = metadata?.[key];
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+};
+
+const metadataBoolean = (metadata: Record<string, unknown> | undefined, key: string) =>
+  metadata?.[key] === true;
+
+const boundedDocumentTranslationSource = (
+  sourcePages: Array<{ pageNumber: number; body: string }>,
+  complete: boolean
+): DocumentTranslationSource => {
+  const pages: DocumentTranslationSource["pages"] = [];
+  let remaining = maxAttachmentPreviewTextLength;
+  let truncated = sourcePages.length > 40;
+  for (const sourcePage of sourcePages.slice(0, 40)) {
+    const clean = sourcePage.body.trim();
+    if (!clean) continue;
+    const body = clean.slice(0, Math.min(12_000, remaining));
+    if (!body) {
+      truncated = true;
+      break;
+    }
+    pages.push({ pageNumber: sourcePage.pageNumber, body });
+    remaining -= body.length;
+    if (body.length < clean.length) truncated = true;
+    if (remaining <= 0) {
+      truncated = true;
+      break;
+    }
+  }
+  return { pages, complete: complete && !truncated };
+};
+
+export const pdfTranslationSourceFromPreviewText = (
+  previewText: string,
+  complete: boolean
+): DocumentTranslationSource => {
+  const matches = Array.from(previewText.matchAll(/\[PDF page (\d+)\]\n([\s\S]*?)(?=\n\n\[PDF page \d+\]\n|$)/g));
+  const pages = matches.length
+    ? matches.map((match) => ({ pageNumber: Number(match[1]), body: match[2] ?? "" }))
+    : previewText.trim()
+      ? [{ pageNumber: 1, body: previewText }]
+      : [];
+  return boundedDocumentTranslationSource(pages, complete);
 };
 
 const clampUnit = (value: number | undefined, fallback = 0.5) => {
@@ -650,8 +698,31 @@ function PdfAttachmentPreview({
     nextPageText?: string;
   } | null>(null);
   const [selectedText, setSelectedText] = useState("");
-  const pageCount = document?.numPages ?? attachmentPageCount(attachment);
+  const originalPageCount = document?.numPages ?? attachmentPageCount(attachment);
+  const loadTranslationSource = useCallback(async () => {
+    if (document) {
+      const pages: Array<{ pageNumber: number; body: string }> = [];
+      const pagesToRead = Math.min(document.numPages, 40);
+      for (let pageNumber = 1; pageNumber <= pagesToRead; pageNumber += 1) {
+        pages.push({ pageNumber, body: await readPdfPageText(document, pageNumber) });
+      }
+      return boundedDocumentTranslationSource(pages, document.numPages <= 40);
+    }
+    return pdfTranslationSourceFromPreviewText(
+      metadataString(attachment.metadata, "previewText"),
+      metadataBoolean(attachment.metadata, "pdfTextComplete")
+    );
+  }, [attachment.metadata, document]);
+  const translation = useDocumentTranslation({
+    attachmentId: attachment.id,
+    sourceTitle: attachment.fileName,
+    sourceKind: "pdf",
+    loadSource: loadTranslationSource
+  });
+  const translatedPages = translation.result?.status === "translated" ? translation.result.pages : [];
+  const pageCount = translation.showTranslation ? Math.max(1, translatedPages.length) : originalPageCount;
   const boundedPage = Math.min(Math.max(1, page), Math.max(1, pageCount));
+  const translatedPage = translatedPages[boundedPage - 1];
 
   useEffect(() => {
     const stage = stageRef.current;
@@ -710,7 +781,12 @@ function PdfAttachmentPreview({
   }, [attachment.id, attachment.url]);
 
   useEffect(() => {
-    if (!document) return;
+    setPage(1);
+    setSelectedText("");
+  }, [translation.showTranslation]);
+
+  useEffect(() => {
+    if (!document || translation.showTranslation) return;
     let cancelled = false;
     setPageContext(null);
     const pageNumbers = [boundedPage - 1, boundedPage, boundedPage + 1]
@@ -733,10 +809,10 @@ function PdfAttachmentPreview({
       }
     });
     return () => { cancelled = true; };
-  }, [boundedPage, document]);
+  }, [boundedPage, document, translation.showTranslation]);
 
   useEffect(() => {
-    if (!document || !stageSize.width || !stageSize.height) return;
+    if (!document || translation.showTranslation || !stageSize.width || !stageSize.height) return;
     const canvas = canvasRef.current;
     const textLayerContainer = textLayerRef.current;
     const pageContainer = pageRef.current;
@@ -790,7 +866,7 @@ function PdfAttachmentPreview({
       renderTask?.cancel();
       textLayer?.cancel();
     };
-  }, [boundedPage, document, stageSize.height, stageSize.width, zoom]);
+  }, [boundedPage, document, stageSize.height, stageSize.width, translation.showTranslation, zoom]);
 
   useEffect(() => {
     if (!onViewContextChange) return;
@@ -799,13 +875,17 @@ function PdfAttachmentPreview({
       fileName: attachment.fileName,
       page: boundedPage,
       pageCount: Math.max(1, pageCount),
-      currentPageText: pageContext?.page === boundedPage ? pageContext.currentPageText : "",
-      ...(pageContext?.page === boundedPage && pageContext.previousPageText ? { previousPageText: pageContext.previousPageText } : {}),
-      ...(pageContext?.page === boundedPage && pageContext.nextPageText ? { nextPageText: pageContext.nextPageText } : {}),
+      currentPageText: translation.showTranslation
+        ? translatedPage?.body.slice(0, 6000) ?? ""
+        : pageContext?.page === boundedPage ? pageContext.currentPageText : "",
+      ...(!translation.showTranslation && pageContext?.page === boundedPage && pageContext.previousPageText ? { previousPageText: pageContext.previousPageText } : {}),
+      ...(!translation.showTranslation && pageContext?.page === boundedPage && pageContext.nextPageText ? { nextPageText: pageContext.nextPageText } : {}),
       ...(selectedText ? { selectedText } : {}),
-      status: loadState === "unavailable" ? "unavailable" : pageContext?.page === boundedPage ? "ready" : "loading"
+      status: translation.showTranslation
+        ? translatedPage ? "ready" : "loading"
+        : loadState === "unavailable" ? "unavailable" : pageContext?.page === boundedPage ? "ready" : "loading"
     });
-  }, [attachment.fileName, attachment.id, boundedPage, loadState, onViewContextChange, pageContext, pageCount, selectedText]);
+  }, [attachment.fileName, attachment.id, boundedPage, loadState, onViewContextChange, pageContext, pageCount, selectedText, translatedPage, translation.showTranslation]);
 
   useEffect(() => () => onViewContextChange?.(null), [attachment.id, onViewContextChange]);
 
@@ -844,14 +924,15 @@ function PdfAttachmentPreview({
     >
       <div className="attachment-pagebar">
         <span>
-          Page {boundedPage}/{Math.max(1, pageCount)}
+          {translation.showTranslation && translatedPage ? `Page ${translatedPage.pageNumber}` : `Page ${boundedPage}`}/{Math.max(1, pageCount)}
           {selectedText ? ` · ${selectedText.length} characters selected` : loadState === "loading" ? " · loading" : ""}
         </span>
-        <div>
-          <button type="button" title="Previous PDF page" disabled={boundedPage <= 1 || loadState !== "ready"} onClick={movePage(-1)}>
+        <div className="attachment-page-actions">
+          <DocumentTranslationControl state={translation} />
+          <button type="button" title="Previous PDF page" disabled={boundedPage <= 1 || (!translation.showTranslation && loadState !== "ready")} onClick={movePage(-1)}>
             <ChevronLeft size={15} />
           </button>
-          <button type="button" title="Next PDF page" disabled={boundedPage >= pageCount || loadState !== "ready"} onClick={movePage(1)}>
+          <button type="button" title="Next PDF page" disabled={boundedPage >= pageCount || (!translation.showTranslation && loadState !== "ready")} onClick={movePage(1)}>
             <ChevronRight size={15} />
           </button>
         </div>
@@ -862,7 +943,20 @@ function PdfAttachmentPreview({
         onMouseUp={inspectSelection}
         onKeyUp={inspectSelection}
       >
-        {loadState === "unavailable" ? (
+        {translation.showTranslation && translatedPage ? (
+          <article
+            className="attachment-pdf-translation-page"
+            data-attachment-selectable="true"
+            data-attachment-kind="pdf"
+            data-attachment-page={translatedPage.pageNumber}
+          >
+            {plainTextToDocxBlocks(translatedPage.body).map((block) => (
+              <p key={block.id} className={`attachment-docx-block attachment-docx-block-${block.style}`}>
+                {block.runs.map((run) => run.text).join("")}
+              </p>
+            ))}
+          </article>
+        ) : loadState === "unavailable" ? (
           <div className="attachment-file-shell" role="status">
             <FileText size={24} />
             <strong>{attachment.fileName}</strong>
@@ -996,10 +1090,35 @@ function DocxAttachmentPreview({
   const [renderedPageCount, setRenderedPageCount] = useState(0);
   const [fitScale, setFitScale] = useState(1);
   const [parseFailed, setParseFailed] = useState(false);
-  const totalPages = Math.max(1, renderedPageCount || metadataPageCount || fallbackPages.length);
+  const loadTranslationSource = useCallback(async () => {
+    const renderedPages = Array.from(
+      renderTargetRef.current?.querySelectorAll<HTMLElement>("section.symposium-docx") ?? []
+    );
+    if (renderedPages.length) {
+      return boundedDocumentTranslationSource(renderedPages.map((renderedPage, index) => ({
+        pageNumber: index + 1,
+        body: (renderedPage.innerText || renderedPage.textContent || "").replace(/\n{3,}/g, "\n\n")
+      })), true);
+    }
+    return boundedDocumentTranslationSource(
+      splitPreviewTextIntoPages(fallbackText).map((body, index) => ({ pageNumber: index + 1, body })),
+      Boolean(fallbackText) && fallbackText.length < maxAttachmentPreviewTextLength
+    );
+  }, [fallbackText]);
+  const translation = useDocumentTranslation({
+    attachmentId: attachment.id,
+    sourceTitle: attachment.fileName,
+    sourceKind: "docx",
+    loadSource: loadTranslationSource
+  });
+  const translatedPages = translation.result?.status === "translated" ? translation.result.pages : [];
+  const originalTotalPages = Math.max(1, renderedPageCount || metadataPageCount || fallbackPages.length);
+  const totalPages = translation.showTranslation ? Math.max(1, translatedPages.length) : originalTotalPages;
   const [page, setPage] = useState(1);
   const boundedPage = Math.min(page, totalPages);
   const fallbackPageBlocks = fallbackPages[Math.min(boundedPage - 1, fallbackPages.length - 1)] ?? [];
+  const translatedPage = translatedPages[boundedPage - 1];
+  const translatedPageBlocks = plainTextToDocxBlocks(translatedPage?.body ?? "");
   const renderedZoom = fitScale * (mode === "expanded" ? clampAttachmentZoom(zoom) : 1);
   const renderedStyle = {
     "--docx-preview-scale": renderedZoom
@@ -1008,6 +1127,10 @@ function DocxAttachmentPreview({
   useEffect(() => {
     setPage(1);
   }, [attachment.id]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [translation.showTranslation]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1091,17 +1214,19 @@ function DocxAttachmentPreview({
     if (!target || !renderedPageCount) return;
     const renderedPages = Array.from(target.querySelectorAll<HTMLElement>("section.symposium-docx"));
     renderedPages.forEach((renderedPage, index) => {
-      renderedPage.hidden = index !== boundedPage - 1;
+      renderedPage.hidden = translation.showTranslation || index !== boundedPage - 1;
     });
     target.closest<HTMLElement>(".attachment-docx-scroll")?.scrollTo({ top: 0, left: 0 });
-  }, [boundedPage, renderedPageCount]);
+  }, [boundedPage, renderedPageCount, translation.showTranslation]);
 
   return (
     <div className={`attachment-document attachment-document-${mode} attachment-docx`}>
       <div className="attachment-pagebar">
-        <span>Page {boundedPage}/{totalPages}</span>
-        {totalPages > 1 ? (
-          <div>
+        <span>{translation.showTranslation && translatedPage ? `Page ${translatedPage.pageNumber}` : `Page ${boundedPage}`}/{totalPages}</span>
+        <div className="attachment-page-actions">
+          <DocumentTranslationControl state={translation} />
+          {totalPages > 1 ? (
+            <>
             <button
               type="button"
               title="Previous page"
@@ -1124,8 +1249,9 @@ function DocxAttachmentPreview({
             >
               <ChevronRight size={15} />
             </button>
-          </div>
-        ) : null}
+            </>
+          ) : null}
+        </div>
       </div>
       <div className="attachment-docx-scroll">
         <div
@@ -1134,7 +1260,19 @@ function DocxAttachmentPreview({
           style={renderedStyle}
           aria-label={`${attachment.fileName} document preview`}
         />
-        {!renderedPageCount ? (
+        {translation.showTranslation && translatedPage ? (
+          <article
+            className="attachment-docx-page attachment-docx-derived"
+            data-attachment-selectable="true"
+            data-attachment-page={translatedPage.pageNumber}
+          >
+            {translatedPageBlocks.map((block) => (
+              <p key={block.id} className={`attachment-docx-block attachment-docx-block-${block.style}`}>
+                {block.runs.map((run) => run.text).join("")}
+              </p>
+            ))}
+          </article>
+        ) : !renderedPageCount ? (
           <article className="attachment-docx-page attachment-docx-fallback" data-attachment-selectable="true" data-attachment-page={boundedPage}>
             {fallbackPageBlocks.length ? (
               fallbackPageBlocks.map((block) => (

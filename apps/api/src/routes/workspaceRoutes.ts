@@ -3,6 +3,7 @@ import { withReadActor, withWriteActor } from "../http/actors";
 import { sendError } from "../http/errors";
 import { mutationContextFromRequest } from "../services/mutations";
 import { askAssistant, getAssistantQuota } from "../repository/assistant";
+import { translateDocument } from "../repository/documentTranslations";
 import { createOpportunity, listOpportunities } from "../repository/opportunities";
 import { saveNoteBlock } from "../repository/workspace";
 import {
@@ -472,6 +473,20 @@ export const registerWorkspaceRoutes = (app: FastifyInstance) => {
         request.body,
         actor,
         mutationContextFromRequest(request, "assistant.message", request.body)
+      );
+      return reply.send(response);
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.post("/v1/assistant/document-translations", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request, { shared: true, scope: "assistant", limit: 10 });
+      const response = await translateDocument(
+        request.body,
+        actor,
+        mutationContextFromRequest(request, "assistant.document-translation", request.body)
       );
       return reply.send(response);
     } catch (error) {

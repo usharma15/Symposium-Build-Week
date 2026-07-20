@@ -814,6 +814,34 @@ export const aiUsage = pgTable(
   ]
 );
 
+export const documentTranslations = pgTable(
+  "document_translations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    attachmentId: text("attachment_id").notNull(),
+    sourceFingerprint: text("source_fingerprint").notNull(),
+    sourceTitle: text("source_title").notNull(),
+    sourceKind: text("source_kind").notNull(),
+    sourceComplete: boolean("source_complete").notNull(),
+    targetLanguage: text("target_language").notNull(),
+    targetLanguageLabel: text("target_language_label").notNull(),
+    translatedTitle: text("translated_title").notNull(),
+    pages: jsonb("pages").$type<Array<{ pageNumber: number; body: string }>>().default(jsonArray).notNull(),
+    model: text("model").notNull(),
+    creatorHandle: text("creator_handle").references(() => profiles.handle, { onDelete: "set null" }),
+    createdAt: createdAtColumn(),
+    updatedAt: updatedAtColumn()
+  },
+  (table) => [
+    uniqueIndex("document_translations_source_language_unique_idx").on(table.attachmentId, table.sourceFingerprint, table.targetLanguage),
+    index("document_translations_created_idx").on(table.createdAt),
+    check("document_translations_source_kind_check", sql`${table.sourceKind} IN ('docx', 'pdf')`),
+    check("document_translations_language_check", sql`${table.targetLanguage} IN ('english', 'french', 'german', 'spanish')`),
+    check("document_translations_fingerprint_check", sql`${table.sourceFingerprint} ~ '^[a-f0-9]{64}$'`),
+    check("document_translations_pages_check", sql`jsonb_typeof(${table.pages}) = 'array' AND jsonb_array_length(${table.pages}) BETWEEN 1 AND 40`)
+  ]
+);
+
 export const workspaces = pgTable(
   "workspaces",
   {
