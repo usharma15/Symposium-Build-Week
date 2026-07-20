@@ -104,6 +104,11 @@ const main = async () => {
   const { default: nextConfig } = await import("../next.config.mjs");
   assert.equal(nextConfig.poweredByHeader, false);
   assert.equal(typeof nextConfig.headers, "function");
+  assert.equal(typeof nextConfig.rewrites, "function");
+  const rewrites = await nextConfig.rewrites();
+  assert.equal(rewrites.length, 1);
+  assert.equal(rewrites[0]?.source, "/attachment-assets/:path*");
+  assert.match(rewrites[0]?.destination ?? "", /^https:\/\/pub-[a-z0-9]+\.r2\.dev\/:path\*$/);
   const headerRules = await nextConfig.headers();
   const globalRule = headerRules.find((rule: { source: string }) => rule.source === "/:path*");
   assert.ok(globalRule);

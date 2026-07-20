@@ -1,8 +1,35 @@
+const defaultPublicAttachmentBaseUrl = "https://pub-ea6988f92ec843349eacdfdb08deb5cf.r2.dev";
+
+const normalizePublicAttachmentBaseUrl = (value) => {
+  try {
+    const url = new URL(value || defaultPublicAttachmentBaseUrl);
+    if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) {
+      return defaultPublicAttachmentBaseUrl;
+    }
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return defaultPublicAttachmentBaseUrl;
+  }
+};
+
+const publicAttachmentBaseUrl = normalizePublicAttachmentBaseUrl(
+  process.env.R2_PUBLIC_BASE_URL || process.env.NEXT_PUBLIC_R2_PUBLIC_BASE_URL
+);
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   turbopack: {},
+  env: {
+    NEXT_PUBLIC_R2_PUBLIC_BASE_URL: publicAttachmentBaseUrl
+  },
+  rewrites: async () => [
+    {
+      source: "/attachment-assets/:path*",
+      destination: `${publicAttachmentBaseUrl}/:path*`
+    }
+  ],
   headers: async () => [
     {
       source: "/symposium-renders/:path*.avif",

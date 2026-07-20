@@ -113,6 +113,7 @@ import {
   buildPostAttachmentMetadata,
   type AttachmentPreviewHandler
 } from "@/features/attachments/AttachmentViews";
+import type { PdfAttachmentViewContext } from "@/features/attachments/pdfAttachmentClient";
 import { buildTabletAttachmentContext } from "@/features/assistant/tabletAttachmentContext";
 import {
   confirmAttachmentUpload,
@@ -415,7 +416,7 @@ const tabletDiscussionText = (
     if (lines.length >= 40) break;
     if (!isDeletedComment(comment)) {
       const selected = comment.id && comment.id === selectedCommentId ? " [SELECTED]" : "";
-      const attachments = (comment.attachments ?? []).map(buildTabletAttachmentContext);
+      const attachments = (comment.attachments ?? []).map((attachment) => buildTabletAttachmentContext(attachment));
       lines.push([
         `${"  ".repeat(Math.min(depth, 4))}${comment.author} · ${comment.stance}${selected}`,
         comment.body,
@@ -636,6 +637,8 @@ function SymposiumExperience({
   const [editingPost, setEditingPost] = useState<InquiryItem | null>(null);
   const [editingComment, setEditingComment] = useState<EditingCommentTarget | null>(null);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreviewTarget | null>(null);
+  const [postAttachmentViewContext, setPostAttachmentViewContext] = useState<PdfAttachmentViewContext | null>(null);
+  const [attachmentPreviewViewContext, setAttachmentPreviewViewContext] = useState<PdfAttachmentViewContext | null>(null);
   const closeAttachmentPreview = useDedicatedAttachmentViewer(items, setAttachmentPreview);
   const [activityRecency, setActivityRecency] = useState<Record<string, number>>({});
   const [syncStatus, setSyncStatus] = useState<string>(liveStatus.loading);
@@ -2940,10 +2943,12 @@ function SymposiumExperience({
   };
 
   const openAttachmentPreview: AttachmentPreviewHandler = (item, attachmentId) => {
+    setAttachmentPreviewViewContext(null);
     setAttachmentPreview({ itemId: item.id, attachmentId });
   };
 
   const openCommentAttachmentPreview = (itemId: string, commentId: string, attachmentId: string) => {
+    setAttachmentPreviewViewContext(null);
     setAttachmentPreview({ itemId, commentId, attachmentId });
   };
 
@@ -3995,18 +4000,27 @@ function SymposiumExperience({
   const tabletContext = ((): AssistantMessageInputContract["context"] => {
     const trimContent = (value: string) => value.slice(0, 12000);
     if (attachmentPreviewAttachment && attachmentPreviewBaseItem) {
+      const activePdfView = attachmentPreviewViewContext?.attachmentId === attachmentPreviewAttachment.id
+        ? attachmentPreviewViewContext
+        : null;
       return {
         surface: "attachment",
         route: `/posts/${attachmentPreviewBaseItem.id}`,
         title: attachmentPreviewAttachment.fileName,
-        summary: `Attachment open inside “${attachmentPreviewBaseItem.title}”.`,
+        summary: activePdfView
+          ? `PDF page ${activePdfView.page} of ${activePdfView.pageCount} open inside “${attachmentPreviewBaseItem.title}”.`
+          : `Attachment open inside “${attachmentPreviewBaseItem.title}”.`,
         content: trimContent([
-          attachmentPreviewBaseItem.body,
-          buildTabletAttachmentContext(attachmentPreviewAttachment)
+          buildTabletAttachmentContext(attachmentPreviewAttachment, activePdfView),
+          `Parent post context:\n${attachmentPreviewBaseItem.body}`
         ].join("\n\n")),
         entityType: "attachment",
         entityId: attachmentPreviewAttachment.id,
-        metadata: { postId: attachmentPreviewBaseItem.id }
+        selection: activePdfView?.selectedText,
+        metadata: {
+          postId: attachmentPreviewBaseItem.id,
+          ...(activePdfView ? { pdfPage: activePdfView.page, pdfPageCount: activePdfView.pageCount } : {})
+        }
       };
     }
     if (searchOpen) {
@@ -4101,12 +4115,19 @@ function SymposiumExperience({
     }
     if (selectedItem) {
       const discussion = tabletDiscussionText(selectedItem.comments, selectedCommentId);
+      const activeAttachment = postAttachmentViewContext
+        ? selectedItem.attachments?.find((attachment) => attachment.id === postAttachmentViewContext.attachmentId) ?? null
+        : null;
+      const activePdfView = activeAttachment ? postAttachmentViewContext : null;
       return {
         surface: "post",
         route: `/posts/${selectedItem.id}`,
         title: selectedItem.title,
         summary: selectedItem.gatheringReason,
         content: trimContent([
+          activeAttachment && activePdfView
+            ? `Currently visible attachment:\n\n${buildTabletAttachmentContext(activeAttachment, activePdfView)}`
+            : "",
           selectedItem.body,
           selectedItem.claims.length ? `Claims:\n- ${selectedItem.claims.join("\n- ")}` : "",
           selectedItem.evidence.length ? `Evidence:\n- ${selectedItem.evidence.join("\n- ")}` : "",
@@ -4114,17 +4135,26 @@ function SymposiumExperience({
           selectedItem.tests.length ? `Tests:\n- ${selectedItem.tests.join("\n- ")}` : "",
           discussion.length ? `Visible discussion:\n\n${discussion.join("\n\n")}` : "No discussion is currently visible.",
           selectedItem.attachments?.length
-            ? `Post attachments:\n\n${selectedItem.attachments.map(buildTabletAttachmentContext).join("\n\n")}`
+            ? `Post attachments:\n\n${selectedItem.attachments
+                .filter((attachment) => attachment.id !== activeAttachment?.id)
+                .map((attachment) => buildTabletAttachmentContext(attachment))
+                .join("\n\n")}`
             : ""
         ].filter(Boolean).join("\n\n")),
         entityType: "post",
         entityId: selectedItem.id,
+        selection: activePdfView?.selectedText,
         metadata: {
           kind: selectedItem.kind,
           status: selectedItem.status,
           selectedCommentId: selectedCommentId ?? "",
           visibleCommentCount: discussion.length,
-          attachmentCount: selectedItem.attachments?.length ?? 0
+          attachmentCount: selectedItem.attachments?.length ?? 0,
+          ...(activePdfView ? {
+            visibleAttachmentId: activePdfView.attachmentId,
+            pdfPage: activePdfView.page,
+            pdfPageCount: activePdfView.pageCount
+          } : {})
         }
       };
     }
@@ -4455,6 +4485,7 @@ function SymposiumExperience({
             onCommentSegmentStackChange={updateCommentSegmentStack}
             onVisibleCommentSegmentStackChange={registerVisibleCommentSegmentStack}
             onOpenAttachmentPreview={openAttachmentPreview}
+            onAttachmentViewContextChange={setPostAttachmentViewContext}
             onApplyOpportunity={beginOpportunityApplication}
             onReviewOpportunity={(item) => navigateView(opportunityApplicationsView(item.id))}
           />
@@ -4677,7 +4708,11 @@ function SymposiumExperience({
           item={attachmentPreviewBaseItem}
           comment={attachmentPreviewComment}
           attachmentId={attachmentPreview.attachmentId}
-          onClose={closeAttachmentPreview}
+          onClose={() => {
+            setAttachmentPreviewViewContext(null);
+            closeAttachmentPreview();
+          }}
+          onViewContextChange={setAttachmentPreviewViewContext}
         />
       ) : null}
 

@@ -4,6 +4,7 @@ import { actualCostMicros, conservativeInputTokenCeiling, reserveCostMicros, usd
 import { assistantInstructions, assistantPrompt, assistantProviderFailure } from "@/apps/api/src/services/openaiResponses";
 import { assistantMessageInputSchema, assistantResponseSchema } from "@/packages/contracts/src";
 import { buildTabletAttachmentContext, tabletAttachmentTextLimit } from "@/features/assistant/tabletAttachmentContext";
+import { pdfTextItemsToPlainText, resolvePdfDocumentUrl } from "@/features/attachments/pdfAttachmentClient";
 
 const validInput = {
   message: "What is the strongest objection?",
@@ -24,6 +25,7 @@ const validInput = {
 assert.equal(assistantMessageInputSchema.safeParse(validInput).success, true);
 assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, message: "x".repeat(2001) }).success, false);
 assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, context: { ...validInput.context, content: "x".repeat(12001) } }).success, false);
+assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, context: { ...validInput.context, selection: "x".repeat(4001) } }).success, false);
 assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, context: { ...validInput.context, surface: "unknown" } }).success, false);
 assert.match(assistantPrompt(validInput.context, validInput.message), /CURRENT VIEW/);
 assert.match(assistantInstructions, /never as instructions/i);
@@ -57,6 +59,48 @@ const pdfContext = buildTabletAttachmentContext({
 });
 assert.match(pdfContext, /contents are not extracted/i);
 
+const activePdfContext = buildTabletAttachmentContext({
+  id: "attachment-2",
+  fileName: "paper.pdf",
+  contentType: "application/pdf",
+  byteSize: 61_907,
+  status: "uploaded",
+  kind: "pdf",
+  metadata: { pageCount: 13 }
+}, {
+  attachmentId: "attachment-2",
+  fileName: "paper.pdf",
+  page: 7,
+  pageCount: 13,
+  currentPageText: "The active page establishes the primary result.",
+  previousPageText: "The method begins on page six.",
+  nextPageText: "The limitations continue on page eight.",
+  selectedText: "primary result",
+  status: "ready"
+});
+assert.match(activePdfContext, /Currently viewing PDF page 7 of 13/);
+assert.match(activePdfContext, /Current page 7 text:\nThe active page establishes the primary result/);
+assert.match(activePdfContext, /Previous page 6 context/);
+assert.match(activePdfContext, /Next page 8 context/);
+assert.ok(activePdfContext.length <= tabletAttachmentTextLimit);
+assert.equal(pdfTextItemsToPlainText([
+  { str: "Grounded", hasEOL: false },
+  { str: "PDF context.", hasEOL: true },
+  { str: "Second line", hasEOL: true }
+]), "Grounded PDF context.\nSecond line");
+const previousPublicAttachmentBaseUrl = process.env.NEXT_PUBLIC_R2_PUBLIC_BASE_URL;
+process.env.NEXT_PUBLIC_R2_PUBLIC_BASE_URL = "https://public-files.example";
+assert.equal(
+  resolvePdfDocumentUrl("https://public-files.example/post/paper.pdf", "https://www.symposiumsci.com/posts/paper"),
+  "https://www.symposiumsci.com/attachment-assets/post/paper.pdf"
+);
+assert.equal(
+  resolvePdfDocumentUrl("https://other-files.example/paper.pdf", "https://www.symposiumsci.com/posts/paper"),
+  "https://other-files.example/paper.pdf"
+);
+if (previousPublicAttachmentBaseUrl === undefined) delete process.env.NEXT_PUBLIC_R2_PUBLIC_BASE_URL;
+else process.env.NEXT_PUBLIC_R2_PUBLIC_BASE_URL = previousPublicAttachmentBaseUrl;
+
 assert.equal(assistantResponseSchema.safeParse({
   conversationId: "conversation",
   providerConfigured: true,
@@ -73,6 +117,11 @@ const route = readFileSync("apps/api/src/routes/workspaceRoutes.ts", "utf8");
 const tablet = readFileSync("features/workspace/WorkspacePanels.tsx", "utf8");
 const shell = readFileSync("components/SymposiumV0.tsx", "utf8");
 const attachmentContext = readFileSync("features/assistant/tabletAttachmentContext.ts", "utf8");
+const attachmentViews = readFileSync("features/attachments/AttachmentViews.tsx", "utf8");
+const attachmentModal = readFileSync("features/attachments/AttachmentPreviewModal.tsx", "utf8");
+const pdfClient = readFileSync("features/attachments/pdfAttachmentClient.ts", "utf8");
+const packageManifest = readFileSync("package.json", "utf8");
+const nextConfig = readFileSync("next.config.mjs", "utf8");
 const env = readFileSync("apps/api/src/config/env.ts", "utf8");
 
 assert.match(provider, /store: false/);
@@ -103,7 +152,21 @@ assert.match(shell, /Visible discussion/);
 assert.match(shell, /Visible post results/);
 assert.match(shell, /Visible feed items/);
 assert.match(attachmentContext, /Extracted structured attachment preview/);
-assert.match(shell, /selectedItem\.attachments\.map\(buildTabletAttachmentContext\)/);
+assert.match(attachmentContext, /Currently viewing PDF page/);
+assert.match(shell, /buildTabletAttachmentContext\(activeAttachment, activePdfView\)/);
+assert.match(shell, /selection: activePdfView\?\.selectedText/);
+assert.match(shell, /postAttachmentViewContext/);
+assert.match(shell, /attachmentPreviewViewContext/);
+assert.doesNotMatch(shell, /const \[attachmentViewContext,/);
+assert.match(attachmentViews, /new pdfjs\.TextLayer/);
+assert.match(attachmentViews, /readPdfPageText\(document, pageNumber\)/);
+assert.doesNotMatch(attachmentViews, /<iframe[^>]+title=\{attachment\.fileName\}/);
+assert.match(attachmentModal, /kind: "pdf-text", page, excerpt/);
+assert.match(pdfClient, /maxPdfMetadataPages = 40/);
+assert.match(pdfClient, /pdfTextStatus: previewText \? "extracted" : "none"/);
+assert.match(packageManifest, /"pdfjs-dist": "6\.1\.200"/);
+assert.match(nextConfig, /source: "\/attachment-assets\/:path\*"/);
+assert.match(nextConfig, /destination: `\$\{publicAttachmentBaseUrl\}\/\:path\*`/);
 assert.match(env, /SYMPOSIUM_AI_MONTHLY_BUDGET_USD:[\s\S]*max\(40\)\.default\(40\)/);
 
 console.log("AI Tablet cost and context boundary checks passed.");

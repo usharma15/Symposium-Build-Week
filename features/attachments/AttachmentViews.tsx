@@ -32,6 +32,13 @@ import {
 import { buildStructuredAttachmentMetadata } from "@/lib/structuredAttachmentPreview";
 import { StructuredAttachmentPreviewPane } from "@/features/attachments/StructuredAttachmentPreviews";
 import { AttachmentScribbleButton } from "@/features/attachments/AttachmentScribbleButton";
+import {
+  extractPdfAttachmentMetadata,
+  loadPdfModule,
+  readPdfPageText,
+  resolvePdfDocumentUrl,
+  type PdfAttachmentViewContext
+} from "@/features/attachments/pdfAttachmentClient";
 import { feedPreviewAttachments } from "@/lib/documentModel";
 import { isDeletedPost } from "@/lib/symposiumCore";
 import { isSafeExternalUrl, type DocumentCitationLocatorContract } from "@/packages/contracts/src";
@@ -256,13 +263,6 @@ const extractDocxMetadata = async (file: File) => {
   };
 };
 
-const extractPdfMetadata = async (file: File) => {
-  const bytes = await file.arrayBuffer();
-  const text = new TextDecoder("latin1").decode(bytes);
-  const matches = text.match(/\/Type\s*\/Page\b/g);
-  return matches?.length ? { pageCount: matches.length } : {};
-};
-
 const extractTextMetadata = async (file: File) => {
   const text = (await file.text()).slice(0, maxAttachmentPreviewTextLength);
   return {
@@ -319,7 +319,7 @@ export const buildPostAttachmentMetadata = async (file: File, contentType: strin
     const kind = attachmentKindForContentType(contentType, file.name);
     if (contentType.startsWith("image/")) return extractImageMetadata(file);
     if (contentType.startsWith("video/")) return extractVideoMetadata(file);
-    if (contentType === "application/pdf") return extractPdfMetadata(file);
+    if (contentType === "application/pdf") return extractPdfAttachmentMetadata(file);
     if (kind === "code" || kind === "spreadsheet" || kind === "presentation") return buildStructuredAttachmentMetadata(file, kind);
     if (contentType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
       return extractDocxMetadata(file);
@@ -435,12 +435,13 @@ export function postPreviewAttachments(item: InquiryItem) {
 export const visibleAttachments = (attachments: InquiryAttachment[]) =>
   attachments.filter((attachment) => attachment.url).map(attachmentForRendering);
 
-export function AttachmentCarousel({ attachments: sourceAttachments, label = "Attachments", onOpenPreview, variant = "feed", onAddToScribble }: {
+export function AttachmentCarousel({ attachments: sourceAttachments, label = "Attachments", onOpenPreview, variant = "feed", onAddToScribble, onViewContextChange }: {
   attachments: InquiryAttachment[];
   label?: string;
   onOpenPreview: (attachmentId: string) => void;
   variant?: "feed" | "detail" | "comment";
   onAddToScribble?: (attachment: InquiryAttachment) => void;
+  onViewContextChange?: (context: PdfAttachmentViewContext | null) => void;
 }) {
   const attachments = visibleAttachments(sourceAttachments);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -483,7 +484,12 @@ export function AttachmentCarousel({ attachments: sourceAttachments, label = "At
           }
         }}
       >
-        <AttachmentPreviewPane attachment={activeAttachment} mode={previewMode} onOpenPreview={openPreview} />
+        <AttachmentPreviewPane
+          attachment={activeAttachment}
+          mode={previewMode}
+          onOpenPreview={openPreview}
+          onViewContextChange={onViewContextChange}
+        />
       </div>
       <div className="attachment-rail">
         <button
@@ -519,11 +525,13 @@ export function PostAttachmentCarousel({
   item,
   onOpenPreview,
   onAddToScribble,
+  onViewContextChange,
   variant = "feed"
 }: {
   item: InquiryItem;
   onOpenPreview: AttachmentPreviewHandler;
   onAddToScribble?: (attachment: InquiryAttachment) => void;
+  onViewContextChange?: (context: PdfAttachmentViewContext | null) => void;
   variant?: "feed" | "detail";
 }) {
   return (
@@ -533,6 +541,7 @@ export function PostAttachmentCarousel({
       variant={variant}
       onOpenPreview={(attachmentId) => onOpenPreview(item, attachmentId)}
       onAddToScribble={onAddToScribble}
+      onViewContextChange={onViewContextChange}
     />
   );
 }
@@ -553,11 +562,13 @@ export function attachmentIcon(attachment: InquiryAttachment) {
 function AttachmentPreviewPane({
   attachment,
   mode,
-  onOpenPreview
+  onOpenPreview,
+  onViewContextChange
 }: {
   attachment: InquiryAttachment;
   mode: AttachmentRenderMode;
   onOpenPreview?: (event: React.MouseEvent<HTMLElement>) => void;
+  onViewContextChange?: (context: PdfAttachmentViewContext | null) => void;
 }) {
   const kind = attachmentRenderKind(attachment);
   if (kind === "image" && attachment.url) {
@@ -589,7 +600,7 @@ function AttachmentPreviewPane({
   }
 
   if (kind === "pdf" && attachment.url) {
-    return <PdfAttachmentPreview attachment={attachment} mode={mode} />;
+    return <PdfAttachmentPreview attachment={attachment} mode={mode} onViewContextChange={onViewContextChange} />;
   }
 
   if (kind === "code" || kind === "spreadsheet" || kind === "presentation") {
@@ -616,18 +627,261 @@ function AttachmentPreviewPane({
 function PdfAttachmentPreview({
   attachment,
   mode,
-  zoom = 1
+  zoom = 1,
+  onViewContextChange
 }: {
   attachment: InquiryAttachment;
   mode: AttachmentRenderMode;
   zoom?: number;
+  onViewContextChange?: (context: PdfAttachmentViewContext | null) => void;
 }) {
-  const zoomFragment = mode === "expanded" ? `#zoom=${Math.round(zoom * 100)}` : "";
-  const source = attachment.url ? `${attachment.url}${zoomFragment}` : undefined;
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const pageRef = useRef<HTMLDivElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const textLayerRef = useRef<HTMLDivElement | null>(null);
+  const [document, setDocument] = useState<import("pdfjs-dist").PDFDocumentProxy | null>(null);
+  const [page, setPage] = useState(1);
+  const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
+  const [loadState, setLoadState] = useState<"loading" | "ready" | "unavailable">("loading");
+  const [pageContext, setPageContext] = useState<{
+    page: number;
+    currentPageText: string;
+    previousPageText?: string;
+    nextPageText?: string;
+  } | null>(null);
+  const [selectedText, setSelectedText] = useState("");
+  const pageCount = document?.numPages ?? attachmentPageCount(attachment);
+  const boundedPage = Math.min(Math.max(1, page), Math.max(1, pageCount));
+
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const updateSize = () => {
+      const next = { width: stage.clientWidth, height: stage.clientHeight };
+      if (next.width <= 0 || next.height <= 0) return;
+      setStageSize((current) => current.width === next.width && current.height === next.height ? current : next);
+    };
+    updateSize();
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(stage);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    setDocument(null);
+    setPage(1);
+    setPageContext(null);
+    setSelectedText("");
+    setLoadState("loading");
+    if (!attachment.url) {
+      setLoadState("unavailable");
+      return;
+    }
+
+    let cancelled = false;
+    let loadingTask: import("pdfjs-dist").PDFDocumentLoadingTask | null = null;
+    void loadPdfModule()
+      .then((pdfjs) => {
+        const sourceUrl = new URL(resolvePdfDocumentUrl(attachment.url!, window.location.href));
+        loadingTask = pdfjs.getDocument({
+          url: sourceUrl.toString(),
+          withCredentials: sourceUrl.origin === window.location.origin,
+          enableXfa: false,
+          stopAtErrors: false
+        });
+        return loadingTask.promise;
+      })
+      .then((loadedDocument) => {
+        if (cancelled) {
+          void loadingTask?.destroy().catch(() => undefined);
+          return;
+        }
+        setDocument(loadedDocument);
+        setLoadState("ready");
+      })
+      .catch(() => {
+        if (!cancelled) setLoadState("unavailable");
+      });
+
+    return () => {
+      cancelled = true;
+      void loadingTask?.destroy().catch(() => undefined);
+    };
+  }, [attachment.id, attachment.url]);
+
+  useEffect(() => {
+    if (!document) return;
+    let cancelled = false;
+    setPageContext(null);
+    const pageNumbers = [boundedPage - 1, boundedPage, boundedPage + 1]
+      .filter((pageNumber) => pageNumber >= 1 && pageNumber <= document.numPages);
+    void Promise.all(pageNumbers.map(async (pageNumber) => ({
+      pageNumber,
+      text: await readPdfPageText(document, pageNumber)
+    }))).then((pages) => {
+      if (cancelled) return;
+      const textFor = (pageNumber: number) => pages.find((entry) => entry.pageNumber === pageNumber)?.text ?? "";
+      setPageContext({
+        page: boundedPage,
+        currentPageText: textFor(boundedPage).slice(0, 6000),
+        ...(boundedPage > 1 ? { previousPageText: textFor(boundedPage - 1).slice(0, 2000) } : {}),
+        ...(boundedPage < document.numPages ? { nextPageText: textFor(boundedPage + 1).slice(0, 2000) } : {})
+      });
+    }).catch(() => {
+      if (!cancelled) {
+        setPageContext({ page: boundedPage, currentPageText: "" });
+      }
+    });
+    return () => { cancelled = true; };
+  }, [boundedPage, document]);
+
+  useEffect(() => {
+    if (!document || !stageSize.width || !stageSize.height) return;
+    const canvas = canvasRef.current;
+    const textLayerContainer = textLayerRef.current;
+    const pageContainer = pageRef.current;
+    if (!canvas || !textLayerContainer || !pageContainer) return;
+
+    let cancelled = false;
+    let renderTask: { cancel: () => void; promise: Promise<unknown> } | null = null;
+    let textLayer: { cancel: () => void; render: () => Promise<unknown> } | null = null;
+    void Promise.all([loadPdfModule(), document.getPage(boundedPage)])
+      .then(async ([pdfjs, pdfPage]) => {
+        if (cancelled) return;
+        const baseViewport = pdfPage.getViewport({ scale: 1 });
+        const availableWidth = Math.max(120, stageSize.width - 24);
+        const availableHeight = Math.max(120, stageSize.height - 24);
+        const fitScale = Math.min(availableWidth / baseViewport.width, availableHeight / baseViewport.height);
+        const viewport = pdfPage.getViewport({ scale: Math.max(0.1, fitScale * zoom) });
+        const outputScale = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+        const cssWidth = Math.max(1, Math.floor(viewport.width));
+        const cssHeight = Math.max(1, Math.floor(viewport.height));
+
+        pageContainer.style.width = `${cssWidth}px`;
+        pageContainer.style.height = `${cssHeight}px`;
+        canvas.width = Math.max(1, Math.floor(viewport.width * outputScale));
+        canvas.height = Math.max(1, Math.floor(viewport.height * outputScale));
+        canvas.style.width = `${cssWidth}px`;
+        canvas.style.height = `${cssHeight}px`;
+        textLayerContainer.replaceChildren();
+
+        const textContent = await pdfPage.getTextContent();
+        if (cancelled) return;
+        renderTask = pdfPage.render({
+          canvas,
+          viewport,
+          transform: outputScale === 1 ? undefined : [outputScale, 0, 0, outputScale, 0, 0]
+        });
+        textLayer = new pdfjs.TextLayer({
+          textContentSource: textContent,
+          container: textLayerContainer,
+          viewport
+        });
+        await Promise.all([renderTask.promise, textLayer.render()]);
+      })
+      .catch((error) => {
+        if (!cancelled && error?.name !== "RenderingCancelledException" && error?.name !== "AbortException") {
+          setLoadState("unavailable");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      renderTask?.cancel();
+      textLayer?.cancel();
+    };
+  }, [boundedPage, document, stageSize.height, stageSize.width, zoom]);
+
+  useEffect(() => {
+    if (!onViewContextChange) return;
+    onViewContextChange({
+      attachmentId: attachment.id,
+      fileName: attachment.fileName,
+      page: boundedPage,
+      pageCount: Math.max(1, pageCount),
+      currentPageText: pageContext?.page === boundedPage ? pageContext.currentPageText : "",
+      ...(pageContext?.page === boundedPage && pageContext.previousPageText ? { previousPageText: pageContext.previousPageText } : {}),
+      ...(pageContext?.page === boundedPage && pageContext.nextPageText ? { nextPageText: pageContext.nextPageText } : {}),
+      ...(selectedText ? { selectedText } : {}),
+      status: loadState === "unavailable" ? "unavailable" : pageContext?.page === boundedPage ? "ready" : "loading"
+    });
+  }, [attachment.fileName, attachment.id, boundedPage, loadState, onViewContextChange, pageContext, pageCount, selectedText]);
+
+  useEffect(() => () => onViewContextChange?.(null), [attachment.id, onViewContextChange]);
+
+  useEffect(() => {
+    setSelectedText("");
+    const selection = window.getSelection();
+    if (selection?.rangeCount && pageRef.current?.contains(selection.getRangeAt(0).commonAncestorContainer)) {
+      selection.removeAllRanges();
+    }
+  }, [attachment.id, boundedPage]);
+
+  const inspectSelection = () => {
+    window.requestAnimationFrame(() => {
+      const selection = window.getSelection();
+      const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+      const pageElement = pageRef.current;
+      if (!selection || !range || selection.isCollapsed || !pageElement?.contains(range.commonAncestorContainer)) {
+        setSelectedText("");
+        return;
+      }
+      setSelectedText(selection.toString().replace(/\s+/g, " ").trim().slice(0, 4000));
+    });
+  };
+
+  const movePage = (direction: -1 | 1) => (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setPage((current) => Math.min(Math.max(1, current + direction), Math.max(1, pageCount)));
+  };
 
   return (
-    <div className={`attachment-document attachment-document-${mode} attachment-pdf`}>
-      {source ? <iframe title={attachment.fileName} src={source} /> : null}
+    <div
+      className={`attachment-document attachment-document-${mode} attachment-pdf`}
+      onClick={(event) => event.stopPropagation()}
+      onDoubleClick={(event) => event.stopPropagation()}
+    >
+      <div className="attachment-pagebar">
+        <span>
+          Page {boundedPage}/{Math.max(1, pageCount)}
+          {selectedText ? ` · ${selectedText.length} characters selected` : loadState === "loading" ? " · loading" : ""}
+        </span>
+        <div>
+          <button type="button" title="Previous PDF page" disabled={boundedPage <= 1 || loadState !== "ready"} onClick={movePage(-1)}>
+            <ChevronLeft size={15} />
+          </button>
+          <button type="button" title="Next PDF page" disabled={boundedPage >= pageCount || loadState !== "ready"} onClick={movePage(1)}>
+            <ChevronRight size={15} />
+          </button>
+        </div>
+      </div>
+      <div
+        ref={stageRef}
+        className="attachment-pdf-stage"
+        onMouseUp={inspectSelection}
+        onKeyUp={inspectSelection}
+      >
+        {loadState === "unavailable" ? (
+          <div className="attachment-file-shell" role="status">
+            <FileText size={24} />
+            <strong>{attachment.fileName}</strong>
+            <span>PDF preview unavailable. The original file is still accessible.</span>
+          </div>
+        ) : (
+          <div
+            ref={pageRef}
+            className="attachment-pdf-page"
+            data-attachment-selectable="true"
+            data-attachment-kind="pdf"
+            data-attachment-page={boundedPage}
+          >
+            <canvas ref={canvasRef} role="img" aria-label={`${attachment.fileName}, page ${boundedPage} of ${Math.max(1, pageCount)}`} />
+            <div ref={textLayerRef} className="attachment-pdf-text-layer" />
+            {loadState === "loading" ? <span className="attachment-pdf-loading" role="status">Preparing page…</span> : null}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1068,7 +1322,8 @@ export function AttachmentExpandedPane({
   imageSelectionActive,
   imageRegion,
   onImageRegionChange,
-  onCite
+  onCite,
+  onViewContextChange
 }: {
   attachment: InquiryAttachment;
   zoom: number;
@@ -1077,6 +1332,7 @@ export function AttachmentExpandedPane({
   imageRegion: ImageRegion | null;
   onImageRegionChange: (region: ImageRegion | null) => void;
   onCite?: (excerpt: string, locator: DocumentCitationLocatorContract) => void;
+  onViewContextChange?: (context: PdfAttachmentViewContext | null) => void;
 }) {
   const kind = attachmentRenderKind(attachment);
   if (kind === "image" || kind === "video") {
@@ -1084,7 +1340,7 @@ export function AttachmentExpandedPane({
   }
 
   if (kind === "pdf" && attachment.url) {
-    return <PdfAttachmentPreview attachment={attachment} mode="expanded" zoom={zoom} />;
+    return <PdfAttachmentPreview attachment={attachment} mode="expanded" zoom={zoom} onViewContextChange={onViewContextChange} />;
   }
 
   if (kind === "code" || kind === "spreadsheet" || kind === "presentation") {

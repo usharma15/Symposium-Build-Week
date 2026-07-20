@@ -2,7 +2,7 @@
 
 .tablet-panel {
   position: fixed;
-  z-index: 32;
+  z-index: 50;
   inset: 104px 0 144px auto;
   width: calc((100vw - min(var(--symposium-feed-width), calc(100vw - 28px))) / 2);
   min-width: 0;

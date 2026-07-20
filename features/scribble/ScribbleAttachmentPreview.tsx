@@ -1,6 +1,7 @@
 "use client";
 
 import { AttachmentPreviewModal } from "@/features/attachments/AttachmentPreviewModal";
+import type { PdfAttachmentViewContext } from "@/features/attachments/pdfAttachmentClient";
 import {
   attachmentScribbleSource,
   commentScribbleSource,
@@ -14,12 +15,14 @@ export function ScribbleAttachmentPreview({
   item,
   comment,
   attachmentId,
-  onClose
+  onClose,
+  onViewContextChange
 }: {
   item: InquiryItem;
   comment?: InquiryComment | null;
   attachmentId: string;
   onClose: () => void;
+  onViewContextChange?: (context: PdfAttachmentViewContext | null) => void;
 }) {
   const scribble = useScribble();
   const parentSource = comment
@@ -33,6 +36,7 @@ export function ScribbleAttachmentPreview({
       contextTitle={comment ? `Comment on ${item.title}` : undefined}
       attachmentId={attachmentId}
       onClose={onClose}
+      onViewContextChange={onViewContextChange}
       onCapture={({ attachment, excerpt, locator }) => {
         const source = attachmentScribbleSource(attachment, parentSource);
         if (locator.kind === "whole") scribble.addReference(source);

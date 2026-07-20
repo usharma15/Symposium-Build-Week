@@ -31,6 +31,7 @@ import {
   type AttachmentViewportSize,
   type ImageRegion
 } from "@/features/attachments/AttachmentViews";
+import type { PdfAttachmentViewContext } from "@/features/attachments/pdfAttachmentClient";
 
 const zoomInStep = 0.2;
 const zoomOutStep = 0.1;
@@ -41,7 +42,8 @@ export function AttachmentPreviewModal({
   contextTitle,
   attachmentId,
   onClose,
-  onCapture
+  onCapture,
+  onViewContextChange
 }: {
   item?: InquiryItem;
   attachments?: InquiryAttachment[];
@@ -49,6 +51,7 @@ export function AttachmentPreviewModal({
   attachmentId: string;
   onClose: () => void;
   onCapture?: (capture: AttachmentCitationCapture) => void;
+  onViewContextChange?: (context: PdfAttachmentViewContext | null) => void;
 }) {
   const attachments = sourceAttachments ? visibleAttachments(sourceAttachments) : item ? postPreviewAttachments(item) : [];
   const attachmentIdsKey = attachments.map((attachment) => attachment.id).join("|");
@@ -250,17 +253,20 @@ export function AttachmentPreviewModal({
     }
     const bounds = range.getBoundingClientRect();
     const page = Math.max(1, Number(startElement.dataset.attachmentPage) || 1);
+    const locator: DocumentCitationLocatorContract = startElement.dataset.attachmentKind === "pdf"
+      ? { kind: "pdf-text", page, excerpt }
+      : {
+          kind: "text",
+          startBlockId: `attachment-page-${page}`,
+          endBlockId: `attachment-page-${page}`,
+          startOffset: textOffsetWithin(startElement, range.startContainer, range.startOffset),
+          endOffset: textOffsetWithin(endElement, range.endContainer, range.endOffset)
+        };
     setTextSelection({
       excerpt,
       left: Math.max(12, Math.min(window.innerWidth - 168, bounds.left + bounds.width / 2 - 78)),
       top: Math.max(12, bounds.top - 46),
-      locator: {
-        kind: "text",
-        startBlockId: `attachment-page-${page}`,
-        endBlockId: `attachment-page-${page}`,
-        startOffset: textOffsetWithin(startElement, range.startContainer, range.startOffset),
-        endOffset: textOffsetWithin(endElement, range.endContainer, range.endOffset)
-      }
+      locator
     });
   };
   const captureControls = (compact: boolean) => onCapture ? (
@@ -323,6 +329,7 @@ export function AttachmentPreviewModal({
             imageRegion={imageRegion}
             onImageRegionChange={setImageRegion}
             onCite={onCapture ? (excerpt, locator) => capture(excerpt, locator) : undefined}
+            onViewContextChange={onViewContextChange}
           />
         </div>
 

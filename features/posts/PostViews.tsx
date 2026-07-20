@@ -54,6 +54,7 @@ import {
   type AttachmentPreviewHandler,
   type AttachmentUploadHandler
 } from "@/features/attachments/AttachmentViews";
+import type { PdfAttachmentViewContext } from "@/features/attachments/pdfAttachmentClient";
 import {
   ContentQuoteCard,
   QuoteActionButton,
@@ -904,6 +905,7 @@ export function DetailView({
   onCommentSegmentStackChange,
   onVisibleCommentSegmentStackChange,
   onOpenAttachmentPreview,
+  onAttachmentViewContextChange,
   onApplyOpportunity,
   onReviewOpportunity
 }: {
@@ -932,6 +934,7 @@ export function DetailView({
   onCommentSegmentStackChange: (key: string, stack: string[]) => void;
   onVisibleCommentSegmentStackChange: (key: string, stack: string[]) => void;
   onOpenAttachmentPreview: AttachmentPreviewHandler;
+  onAttachmentViewContextChange?: (context: PdfAttachmentViewContext | null) => void;
   onApplyOpportunity: (item: InquiryItem) => void;
   onReviewOpportunity: (item: InquiryItem) => void;
 }) {
@@ -1046,7 +1049,13 @@ export function DetailView({
           /></ScribbleCitable>
         )}
         {appendedContentAttachments(item.document, item.attachments ?? []).length ? (
-          <PostAttachmentCarousel item={{ ...item, attachments: appendedContentAttachments(item.document, item.attachments ?? []) }} onOpenPreview={onOpenAttachmentPreview} onAddToScribble={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, postScribbleSource(item)))} variant="detail" />
+          <PostAttachmentCarousel
+            item={{ ...item, attachments: appendedContentAttachments(item.document, item.attachments ?? []) }}
+            onOpenPreview={onOpenAttachmentPreview}
+            onAddToScribble={(attachment) => scribble.addReference(attachmentScribbleSource(attachment, postScribbleSource(item)))}
+            onViewContextChange={onAttachmentViewContextChange}
+            variant="detail"
+          />
         ) : null}
         {item.quote ? (
           <ContentQuoteCard
