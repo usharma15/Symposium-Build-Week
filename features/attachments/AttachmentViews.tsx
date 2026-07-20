@@ -1090,21 +1090,10 @@ function DocxAttachmentPreview({
   const [renderedPageCount, setRenderedPageCount] = useState(0);
   const [fitScale, setFitScale] = useState(1);
   const [parseFailed, setParseFailed] = useState(false);
-  const loadTranslationSource = useCallback(async () => {
-    const renderedPages = Array.from(
-      renderTargetRef.current?.querySelectorAll<HTMLElement>("section.symposium-docx") ?? []
-    );
-    if (renderedPages.length) {
-      return boundedDocumentTranslationSource(renderedPages.map((renderedPage, index) => ({
-        pageNumber: index + 1,
-        body: (renderedPage.innerText || renderedPage.textContent || "").replace(/\n{3,}/g, "\n\n")
-      })), true);
-    }
-    return boundedDocumentTranslationSource(
-      splitPreviewTextIntoPages(fallbackText).map((body, index) => ({ pageNumber: index + 1, body })),
-      Boolean(fallbackText) && fallbackText.length < maxAttachmentPreviewTextLength
-    );
-  }, [fallbackText]);
+  const loadTranslationSource = useCallback(async () => boundedDocumentTranslationSource(
+    splitPreviewTextIntoPages(fallbackText).map((body, index) => ({ pageNumber: index + 1, body })),
+    Boolean(fallbackText) && fallbackText.length < maxAttachmentPreviewTextLength
+  ), [fallbackText]);
   const translation = useDocumentTranslation({
     attachmentId: attachment.id,
     sourceTitle: attachment.fileName,
