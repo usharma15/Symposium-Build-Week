@@ -5,7 +5,9 @@ import {
   discardScribbleInputSchema,
   fileScribbleInputSchema,
   restoreScribbleInputSchema,
+  saveAssistantQuickNoteInputSchema,
   updateScribbleInputSchema,
+  type AssistantActionSourceContract,
   type VersionedDocumentContract
 } from "../../../../packages/contracts/src";
 import { hasDatabase } from "../db/client";
@@ -170,6 +172,63 @@ const titleForScribble = (body: string, document: VersionedDocumentContract, pre
   return `Scribble · ${new Date().toISOString().slice(0, 10)}`;
 };
 
+const quickNoteResourceTypes = {
+  post: "post",
+  community: "community",
+  profile: "profile",
+  workspace: "note",
+  messages: "conversation",
+  opportunity: "opportunity",
+  attachment: "attachment"
+} as const;
+
+const assistantQuickNoteDocument = (body: string, source: AssistantActionSourceContract): VersionedDocumentContract => {
+  const paragraphs = body.replace(/\r\n/g, "\n").split(/\n{2,}/);
+  const nodes: VersionedDocumentContract["nodes"] = (paragraphs.length ? paragraphs : [""]).map((paragraph) => ({
+    id: `assistant-note-${randomUUID()}`,
+    type: "paragraph" as const,
+    content: paragraph ? [{ text: paragraph }] : [],
+    align: "left" as const,
+    indent: 0
+  }));
+  if (source.entityId && source.surface in quickNoteResourceTypes) {
+    const surface = source.surface as keyof typeof quickNoteResourceTypes;
+    nodes.push({
+      id: `assistant-source-${randomUUID()}`,
+      type: "reference",
+      resource: { type: quickNoteResourceTypes[surface], id: source.entityId, label: source.title }
+    });
+  }
+  return { version: 1, nodes, settings: { width: "standard", margin: "normal" } };
+};
+
+const insertQuickNote = async (client: PoolClient, input: {
+  workspaceId: string;
+  handle: string;
+  notebookId: string | null;
+  title: string;
+  body: string;
+  document: VersionedDocumentContract;
+}) => {
+  const created = await client.query<{ id: string; revision: number; createdAt: Date | string }>(
+    `INSERT INTO notes (
+       workspace_id, owner_handle, notebook_id, title, body, content_document, kind,
+       publication_target, lifecycle, visibility
+     ) VALUES ($1, $2, $3, $4, $5, $6, 'quick', 'undecided', 'draft', 'private')
+     RETURNING id::text, revision, created_at AS "createdAt"`,
+    [input.workspaceId, input.handle, input.notebookId, input.title, input.body, JSON.stringify(input.document)]
+  );
+  const note = created.rows[0]!;
+  await client.query(
+    `INSERT INTO workspace_note_revisions (
+       note_id, revision, editor_handle, title, body, content_document, kind,
+       publication_target, target_id, notebook_id, attachment_ids, reason
+     ) VALUES ($1, $2, $3, $4, $5, $6, 'quick', 'undecided', NULL, $7, ARRAY[]::UUID[], 'created')`,
+    [note.id, note.revision, input.handle, input.title, input.body, JSON.stringify(input.document), input.notebookId]
+  );
+  return note;
+};
+
 const emptyLocalScribble = (handle: string) => {
   const now = new Date().toISOString();
   return {
@@ -265,22 +324,14 @@ export const fileScribble = async (rawInput: unknown, actor: Actor, mutation?: M
     }
     const notebook = await ensureNotebook(client, workspace.id, handle, input.notebookId);
     const title = titleForScribble(current.body, current.document, input.title);
-    const created = await client.query<{ id: string; revision: number; createdAt: Date | string }>(
-      `INSERT INTO notes (
-         workspace_id, owner_handle, notebook_id, title, body, content_document, kind,
-         publication_target, lifecycle, visibility
-       ) VALUES ($1, $2, $3, $4, $5, $6, 'quick', 'undecided', 'draft', 'private')
-       RETURNING id::text, revision, created_at AS "createdAt"`,
-      [workspace.id, handle, notebook?.id ?? null, title, current.body, JSON.stringify(current.document)]
-    );
-    const filed = created.rows[0]!;
-    await client.query(
-      `INSERT INTO workspace_note_revisions (
-         note_id, revision, editor_handle, title, body, content_document, kind,
-         publication_target, target_id, notebook_id, attachment_ids, reason
-       ) VALUES ($1, $2, $3, $4, $5, $6, 'quick', 'undecided', NULL, $7, ARRAY[]::UUID[], 'created')`,
-      [filed.id, filed.revision, handle, title, current.body, JSON.stringify(current.document), notebook?.id ?? null]
-    );
+    const filed = await insertQuickNote(client, {
+      workspaceId: workspace.id,
+      handle,
+      notebookId: notebook?.id ?? null,
+      title,
+      body: current.body,
+      document: current.document
+    });
     const resetDocument = emptyDocument();
     const resetResult = await client.query<ScribbleRow>(
       `UPDATE workspace_scribbles SET
@@ -344,6 +395,80 @@ export const fileScribble = async (rawInput: unknown, actor: Actor, mutation?: M
       payload: { revision: scribble.revision, noteId: filed.id }
     });
     return { value, events: [noteEvent, scribbleEvent] };
+  });
+};
+
+export const createAssistantQuickNote = async (rawInput: unknown, actor: Actor, mutation?: MutationContext) => {
+  const input = saveAssistantQuickNoteInputSchema.parse(rawInput);
+  const handle = await ensureProfileHandle(actorHandle(actor));
+  if (!hasDatabase()) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "AI Quick Notes require the live workspace." });
+  await ensureLiveData();
+  return runAtomic(async (client) => {
+    const claim = await claimMutation<Record<string, unknown>>(client, handle, mutation);
+    if (claim.replayed) return { value: claim.response };
+    const assistantMessage = await client.query(
+      `SELECT message.id
+       FROM ai_messages message
+       JOIN ai_conversations conversation ON conversation.id = message.conversation_id
+       WHERE message.id = $1
+         AND message.conversation_id = $2
+         AND message.role = 'assistant'
+         AND conversation.owner_handle = $3
+         AND message.metadata -> 'translation' IS NOT NULL
+         AND message.metadata -> 'translation' <> 'null'::jsonb
+       FOR SHARE OF message, conversation`,
+      [input.assistantMessageId, input.conversationId, handle]
+    );
+    if (!assistantMessage.rowCount) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "That translation is not available to save." });
+    }
+    const workspace = await ensureWorkspace(client, handle);
+    const document = assistantQuickNoteDocument(input.body, input.source);
+    const note = await insertQuickNote(client, {
+      workspaceId: workspace.id,
+      handle,
+      notebookId: null,
+      title: input.title,
+      body: input.body,
+      document
+    });
+    const value = {
+      id: note.id,
+      title: input.title,
+      revision: note.revision,
+      createdAt: iso(note.createdAt),
+      href: `/workspace?view=notes&note=${encodeURIComponent(note.id)}`
+    };
+    await stageAuditLog(client, {
+      actorHandle: handle,
+      action: "assistant.quick_note.create",
+      subjectType: "note",
+      subjectId: note.id,
+      metadata: mutationAuditMetadata(mutation, {
+        assistantMessageId: input.assistantMessageId,
+        conversationId: input.conversationId,
+        targetLanguage: input.targetLanguage,
+        sourceSurface: input.source.surface,
+        sourceId: input.source.entityId ?? null
+      })
+    });
+    await completeMutation(client, handle, mutation, value);
+    const event = await stageEvent(client, {
+      kind: "note.document.created",
+      actorHandle: handle,
+      audienceHandles: [handle],
+      subjectType: "note",
+      subjectId: note.id,
+      visibility: "private",
+      payload: {
+        noteId: note.id,
+        revision: note.revision,
+        notebookId: null,
+        kind: "quick",
+        source: "assistant_translation"
+      }
+    });
+    return { value, events: [event] };
   });
 };
 

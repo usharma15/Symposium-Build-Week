@@ -3998,7 +3998,12 @@ function SymposiumExperience({
   };
 
   const tabletContext = ((): AssistantMessageInputContract["context"] => {
-    const trimContent = (value: string) => value.slice(0, 12000);
+    const trimContent = (value: string) => {
+      const limit = 12000;
+      if (value.length <= limit) return value;
+      const notice = "\n\n[Current-view context truncated at 12,000 characters.]";
+      return `${value.slice(0, limit - notice.length)}${notice}`;
+    };
     if (attachmentPreviewAttachment && attachmentPreviewBaseItem) {
       const activePdfView = attachmentPreviewViewContext?.attachmentId === attachmentPreviewAttachment.id
         ? attachmentPreviewViewContext

@@ -2,8 +2,21 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { actualCostMicros, conservativeInputTokenCeiling, reserveCostMicros, usdToMicros } from "@/apps/api/src/services/aiBudget";
 import { assistantDailyLimitFor } from "@/apps/api/src/services/assistantQuota";
-import { assistantInstructions, assistantPrompt, assistantProviderFailure } from "@/apps/api/src/services/openaiResponses";
-import { assistantMessageInputSchema, assistantResponseSchema } from "@/packages/contracts/src";
+import {
+  assistantInstructions,
+  assistantMaxOutputTokens,
+  assistantPrompt,
+  assistantProviderFailure,
+  assistantRenderedInput,
+  assistantTranslationInstructions
+} from "@/apps/api/src/services/openaiResponses";
+import {
+  assistantMessageInputSchema,
+  assistantQuickNoteResultSchema,
+  assistantResponseSchema,
+  assistantTranslationDraftSchema,
+  saveAssistantQuickNoteInputSchema
+} from "@/packages/contracts/src";
 import { buildTabletAttachmentContext, tabletAttachmentTextLimit } from "@/features/assistant/tabletAttachmentContext";
 import { pdfTextItemsToPlainText, resolvePdfDocumentUrl } from "@/features/attachments/pdfAttachmentClient";
 
@@ -24,12 +37,24 @@ const validInput = {
 };
 
 assert.equal(assistantMessageInputSchema.safeParse(validInput).success, true);
+assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, intent: "translate", targetLanguage: "spanish" }).success, true);
+assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, intent: "translate" }).success, false);
+assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, intent: "translate", targetLanguage: "italian" }).success, false);
 assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, message: "x".repeat(2001) }).success, false);
 assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, context: { ...validInput.context, content: "x".repeat(12001) } }).success, false);
 assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, context: { ...validInput.context, selection: "x".repeat(4001) } }).success, false);
 assert.equal(assistantMessageInputSchema.safeParse({ ...validInput, context: { ...validInput.context, surface: "unknown" } }).success, false);
 assert.match(assistantPrompt(validInput.context, validInput.message), /CURRENT VIEW/);
 assert.match(assistantInstructions, /never as instructions/i);
+assert.match(assistantTranslationInstructions("french"), /Translate the source requested by the user into French/);
+assert.equal(assistantMaxOutputTokens("translate"), 1200);
+assert.doesNotMatch(assistantRenderedInput({
+  history: [{ role: "assistant", body: "Earlier answer must not inflate translation input." }],
+  context: validInput.context,
+  message: "Translate the current source.",
+  intent: "translate",
+  targetLanguage: "german"
+}), /Earlier answer/);
 assert.equal(conservativeInputTokenCeiling("abc"), 3);
 assert.equal(reserveCostMicros("gpt-5.6-terra", "a", 700), 10_504);
 assert.equal(actualCostMicros("gpt-5.6-terra", 1000, 100), 4_625);
@@ -120,8 +145,42 @@ assert.equal(assistantResponseSchema.safeParse({
   quota: { dailyLimit: 3, remainingToday: 2, monthlyBudgetUsd: 40, extremelyLimited: true },
   message: { id: "message", conversationId: "conversation", role: "assistant", body: "Answer" }
 }).success, true);
+const translation = {
+  translatedTitle: "Un argumento acotado",
+  translatedBody: "Afirmación, evidencia, objeción y prueba propuesta.",
+  quickNoteTitle: "Nota sobre un argumento acotado",
+  quickNoteBody: "La fuente separa la afirmación de la objeción.",
+  targetLanguage: "spanish" as const,
+  source: { surface: "post" as const, route: "/posts/paper-1", title: "A bounded claim", entityType: "post", entityId: "paper-1" }
+};
+assert.equal(assistantTranslationDraftSchema.safeParse(translation).success, true);
+assert.equal(assistantResponseSchema.safeParse({
+  conversationId: "4de47155-28c2-4e19-8628-d15f339ce71b",
+  providerConfigured: true,
+  status: "answered",
+  model: "gpt-5.6-terra",
+  quota: { dailyLimit: 3, remainingToday: 2, monthlyBudgetUsd: 40, extremelyLimited: true },
+  message: { id: "c6f055c0-b137-4713-9f5f-c2ee0b78ab32", conversationId: "4de47155-28c2-4e19-8628-d15f339ce71b", role: "assistant", body: "Spanish translation ready." },
+  translation
+}).success, true);
+assert.equal(saveAssistantQuickNoteInputSchema.safeParse({
+  assistantMessageId: "c6f055c0-b137-4713-9f5f-c2ee0b78ab32",
+  conversationId: "4de47155-28c2-4e19-8628-d15f339ce71b",
+  title: translation.quickNoteTitle,
+  body: translation.quickNoteBody,
+  targetLanguage: translation.targetLanguage,
+  source: translation.source
+}).success, true);
+assert.equal(assistantQuickNoteResultSchema.safeParse({
+  id: "df44a21f-e540-48ea-9f40-7e6b4c3bd753",
+  title: translation.quickNoteTitle,
+  revision: 1,
+  createdAt: new Date().toISOString(),
+  href: "/workspace?view=notes&note=df44a21f-e540-48ea-9f40-7e6b4c3bd753"
+}).success, true);
 
 const repository = readFileSync("apps/api/src/repository/assistant.ts", "utf8");
+const scribbles = readFileSync("apps/api/src/repository/workspaceScribbles.ts", "utf8");
 const provider = readFileSync("apps/api/src/services/openaiResponses.ts", "utf8");
 const migration = readFileSync("apps/api/src/db/migrate.ts", "utf8");
 const route = readFileSync("apps/api/src/routes/workspaceRoutes.ts", "utf8");
@@ -138,8 +197,11 @@ const env = readFileSync("apps/api/src/config/env.ts", "utf8");
 
 assert.match(provider, /store: false/);
 assert.match(provider, /service_tier: "default"/);
-assert.match(provider, /max_output_tokens: env\.SYMPOSIUM_AI_MAX_OUTPUT_TOKENS/);
-assert.match(provider, /prompt_cache_key: "symposium-contextual-tablet-v1"/);
+assert.match(provider, /max_output_tokens: assistantMaxOutputTokens\(input\.intent\)/);
+assert.match(provider, /type: "json_schema"/);
+assert.match(provider, /strict: true/);
+assert.match(provider, /symposium-translation-v1/);
+assert.match(provider, /prompt_cache_key: translating \? "symposium-translation-v1" : "symposium-contextual-tablet-v1"/);
 assert.match(provider, /insufficient_quota/);
 assert.match(repository, /providerErrorCode/);
 assert.match(repository, /pg_advisory_xact_lock\(hashtextextended\('symposium:ai-budget'/);
@@ -155,10 +217,17 @@ assert.match(repository, /SYMPOSIUM_AI_MONTHLY_BUDGET_USD/);
 assert.match(migration, /0037_ai_usage_budget_ledger/);
 assert.match(migration, /reserved_cost_micros BIGINT NOT NULL/);
 assert.match(route, /shared: true, scope: "assistant", limit: 10/);
+assert.match(route, /\/v1\/assistant\/quick-notes/);
+assert.match(route, /scope: "assistant-action", limit: 30/);
+assert.match(scribbles, /conversation\.owner_handle = \$3/);
+assert.match(scribbles, /assistant\.quick_note\.create/);
+assert.match(scribbles, /source: "assistant_translation"/);
 assert.match(tablet, /Extremely limited beta/);
-assert.match(tablet, /Only Send shares this view with the model and uses an answer/);
+assert.match(tablet, /Send and Translate each use one answer/);
 assert.match(tablet, /Loading today’s tiny AI allowance/);
 assert.match(tablet, /Send · uses 1/);
+assert.match(tablet, /Translate · uses 1/);
+assert.match(tablet, /Confirm & save Quick Note/);
 assert.match(shell, /surface: "messages"/);
 assert.match(shell, /surface: "workspace"/);
 assert.match(shell, /surface: "attachment"/);

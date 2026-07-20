@@ -31,6 +31,7 @@ import {
   updateWorkspaceComment
 } from "../repository/workspaceComments";
 import {
+  createAssistantQuickNote,
   discardScribble,
   fileScribble,
   getScribble,
@@ -473,6 +474,19 @@ export const registerWorkspaceRoutes = (app: FastifyInstance) => {
         mutationContextFromRequest(request, "assistant.message", request.body)
       );
       return reply.send(response);
+    } catch (error) {
+      return sendError(app, reply, error);
+    }
+  });
+
+  app.post("/v1/assistant/quick-notes", async (request, reply) => {
+    try {
+      const actor = await withWriteActor(request, { shared: true, scope: "assistant-action", limit: 30 });
+      return reply.send(await createAssistantQuickNote(
+        request.body,
+        actor,
+        mutationContextFromRequest(request, "assistant.quick-note.create", request.body)
+      ));
     } catch (error) {
       return sendError(app, reply, error);
     }

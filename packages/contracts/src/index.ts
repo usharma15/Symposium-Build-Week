@@ -1222,24 +1222,50 @@ export const publishNoteInputSchema = z.object({
   visibility: z.enum(["private", "community", "public"]).default("public")
 });
 
+export const assistantSurfaceSchema = z.enum([
+  "hall",
+  "room",
+  "post",
+  "community",
+  "profile",
+  "workspace",
+  "messages",
+  "search",
+  "opportunity",
+  "attachment"
+]);
+export const assistantTranslationLanguageSchema = z.enum(["english", "french", "german", "spanish"]);
+export const assistantRequestIntentSchema = z.enum(["answer", "translate"]);
+
+export const assistantActionSourceSchema = z.object({
+  surface: assistantSurfaceSchema,
+  route: z.string().trim().startsWith("/").max(500),
+  title: z.string().trim().min(1).max(300),
+  entityType: z.string().trim().max(80).optional(),
+  entityId: z.string().trim().max(240).optional()
+});
+
+export const assistantTranslationDraftSchema = z.object({
+  translatedTitle: z.string().trim().min(1).max(300),
+  translatedBody: z.string().trim().min(1).max(16000),
+  quickNoteTitle: z.string().trim().min(1).max(240),
+  quickNoteBody: z.string().trim().min(1).max(8000)
+});
+
+export const assistantTranslationSchema = assistantTranslationDraftSchema.extend({
+  targetLanguage: assistantTranslationLanguageSchema,
+  source: assistantActionSourceSchema
+});
+
 export const assistantMessageInputSchema = z.object({
   conversationId: z.string().uuid().optional(),
   message: z.string().trim().min(1).max(2000),
+  intent: assistantRequestIntentSchema.default("answer"),
+  targetLanguage: assistantTranslationLanguageSchema.optional(),
   contextType: z.enum(["general", "room", "post", "community", "note"]).default("general"),
   contextId: z.string().trim().min(1).max(240).optional(),
   context: z.object({
-    surface: z.enum([
-      "hall",
-      "room",
-      "post",
-      "community",
-      "profile",
-      "workspace",
-      "messages",
-      "search",
-      "opportunity",
-      "attachment"
-    ]),
+    surface: assistantSurfaceSchema,
     route: z.string().trim().max(500),
     title: z.string().trim().max(300),
     summary: z.string().trim().max(3000).default(""),
@@ -1249,6 +1275,27 @@ export const assistantMessageInputSchema = z.object({
     selection: z.string().trim().max(4000).optional(),
     metadata: z.record(z.string().max(80), z.union([z.string().max(1000), z.number(), z.boolean(), z.null()])).default({})
   })
+}).superRefine((input, context) => {
+  if (input.intent === "translate" && !input.targetLanguage) {
+    context.addIssue({ code: "custom", path: ["targetLanguage"], message: "Choose a translation language." });
+  }
+});
+
+export const saveAssistantQuickNoteInputSchema = z.object({
+  assistantMessageId: z.string().uuid(),
+  conversationId: z.string().uuid(),
+  title: z.string().trim().min(1).max(240),
+  body: z.string().trim().min(1).max(8000),
+  targetLanguage: assistantTranslationLanguageSchema,
+  source: assistantActionSourceSchema
+});
+
+export const assistantQuickNoteResultSchema = z.object({
+  id: z.string().uuid(),
+  title: z.string(),
+  revision: z.number().int().positive(),
+  createdAt: z.string(),
+  href: z.string().startsWith("/workspace?")
 });
 
 export const conversationKindSchema = z.enum(["direct", "group"]);
@@ -1512,7 +1559,8 @@ export const assistantResponseSchema = z.object({
   providerConfigured: z.boolean(),
   status: z.enum(["answered", "provider_not_configured", "disabled", "provider_error"]),
   model: z.string().optional(),
-  quota: assistantQuotaSchema.optional()
+  quota: assistantQuotaSchema.optional(),
+  translation: assistantTranslationSchema.optional()
 });
 
 export const bootstrapResponseSchema = z.object({
@@ -1645,9 +1693,17 @@ export type FileScribbleInputContract = z.infer<typeof fileScribbleInputSchema>;
 export type DiscardScribbleInputContract = z.infer<typeof discardScribbleInputSchema>;
 export type RestoreScribbleInputContract = z.infer<typeof restoreScribbleInputSchema>;
 export type PublishNoteInputContract = z.infer<typeof publishNoteInputSchema>;
+export type AssistantSurfaceContract = z.infer<typeof assistantSurfaceSchema>;
+export type AssistantTranslationLanguageContract = z.infer<typeof assistantTranslationLanguageSchema>;
+export type AssistantRequestIntentContract = z.infer<typeof assistantRequestIntentSchema>;
+export type AssistantActionSourceContract = z.infer<typeof assistantActionSourceSchema>;
+export type AssistantTranslationDraftContract = z.infer<typeof assistantTranslationDraftSchema>;
+export type AssistantTranslationContract = z.infer<typeof assistantTranslationSchema>;
 export type AssistantMessageInputContract = z.infer<typeof assistantMessageInputSchema>;
 export type AssistantQuotaStatusContract = z.infer<typeof assistantQuotaStatusSchema>;
 export type AssistantResponseContract = z.infer<typeof assistantResponseSchema>;
+export type SaveAssistantQuickNoteInputContract = z.infer<typeof saveAssistantQuickNoteInputSchema>;
+export type AssistantQuickNoteResultContract = z.infer<typeof assistantQuickNoteResultSchema>;
 
 export const procedureNames = [
   "auth.syncUser",

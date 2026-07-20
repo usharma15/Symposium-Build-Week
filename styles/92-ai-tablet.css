@@ -57,6 +57,23 @@
 .tablet-context-card > strong { font-size: 0.76rem; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tablet-context-card > p { color: var(--muted); display: -webkit-box; font-size: 0.64rem; line-height: 1.35; margin: 0; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 
+.tablet-translation-controls {
+  align-items: center;
+  background: color-mix(in srgb, var(--aqua) 8%, var(--document-control-solid));
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  flex: 0 0 auto;
+  gap: 0.3rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 0.45rem 0.58rem;
+}
+.tablet-translation-controls label { align-items: center; display: flex; font-size: 0.65rem; font-weight: 800; gap: 0.3rem; min-width: 0; }
+.tablet-translation-controls label > svg { color: var(--bronze); flex: 0 0 auto; }
+.tablet-translation-controls label > span { white-space: nowrap; }
+.tablet-translation-controls select { background: var(--document-surface-solid); border: 1px solid var(--line); color: var(--ink); font: inherit; min-width: 0; padding: 0.25rem 0.32rem; width: 100%; }
+.tablet-translation-controls button { align-items: center; display: inline-flex; font-size: 0.62rem; gap: 0.28rem; min-height: 1.85rem; padding: 0.3rem 0.42rem; white-space: nowrap; }
+.tablet-translation-controls > small { color: var(--muted); font-size: 0.57rem; grid-column: 1 / -1; line-height: 1.3; }
+
 .tablet-transcript {
   display: flex;
   flex: 1 1 auto;
@@ -67,6 +84,7 @@
   padding: 0.65rem 0.58rem;
 }
 .tablet-message { display: grid; gap: 0.14rem; max-width: 92%; }
+.tablet-message.has-translation { max-width: 100%; width: 100%; }
 .tablet-message.user { align-self: end; }
 .tablet-message > span { color: var(--muted); font-size: 0.58rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; }
 .tablet-message.user > span { text-align: right; }
@@ -82,6 +100,25 @@
 }
 .tablet-message.user > p { background: color-mix(in srgb, var(--aqua) 16%, var(--document-control-solid)); }
 .tablet-message.pending > p { color: var(--muted); }
+
+.tablet-translation-card { background: var(--document-surface-solid); border: 1px solid color-mix(in srgb, var(--aqua) 34%, var(--line)); border-radius: 0.64rem; display: grid; margin-top: 0.22rem; overflow: hidden; }
+.tablet-translation-card > header { align-items: start; background: color-mix(in srgb, var(--aqua) 11%, var(--document-control-solid)); border-bottom: 1px solid var(--line); display: grid; gap: 0.1rem; padding: 0.48rem 0.52rem; }
+.tablet-translation-card > header span { align-items: center; display: flex; font-size: 0.67rem; font-weight: 900; gap: 0.3rem; }
+.tablet-translation-card > header small { color: var(--muted); font-size: 0.57rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tablet-translation-copy { border-bottom: 1px solid var(--line); display: grid; gap: 0.35rem; max-height: 15rem; overflow: auto; padding: 0.55rem; }
+.tablet-translation-copy strong { font-family: var(--font-serif); font-size: 0.76rem; line-height: 1.3; }
+.tablet-translation-copy p { font-size: 0.69rem; line-height: 1.48; margin: 0; white-space: pre-wrap; }
+.tablet-quick-note-draft { background: color-mix(in srgb, var(--bronze) 5%, var(--document-surface-solid)); display: grid; gap: 0.38rem; padding: 0.52rem; }
+.tablet-quick-note-draft > span { color: var(--muted); font-size: 0.58rem; font-weight: 800; letter-spacing: 0.035em; text-transform: uppercase; }
+.tablet-quick-note-draft label { display: grid; gap: 0.15rem; }
+.tablet-quick-note-draft label small { color: var(--muted); font-size: 0.57rem; font-weight: 700; }
+.tablet-quick-note-draft input,
+.tablet-quick-note-draft textarea { background: var(--document-control-solid); border: 1px solid var(--line); color: var(--ink); font: inherit; font-size: 0.67rem; line-height: 1.4; padding: 0.38rem 0.42rem; width: 100%; }
+.tablet-quick-note-draft textarea { max-height: 10rem; min-height: 5.2rem; resize: vertical; }
+.tablet-quick-note-draft button { align-items: center; display: flex; font-size: 0.64rem; gap: 0.3rem; justify-content: center; min-height: 2rem; width: 100%; }
+.tablet-action-error { color: #a83d47; font-size: 0.61rem; line-height: 1.35; margin: 0; }
+.tablet-note-saved { align-items: center; background: color-mix(in srgb, #2d7b55 12%, var(--document-control-solid)); border: 1px solid color-mix(in srgb, #2d7b55 35%, var(--line)); border-radius: 0.42rem; color: var(--ink); display: flex; font-size: 0.63rem; font-weight: 800; gap: 0.28rem; justify-content: center; min-height: 2.1rem; padding: 0.35rem 0.45rem; text-decoration: none; }
+.tablet-note-saved svg:last-child { margin-left: auto; }
 
 .tablet-prompts { display: grid; flex: 0 0 auto; gap: 0.3rem; padding: 0 0.58rem 0.55rem; }
 .tablet-prompts button { align-items: center; background: var(--document-control-solid); display: flex; font-size: 0.65rem; gap: 0.35rem; justify-content: flex-start; min-height: 2rem; padding: 0.35rem 0.48rem; text-align: left; width: 100%; }

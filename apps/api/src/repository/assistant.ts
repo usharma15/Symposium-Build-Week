@@ -15,8 +15,8 @@ import { stageEvent } from "../services/events";
 import { claimMutation, completeMutation, type MutationContext } from "../services/mutations";
 import {
   assistantProviderFailure,
-  assistantInstructions,
-  assistantPrompt,
+  assistantMaxOutputTokens,
+  assistantRenderedInput,
   callAssistantModel,
   type AssistantProviderFailure,
   type AssistantModelResult
@@ -177,15 +177,17 @@ const prepareAssistant = async (
     throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "The shared AI capacity for today is exhausted. It resets tomorrow." });
   }
 
-  const renderedInput = [
-    assistantInstructions,
-    ...history.map((entry) => `${entry.role}: ${entry.body}`),
-    assistantPrompt(input.context, input.message)
-  ].join("\n");
+  const renderedInput = assistantRenderedInput({
+    history,
+    context: input.context,
+    message: input.message,
+    intent: input.intent,
+    targetLanguage: input.targetLanguage
+  });
   const reservedCostMicros = reserveCostMicros(
     env.SYMPOSIUM_AI_MODEL,
     renderedInput,
-    env.SYMPOSIUM_AI_MAX_OUTPUT_TOKENS
+    assistantMaxOutputTokens(input.intent)
   );
   if (Number(current.dailyCostMicros) + reservedCostMicros > usdToMicros(env.SYMPOSIUM_AI_DAILY_BUDGET_USD)) {
     throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "The shared AI spending limit for today is exhausted. It resets tomorrow." });
@@ -227,6 +229,19 @@ const finalizeAssistant = async (
 ): Promise<AssistantResponseContract> => runAtomic(async (client) => {
   const providerError = !result;
   const body = result?.body ?? failure?.body ?? "The AI provider could not complete this answer. This failed beta attempt still uses one daily answer so repeated retries cannot create surprise costs.";
+  const translation = result?.translation && prepared.input.targetLanguage
+    ? {
+        ...result.translation,
+        targetLanguage: prepared.input.targetLanguage,
+        source: {
+          surface: prepared.input.context.surface,
+          route: prepared.input.context.route.startsWith("/") ? prepared.input.context.route : "/",
+          title: prepared.input.context.title.trim() || "Current view",
+          ...(prepared.input.context.entityType ? { entityType: prepared.input.context.entityType } : {}),
+          ...(prepared.input.context.entityId ? { entityId: prepared.input.context.entityId } : {})
+        }
+      }
+    : undefined;
   const actualMicros = result
     ? actualCostMicros(env.SYMPOSIUM_AI_MODEL, result.inputTokens, result.outputTokens)
     : prepared.reservedCostMicros;
@@ -244,7 +259,8 @@ const finalizeAssistant = async (
       model: result?.model ?? env.SYMPOSIUM_AI_MODEL,
       providerResponseId: result?.providerResponseId ?? null,
       providerError,
-      providerErrorCode: failure?.code ?? null
+      providerErrorCode: failure?.code ?? null,
+      translation: translation ?? null
     })]
   );
   await client.query(
@@ -283,7 +299,8 @@ const finalizeAssistant = async (
     status: providerError ? "provider_error" : "answered",
     model: result?.model ?? env.SYMPOSIUM_AI_MODEL,
     quota: quota(prepared.dailyLimit, prepared.remainingToday),
-    message: { ...row, createdAt: new Date(row.createdAt).toISOString() }
+    message: { ...row, createdAt: new Date(row.createdAt).toISOString() },
+    ...(translation ? { translation } : {})
   };
   await stageAuditLog(client, {
     actorHandle: prepared.owner,
@@ -294,6 +311,8 @@ const finalizeAssistant = async (
       contextId: prepared.input.contextId,
       contextType: prepared.input.contextType,
       surface: prepared.input.context.surface,
+      intent: prepared.input.intent,
+      targetLanguage: prepared.input.targetLanguage,
       model: response.model,
       status: response.status,
       actualCostMicros: actualMicros
@@ -339,7 +358,9 @@ export const askAssistant = async (
       ownerHandle: owner,
       history: prepared.history,
       context: input.context,
-      message: input.message
+      message: input.message,
+      intent: input.intent,
+      targetLanguage: input.targetLanguage
     });
   } catch (error) {
     failure = assistantProviderFailure(error);
