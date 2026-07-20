@@ -63,6 +63,10 @@ services:
         value: "700"
       - key: SYMPOSIUM_AI_USER_DAILY_LIMIT
         value: "3"
+      - key: SYMPOSIUM_AI_OWNER_DAILY_LIMIT
+        value: "10"
+      - key: SYMPOSIUM_AI_OWNER_DAILY_LIMIT_USAGE_DAY
+        value: "2026-07-20"
       - key: SYMPOSIUM_AI_GLOBAL_DAILY_LIMIT
         value: "40"
       - key: SYMPOSIUM_AI_DAILY_BUDGET_USD

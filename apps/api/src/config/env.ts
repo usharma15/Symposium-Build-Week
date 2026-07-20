@@ -52,6 +52,11 @@ const envSchema = z.object({
   SYMPOSIUM_AI_REASONING_EFFORT: z.enum(["none", "low", "medium"]).default("low"),
   SYMPOSIUM_AI_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(200).max(1200).default(700),
   SYMPOSIUM_AI_USER_DAILY_LIMIT: z.coerce.number().int().min(1).max(20).default(3),
+  SYMPOSIUM_AI_OWNER_DAILY_LIMIT: z.coerce.number().int().min(1).max(20).default(10),
+  SYMPOSIUM_AI_OWNER_DAILY_LIMIT_USAGE_DAY: z.union([
+    z.literal(""),
+    z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use a UTC usage day in YYYY-MM-DD format.")
+  ]).default("2026-07-20"),
   SYMPOSIUM_AI_GLOBAL_DAILY_LIMIT: z.coerce.number().int().min(1).max(500).default(40),
   SYMPOSIUM_AI_DAILY_BUDGET_USD: z.coerce.number().positive().max(10).default(1.25),
   SYMPOSIUM_AI_MONTHLY_BUDGET_USD: z.coerce.number().positive().max(40).default(40)

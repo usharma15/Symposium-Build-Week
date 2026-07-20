@@ -260,7 +260,7 @@ Implemented now:
 - opportunity/job post API
 - DM/conversation REST API
 - workspace block save and note-to-paper publish API
-- AI tablet message API with persistent conversation storage, hard daily/monthly budget ledgers, and contextual attachment/page payloads; PDF rendering and text extraction stay client-side and do not wake Neon
+- AI tablet message API with persistent conversation storage, hard daily/monthly budget ledgers, optional owner-only usage-day overrides, and contextual attachment/page payloads; PDF rendering and text extraction stay client-side and do not wake Neon
 
 Still intentionally next:
 

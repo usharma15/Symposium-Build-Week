@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { actualCostMicros, conservativeInputTokenCeiling, reserveCostMicros, usdToMicros } from "@/apps/api/src/services/aiBudget";
+import { assistantDailyLimitFor } from "@/apps/api/src/services/assistantQuota";
 import { assistantInstructions, assistantPrompt, assistantProviderFailure } from "@/apps/api/src/services/openaiResponses";
 import { assistantMessageInputSchema, assistantResponseSchema } from "@/packages/contracts/src";
 import { buildTabletAttachmentContext, tabletAttachmentTextLimit } from "@/features/assistant/tabletAttachmentContext";
@@ -33,6 +34,16 @@ assert.equal(conservativeInputTokenCeiling("abc"), 3);
 assert.equal(reserveCostMicros("gpt-5.6-terra", "a", 700), 10_504);
 assert.equal(actualCostMicros("gpt-5.6-terra", 1000, 100), 4_625);
 assert.equal(usdToMicros(40), 40_000_000);
+const temporaryOwnerPolicy = {
+  baseLimit: 3,
+  ownerHandle: "@udayan",
+  ownerOverrideLimit: 10,
+  ownerOverrideUsageDay: "2026-07-20"
+};
+assert.equal(assistantDailyLimitFor("@udayan", "2026-07-20", temporaryOwnerPolicy), 10);
+assert.equal(assistantDailyLimitFor("udayan", "2026-07-21", temporaryOwnerPolicy), 3);
+assert.equal(assistantDailyLimitFor("@someone_else", "2026-07-20", temporaryOwnerPolicy), 3);
+assert.equal(assistantDailyLimitFor("@udayan", "2026-07-20", { ...temporaryOwnerPolicy, ownerOverrideLimit: 2 }), 3);
 assert.match(assistantProviderFailure(new DOMException("timed out", "TimeoutError")).body, /45-second safety timeout/);
 
 const docxContext = buildTabletAttachmentContext({
@@ -122,6 +133,7 @@ const attachmentModal = readFileSync("features/attachments/AttachmentPreviewModa
 const pdfClient = readFileSync("features/attachments/pdfAttachmentClient.ts", "utf8");
 const packageManifest = readFileSync("package.json", "utf8");
 const nextConfig = readFileSync("next.config.mjs", "utf8");
+const renderBlueprint = readFileSync("render.yaml", "utf8");
 const env = readFileSync("apps/api/src/config/env.ts", "utf8");
 
 assert.match(provider, /store: false/);
@@ -135,6 +147,8 @@ assert.match(repository, /current\.userMinute >= 2/);
 assert.match(repository, /current\.inFlight >= 1/);
 assert.match(repository, /getAssistantQuota/);
 assert.match(repository, /SYMPOSIUM_AI_USER_DAILY_LIMIT/);
+assert.match(repository, /dailyLimitFor\(owner, current\.usageDay\)/);
+assert.match(repository, /quota\(prepared\.dailyLimit, prepared\.remainingToday\)/);
 assert.match(repository, /SYMPOSIUM_AI_GLOBAL_DAILY_LIMIT/);
 assert.match(repository, /SYMPOSIUM_AI_DAILY_BUDGET_USD/);
 assert.match(repository, /SYMPOSIUM_AI_MONTHLY_BUDGET_USD/);
@@ -168,5 +182,8 @@ assert.match(packageManifest, /"pdfjs-dist": "6\.1\.200"/);
 assert.match(nextConfig, /source: "\/attachment-assets\/:path\*"/);
 assert.match(nextConfig, /destination: `\$\{publicAttachmentBaseUrl\}\/\:path\*`/);
 assert.match(env, /SYMPOSIUM_AI_MONTHLY_BUDGET_USD:[\s\S]*max\(40\)\.default\(40\)/);
+assert.match(env, /SYMPOSIUM_AI_OWNER_DAILY_LIMIT_USAGE_DAY/);
+assert.match(renderBlueprint, /SYMPOSIUM_AI_OWNER_DAILY_LIMIT[\s\S]*value: "10"/);
+assert.match(renderBlueprint, /SYMPOSIUM_AI_OWNER_DAILY_LIMIT_USAGE_DAY[\s\S]*value: "2026-07-20"/);
 
 console.log("AI Tablet cost and context boundary checks passed.");
