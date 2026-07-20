@@ -1290,7 +1290,7 @@ export const documentTranslationInputSchema = z.object({
   attachmentId: z.string().trim().min(1).max(240),
   sourceTitle: z.string().trim().min(1).max(300),
   sourceKind: z.enum(["docx", "pdf"]),
-  sourcePages: z.array(documentTranslationSourcePageSchema).min(1).max(40),
+  sourcePages: z.array(documentTranslationSourcePageSchema).length(1),
   sourceComplete: z.boolean(),
   languageInstruction: z.string().trim().min(1).max(120)
 }).superRefine((input, context) => {
@@ -1312,7 +1312,7 @@ export const documentTranslationModelOutputSchema = z.object({
   targetLanguage: z.union([assistantTranslationLanguageSchema, z.literal("unsupported")]),
   targetLanguageLabel: z.string().trim().max(40),
   translatedTitle: z.string().trim().max(300),
-  pages: z.array(documentTranslationPageSchema).max(40),
+  pages: z.array(documentTranslationPageSchema).max(1),
   message: z.string().trim().max(1000)
 }).superRefine((output, context) => {
   if (output.targetLanguage === "unsupported" && output.pages.length) {
@@ -1614,7 +1614,7 @@ export const documentTranslationResultSchema = z.object({
   targetLanguage: assistantTranslationLanguageSchema.nullable(),
   targetLanguageLabel: z.string().max(40).nullable(),
   translatedTitle: z.string().max(300),
-  pages: z.array(documentTranslationPageSchema).max(40),
+  pages: z.array(documentTranslationPageSchema).max(1),
   message: z.string().max(1000),
   model: z.string(),
   createdAt: z.string().datetime(),

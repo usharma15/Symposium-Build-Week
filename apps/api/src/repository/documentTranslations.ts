@@ -227,8 +227,8 @@ const finalizeTranslation = async (
     ? failure?.body ?? "The AI provider could not translate this document. This failed attempt still uses one daily answer."
     : targetLanguage
       ? prepared.input.sourceComplete
-        ? `${languageLabels[targetLanguage]} translation ready.`
-        : `${languageLabels[targetLanguage]} translation ready for all extracted document pages; the source extraction was incomplete.`
+        ? `${languageLabels[targetLanguage]} translation ready for page ${prepared.input.sourcePages[0]!.pageNumber}.`
+        : `${languageLabels[targetLanguage]} translation ready for the available text on page ${prepared.input.sourcePages[0]!.pageNumber}; that page's text extraction was incomplete.`
       : output?.message || "Type English, French, German, or Spanish.";
   const actualMicros = modelResult
     ? actualCostMicros(env.SYMPOSIUM_AI_MODEL, modelResult.inputTokens, modelResult.outputTokens)

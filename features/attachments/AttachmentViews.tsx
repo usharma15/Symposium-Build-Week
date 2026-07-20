@@ -699,30 +699,34 @@ function PdfAttachmentPreview({
   } | null>(null);
   const [selectedText, setSelectedText] = useState("");
   const originalPageCount = document?.numPages ?? attachmentPageCount(attachment);
+  const boundedPage = Math.min(Math.max(1, page), Math.max(1, originalPageCount));
   const loadTranslationSource = useCallback(async () => {
     if (document) {
-      const pages: Array<{ pageNumber: number; body: string }> = [];
-      const pagesToRead = Math.min(document.numPages, 40);
-      for (let pageNumber = 1; pageNumber <= pagesToRead; pageNumber += 1) {
-        pages.push({ pageNumber, body: await readPdfPageText(document, pageNumber) });
-      }
-      return boundedDocumentTranslationSource(pages, document.numPages <= 40);
+      return boundedDocumentTranslationSource(
+        [{ pageNumber: boundedPage, body: await readPdfPageText(document, boundedPage) }],
+        true
+      );
     }
-    return pdfTranslationSourceFromPreviewText(
+    const fallback = pdfTranslationSourceFromPreviewText(
       metadataString(attachment.metadata, "previewText"),
       metadataBoolean(attachment.metadata, "pdfTextComplete")
     );
-  }, [attachment.metadata, document]);
+    const currentPage = fallback.pages.find((sourcePage) => sourcePage.pageNumber === boundedPage);
+    return {
+      pages: currentPage ? [currentPage] : [],
+      complete: fallback.complete && Boolean(currentPage)
+    };
+  }, [attachment.metadata, boundedPage, document]);
   const translation = useDocumentTranslation({
     attachmentId: attachment.id,
     sourceTitle: attachment.fileName,
     sourceKind: "pdf",
+    pageNumber: boundedPage,
     loadSource: loadTranslationSource
   });
   const translatedPages = translation.result?.status === "translated" ? translation.result.pages : [];
-  const pageCount = translation.showTranslation ? Math.max(1, translatedPages.length) : originalPageCount;
-  const boundedPage = Math.min(Math.max(1, page), Math.max(1, pageCount));
-  const translatedPage = translatedPages[boundedPage - 1];
+  const pageCount = originalPageCount;
+  const translatedPage = translatedPages.find((translatedSourcePage) => translatedSourcePage.pageNumber === boundedPage);
 
   useEffect(() => {
     const stage = stageRef.current;
@@ -779,11 +783,6 @@ function PdfAttachmentPreview({
       void loadingTask?.destroy().catch(() => undefined);
     };
   }, [attachment.id, attachment.url]);
-
-  useEffect(() => {
-    setPage(1);
-    setSelectedText("");
-  }, [translation.showTranslation]);
 
   useEffect(() => {
     if (!document || translation.showTranslation) return;
@@ -919,12 +918,22 @@ function PdfAttachmentPreview({
   return (
     <div
       className={`attachment-document attachment-document-${mode} attachment-pdf`}
-      onClick={(event) => event.stopPropagation()}
-      onDoubleClick={(event) => event.stopPropagation()}
+      onClick={(event) => {
+        if (mode === "expanded") {
+          event.stopPropagation();
+          return;
+        }
+        const target = event.target as HTMLElement;
+        const clickedPage = target.closest(".attachment-pdf-page, .attachment-pdf-translation-page");
+        const selection = window.getSelection();
+        if (!clickedPage || (selection && !selection.isCollapsed && selection.toString().trim())) {
+          event.stopPropagation();
+        }
+      }}
     >
       <div className="attachment-pagebar">
         <span>
-          {translation.showTranslation && translatedPage ? `Page ${translatedPage.pageNumber}` : `Page ${boundedPage}`}/{Math.max(1, pageCount)}
+          Page {boundedPage}/{Math.max(1, pageCount)}
           {selectedText ? ` · ${selectedText.length} characters selected` : loadState === "loading" ? " · loading" : ""}
         </span>
         <div className="attachment-page-actions">
@@ -1084,29 +1093,51 @@ function DocxAttachmentPreview({
     () => plainTextToDocxBlocks(fallbackText),
     [fallbackText]
   );
-  const fallbackPages = paginateDocxBlocks(fallbackBlocks);
+  const fallbackPages = useMemo(() => paginateDocxBlocks(fallbackBlocks), [fallbackBlocks]);
   const metadataPageCount = attachmentPageCount(attachment, fallbackText);
   const renderTargetRef = useRef<HTMLDivElement>(null);
   const [renderedPageCount, setRenderedPageCount] = useState(0);
   const [fitScale, setFitScale] = useState(1);
   const [parseFailed, setParseFailed] = useState(false);
-  const loadTranslationSource = useCallback(async () => boundedDocumentTranslationSource(
-    splitPreviewTextIntoPages(fallbackText).map((body, index) => ({ pageNumber: index + 1, body })),
-    Boolean(fallbackText) && fallbackText.length < maxAttachmentPreviewTextLength
-  ), [fallbackText]);
+  const [page, setPage] = useState(1);
+  const originalTotalPages = Math.max(1, renderedPageCount || metadataPageCount || fallbackPages.length);
+  const boundedPage = Math.min(page, originalTotalPages);
+  const fallbackPageBlocks = fallbackPages[Math.min(boundedPage - 1, fallbackPages.length - 1)] ?? [];
+  const loadTranslationSource = useCallback(async () => {
+    const target = renderTargetRef.current;
+    const renderedPage = renderedPageCount
+      ? Array.from(target?.querySelectorAll<HTMLElement>("section.symposium-docx") ?? [])[boundedPage - 1]
+      : undefined;
+    if (attachment.url && !parseFailed && !renderedPageCount) {
+      throw new Error("This page is still being prepared. Please try again in a moment.");
+    }
+    const renderedBlocks = renderedPage
+      ? Array.from(renderedPage.querySelectorAll<HTMLElement>("p, h1, h2, h3, h4, h5, h6, li"))
+        .map((block) => block.textContent?.replace(/\s+/g, " ").trim() ?? "")
+        .filter(Boolean)
+      : [];
+    const fallbackBody = fallbackPageBlocks
+      .map((block) => block.runs.map((run) => run.text).join(""))
+      .join("\n\n")
+      .trim();
+    const body = (renderedBlocks.length
+      ? renderedBlocks.join("\n\n")
+      : renderedPage?.textContent?.replace(/\s+/g, " ").trim()) || fallbackBody;
+    return boundedDocumentTranslationSource(
+      body ? [{ pageNumber: boundedPage, body }] : [],
+      Boolean(body)
+    );
+  }, [attachment.url, boundedPage, fallbackPageBlocks, parseFailed, renderedPageCount]);
   const translation = useDocumentTranslation({
     attachmentId: attachment.id,
     sourceTitle: attachment.fileName,
     sourceKind: "docx",
+    pageNumber: boundedPage,
     loadSource: loadTranslationSource
   });
   const translatedPages = translation.result?.status === "translated" ? translation.result.pages : [];
-  const originalTotalPages = Math.max(1, renderedPageCount || metadataPageCount || fallbackPages.length);
-  const totalPages = translation.showTranslation ? Math.max(1, translatedPages.length) : originalTotalPages;
-  const [page, setPage] = useState(1);
-  const boundedPage = Math.min(page, totalPages);
-  const fallbackPageBlocks = fallbackPages[Math.min(boundedPage - 1, fallbackPages.length - 1)] ?? [];
-  const translatedPage = translatedPages[boundedPage - 1];
+  const totalPages = originalTotalPages;
+  const translatedPage = translatedPages.find((translatedSourcePage) => translatedSourcePage.pageNumber === boundedPage);
   const translatedPageBlocks = plainTextToDocxBlocks(translatedPage?.body ?? "");
   const renderedZoom = fitScale * (mode === "expanded" ? clampAttachmentZoom(zoom) : 1);
   const renderedStyle = {
@@ -1116,10 +1147,6 @@ function DocxAttachmentPreview({
   useEffect(() => {
     setPage(1);
   }, [attachment.id]);
-
-  useEffect(() => {
-    setPage(1);
-  }, [translation.showTranslation]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1211,7 +1238,7 @@ function DocxAttachmentPreview({
   return (
     <div className={`attachment-document attachment-document-${mode} attachment-docx`}>
       <div className="attachment-pagebar">
-        <span>{translation.showTranslation && translatedPage ? `Page ${translatedPage.pageNumber}` : `Page ${boundedPage}`}/{totalPages}</span>
+        <span>Page {boundedPage}/{totalPages}</span>
         <div className="attachment-page-actions">
           <DocumentTranslationControl state={translation} />
           {totalPages > 1 ? (

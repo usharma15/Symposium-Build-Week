@@ -72,23 +72,23 @@ assert.equal(usdToMicros(40), 40_000_000);
 const permanentUserPolicy = { baseLimit: 10 };
 assert.equal(assistantDailyLimitFor("@udayan", "2026-07-20", permanentUserPolicy), 10);
 assert.equal(assistantDailyLimitFor("@someone_else", "2030-01-01", permanentUserPolicy), 10);
-assert.match(assistantProviderFailure(new DOMException("timed out", "TimeoutError")).body, /AI safety timeout/);
+assert.match(assistantProviderFailure(new DOMException("timed out", "TimeoutError")).body, /request timeout/);
 
 const documentTranslationInput = {
   attachmentId: "attachment-docx-1",
   sourceTitle: "Persuasive Framework.docx",
   sourceKind: "docx" as const,
-  sourcePages: [
-    { pageNumber: 1, body: "Persuasive Framework\nFund independent youth labs." },
-    { pageNumber: 2, body: "Evidence and objections." }
-  ],
+  sourcePages: [{ pageNumber: 7, body: "Persuasive Framework\nFund independent youth labs." }],
   sourceComplete: true,
   languageInstruction: "Please put this into Spanish"
 };
 assert.equal(documentTranslationInputSchema.safeParse(documentTranslationInput).success, true);
 assert.equal(documentTranslationInputSchema.safeParse({
   ...documentTranslationInput,
-  sourcePages: [...documentTranslationInput.sourcePages].reverse()
+  sourcePages: [
+    ...documentTranslationInput.sourcePages,
+    { pageNumber: 8, body: "Evidence and objections." }
+  ]
 }).success, false);
 assert.equal(documentTranslationInputSchema.safeParse({
   ...documentTranslationInput,
@@ -98,17 +98,15 @@ assert.equal(supportedLanguageFromInstruction("en français, s’il vous plaît"
 assert.equal(supportedLanguageFromInstruction("auf Deutsch"), "german");
 assert.equal(supportedLanguageFromInstruction("Italian"), null);
 assert.equal(supportedLanguageFromInstruction("French or Spanish"), null);
-assert.match(documentTranslationInstructions, /every supplied source page/i);
+assert.match(documentTranslationInstructions, /one supplied source page/i);
 assert.match(documentTranslationRenderedInput(documentTranslationInput), /LANGUAGE INSTRUCTION/);
-assert.ok(documentTranslationMaxOutputTokens(documentTranslationInput) >= 1200);
+assert.ok(documentTranslationMaxOutputTokens(documentTranslationInput) >= 800);
+assert.ok(documentTranslationMaxOutputTokens(documentTranslationInput) <= 6000);
 assert.equal(documentTranslationModelOutputSchema.safeParse({
   targetLanguage: "spanish",
   targetLanguageLabel: "Spanish",
   translatedTitle: "Marco persuasivo",
-  pages: [
-    { pageNumber: 1, body: "Marco persuasivo\nFinanciar laboratorios juveniles independientes." },
-    { pageNumber: 2, body: "Pruebas y objeciones." }
-  ],
+  pages: [{ pageNumber: 7, body: "Marco persuasivo\nFinanciar laboratorios juveniles independientes." }],
   message: "Spanish translation ready."
 }).success, true);
 assert.equal(documentTranslationModelOutputSchema.safeParse({
@@ -131,7 +129,7 @@ assert.equal(documentTranslationResultSchema.safeParse({
   targetLanguage: "spanish",
   targetLanguageLabel: "Spanish",
   translatedTitle: "Marco persuasivo",
-  pages: [{ pageNumber: 1, body: "Marco persuasivo" }],
+  pages: [{ pageNumber: 7, body: "Marco persuasivo" }],
   message: "Spanish translation ready.",
   model: "gpt-5.6-terra",
   createdAt: new Date().toISOString(),
@@ -272,6 +270,8 @@ assert.match(provider, /type: "json_schema"/);
 assert.match(provider, /strict: true/);
 assert.match(provider, /symposium-translation-v1/);
 assert.match(provider, /prompt_cache_key: translating \? "symposium-translation-v1" : "symposium-contextual-tablet-v1"/);
+assert.match(provider, /reasoning: \{ effort: "none" \}/);
+assert.match(provider, /symposium-document-page-translation-v2/);
 assert.match(provider, /insufficient_quota/);
 assert.match(repository, /providerErrorCode/);
 assert.match(usageService, /pg_advisory_xact_lock\(hashtextextended\('symposium:ai-budget'/);
@@ -318,9 +318,10 @@ assert.match(shell, /postAttachmentViewContext/);
 assert.match(shell, /attachmentPreviewViewContext/);
 assert.doesNotMatch(shell, /const \[attachmentViewContext,/);
 assert.match(attachmentViews, /new pdfjs\.TextLayer/);
-assert.match(attachmentViews, /readPdfPageText\(document, pageNumber\)/);
+assert.match(attachmentViews, /readPdfPageText\(document, boundedPage\)/);
 assert.match(attachmentViews, /DocumentTranslationControl state=\{translation\}/);
 assert.match(documentTranslationControl, /placeholder="e\.g\. Spanish"/);
+assert.match(documentTranslationControl, /Only the page you are viewing is translated/);
 assert.match(documentTranslationControl, /Original/);
 assert.match(documentTranslationControl, /Translation/);
 assert.match(documentTranslationControl, /Translate · uses 1/);

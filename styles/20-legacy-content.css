@@ -512,6 +512,8 @@
   min-width: 0;
   min-height: 0;
   overflow: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   padding: 12px;
   background: color-mix(in srgb, #17201f 92%, var(--paper));
   cursor: default;
@@ -528,6 +530,11 @@
 .attachment-pdf-page canvas {
   display: block;
   background: #fff;
+}
+
+.attachment-frame .attachment-pdf-page canvas,
+.attachment-frame .attachment-pdf-translation-page {
+  cursor: zoom-in;
 }
 
 .attachment-pdf-translation-page {
@@ -638,6 +645,14 @@
   font-weight: 760;
 }
 
+.attachment-pagebar > span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .attachment-page-actions,
 .document-translation-control,
 .document-translation-view-toggle {
@@ -648,6 +663,12 @@
 
 .document-translation-control {
   position: relative;
+  flex: 0 0 auto;
+}
+
+.attachment-page-actions {
+  flex: 0 0 auto;
+  min-width: 0;
 }
 
 .attachment-pagebar .document-translate-button,
@@ -717,7 +738,9 @@
 
 .document-translation-popover label,
 .document-translation-popover small {
+  display: block;
   color: var(--muted);
+  line-height: 1.35;
 }
 
 .document-translation-popover input {
@@ -1016,6 +1039,8 @@
   height: 100%;
   min-height: 0;
   overflow: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   padding: 14px;
   font-size: 0.95rem;
 }
