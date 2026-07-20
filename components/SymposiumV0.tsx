@@ -113,6 +113,7 @@ import {
   buildPostAttachmentMetadata,
   type AttachmentPreviewHandler
 } from "@/features/attachments/AttachmentViews";
+import { buildTabletAttachmentContext } from "@/features/assistant/tabletAttachmentContext";
 import {
   confirmAttachmentUpload,
   prepareAttachmentUpload,
@@ -414,11 +415,11 @@ const tabletDiscussionText = (
     if (lines.length >= 40) break;
     if (!isDeletedComment(comment)) {
       const selected = comment.id && comment.id === selectedCommentId ? " [SELECTED]" : "";
-      const attachments = (comment.attachments ?? []).map((attachment) => attachment.fileName).filter(Boolean);
+      const attachments = (comment.attachments ?? []).map(buildTabletAttachmentContext);
       lines.push([
         `${"  ".repeat(Math.min(depth, 4))}${comment.author} · ${comment.stance}${selected}`,
         comment.body,
-        attachments.length ? `Attachments: ${attachments.join(", ")}` : ""
+        attachments.length ? `Attachments:\n${attachments.join("\n\n")}` : ""
       ].filter(Boolean).join("\n"));
     }
     tabletDiscussionText(comment.replies ?? [], selectedCommentId, depth + 1, lines);
@@ -4001,9 +4002,7 @@ function SymposiumExperience({
         summary: `Attachment open inside “${attachmentPreviewBaseItem.title}”.`,
         content: trimContent([
           attachmentPreviewBaseItem.body,
-          `Attachment type: ${attachmentPreviewAttachment.contentType}`,
-          `Attachment kind: ${attachmentPreviewAttachment.kind}`,
-          `Attachment metadata: ${JSON.stringify(attachmentPreviewAttachment.metadata ?? {})}`
+          buildTabletAttachmentContext(attachmentPreviewAttachment)
         ].join("\n\n")),
         entityType: "attachment",
         entityId: attachmentPreviewAttachment.id,
@@ -4115,7 +4114,7 @@ function SymposiumExperience({
           selectedItem.tests.length ? `Tests:\n- ${selectedItem.tests.join("\n- ")}` : "",
           discussion.length ? `Visible discussion:\n\n${discussion.join("\n\n")}` : "No discussion is currently visible.",
           selectedItem.attachments?.length
-            ? `Post attachments:\n- ${selectedItem.attachments.map((attachment) => `${attachment.fileName} (${attachment.contentType})`).join("\n- ")}`
+            ? `Post attachments:\n\n${selectedItem.attachments.map(buildTabletAttachmentContext).join("\n\n")}`
             : ""
         ].filter(Boolean).join("\n\n")),
         entityType: "post",

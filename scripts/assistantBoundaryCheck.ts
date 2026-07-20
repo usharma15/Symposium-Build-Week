@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { actualCostMicros, conservativeInputTokenCeiling, reserveCostMicros, usdToMicros } from "@/apps/api/src/services/aiBudget";
 import { assistantInstructions, assistantPrompt, assistantProviderFailure } from "@/apps/api/src/services/openaiResponses";
 import { assistantMessageInputSchema, assistantResponseSchema } from "@/packages/contracts/src";
+import { buildTabletAttachmentContext, tabletAttachmentTextLimit } from "@/features/assistant/tabletAttachmentContext";
 
 const validInput = {
   message: "What is the strongest objection?",
@@ -32,6 +33,30 @@ assert.equal(actualCostMicros("gpt-5.6-terra", 1000, 100), 4_625);
 assert.equal(usdToMicros(40), 40_000_000);
 assert.match(assistantProviderFailure(new DOMException("timed out", "TimeoutError")).body, /45-second safety timeout/);
 
+const docxContext = buildTabletAttachmentContext({
+  id: "attachment-1",
+  fileName: "Persuasive Framework.docx",
+  contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  byteSize: 19_207,
+  status: "uploaded",
+  kind: "document",
+  metadata: { pageCount: 1, previewText: "Persuasive Framework Template\nFund independent youth labs." }
+});
+assert.match(docxContext, /Extracted attachment text:\nPersuasive Framework Template/);
+assert.match(docxContext, /Pages or preview segments: 1/);
+assert.ok(docxContext.length < tabletAttachmentTextLimit + 500);
+
+const pdfContext = buildTabletAttachmentContext({
+  id: "attachment-2",
+  fileName: "paper.pdf",
+  contentType: "application/pdf",
+  byteSize: 61_907,
+  status: "uploaded",
+  kind: "pdf",
+  metadata: { pageCount: 13 }
+});
+assert.match(pdfContext, /contents are not extracted/i);
+
 assert.equal(assistantResponseSchema.safeParse({
   conversationId: "conversation",
   providerConfigured: true,
@@ -47,6 +72,7 @@ const migration = readFileSync("apps/api/src/db/migrate.ts", "utf8");
 const route = readFileSync("apps/api/src/routes/workspaceRoutes.ts", "utf8");
 const tablet = readFileSync("features/workspace/WorkspacePanels.tsx", "utf8");
 const shell = readFileSync("components/SymposiumV0.tsx", "utf8");
+const attachmentContext = readFileSync("features/assistant/tabletAttachmentContext.ts", "utf8");
 const env = readFileSync("apps/api/src/config/env.ts", "utf8");
 
 assert.match(provider, /store: false/);
@@ -76,6 +102,8 @@ assert.match(shell, /surface: "attachment"/);
 assert.match(shell, /Visible discussion/);
 assert.match(shell, /Visible post results/);
 assert.match(shell, /Visible feed items/);
+assert.match(attachmentContext, /Extracted structured attachment preview/);
+assert.match(shell, /selectedItem\.attachments\.map\(buildTabletAttachmentContext\)/);
 assert.match(env, /SYMPOSIUM_AI_MONTHLY_BUDGET_USD:[\s\S]*max\(40\)\.default\(40\)/);
 
 console.log("AI Tablet cost and context boundary checks passed.");
