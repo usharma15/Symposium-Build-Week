@@ -62,7 +62,7 @@ type AppData = {
   actionLedger: Record<string, CanonicalActionActivityContract>;
 };
 
-const historicalWorldFixtureRevision = "historical-world-v1";
+const historicalWorldFixtureRevision = "historical-world-v2-casual-activity";
 const localHistoricalWorldSnapshotPath = process.env.VERCEL
   ? path.join("/tmp", `${historicalWorldFixtureRevision}-symposium.snapshot.json`)
   : path.join(process.cwd(), ".data", "snapshots", `${historicalWorldFixtureRevision}-symposium.json`);

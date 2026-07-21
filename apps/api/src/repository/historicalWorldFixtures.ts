@@ -5,7 +5,7 @@ import { historicalCommunities } from "@/lib/historicalWorld/communities";
 import { historicalInquiryItems, historicalWorldCounts } from "@/lib/historicalWorld/content";
 import type { HistoricalAsset } from "@/lib/historicalWorld/assets";
 
-export const historicalWorldFixtureRevision = "historical-world-v1";
+export const historicalWorldFixtureRevision = "historical-world-v2-casual-activity";
 
 type FlatComment = InquiryCommentContract & { postId: string; parentId: string | null };
 
@@ -99,6 +99,49 @@ const stageLegacyRemoval = async (client: PoolClient) => {
         FROM comments comment
         INNER JOIN historical_protected_handles comment_author ON comment_author.handle = comment.author_handle
         WHERE comment.post_id = post.id
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM post_actions action
+        INNER JOIN historical_protected_handles action_actor ON action_actor.handle = action.actor_handle
+        WHERE action.post_id = post.id
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM content_views view_row
+        INNER JOIN historical_protected_handles view_actor ON view_actor.handle = view_row.actor_handle
+        WHERE view_row.target_type = 'post' AND view_row.target_id = post.id
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM comments comment
+        INNER JOIN comment_actions action ON action.comment_id = comment.id
+        INNER JOIN historical_protected_handles action_actor ON action_actor.handle = action.actor_handle
+        WHERE comment.post_id = post.id
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM comments comment
+        INNER JOIN content_views view_row ON view_row.target_type = 'comment' AND view_row.target_id = comment.id
+        INNER JOIN historical_protected_handles view_actor ON view_actor.handle = view_row.actor_handle
+        WHERE comment.post_id = post.id
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM comments comment
+        CROSS JOIN historical_protected_handles protected_action
+        WHERE comment.post_id = post.id
+          AND (
+            comment.saved_by ? protected_action.handle
+            OR comment.signaled_by ? protected_action.handle
+            OR comment.forked_by ? protected_action.handle
+          )
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM historical_protected_handles protected_action
+        WHERE post.saved_by ? protected_action.handle
+           OR post.signaled_by ? protected_action.handle
+           OR post.forked_by ? protected_action.handle
       );
 
     CREATE TEMP TABLE historical_redacted_posts (id text PRIMARY KEY) ON COMMIT DROP;
@@ -107,27 +150,61 @@ const stageLegacyRemoval = async (client: PoolClient) => {
     FROM posts post
     LEFT JOIN historical_protected_handles protected ON protected.handle = post.author_handle
     WHERE protected.handle IS NULL
-      AND EXISTS (
-        SELECT 1
-        FROM comments comment
-        INNER JOIN historical_protected_handles comment_author ON comment_author.handle = comment.author_handle
-        WHERE comment.post_id = post.id
-      );
+      AND post.id NOT IN (SELECT id FROM historical_doomed_posts);
+
+    CREATE TEMP TABLE historical_preserved_comment_lineage (id text PRIMARY KEY) ON COMMIT DROP;
+    INSERT INTO historical_preserved_comment_lineage (id)
+    WITH RECURSIVE lineage AS (
+      SELECT comment.id, comment.parent_id
+      FROM comments comment
+      WHERE comment.post_id NOT IN (SELECT id FROM historical_doomed_posts)
+        AND (
+          comment.author_handle IN (SELECT handle FROM historical_protected_handles)
+          OR EXISTS (
+            SELECT 1
+            FROM comment_actions action
+            INNER JOIN historical_protected_handles action_actor ON action_actor.handle = action.actor_handle
+            WHERE action.comment_id = comment.id
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM content_views view_row
+            INNER JOIN historical_protected_handles view_actor ON view_actor.handle = view_row.actor_handle
+            WHERE view_row.target_type = 'comment' AND view_row.target_id = comment.id
+          )
+          OR EXISTS (
+            SELECT 1 FROM historical_protected_handles protected_action
+            WHERE comment.saved_by ? protected_action.handle
+               OR comment.signaled_by ? protected_action.handle
+               OR comment.forked_by ? protected_action.handle
+          )
+        )
+      UNION
+      SELECT parent.id, parent.parent_id
+      FROM comments parent
+      INNER JOIN lineage child ON child.parent_id = parent.id
+    )
+    SELECT DISTINCT id FROM lineage;
 
     CREATE TEMP TABLE historical_doomed_comments (id text PRIMARY KEY) ON COMMIT DROP;
     INSERT INTO historical_doomed_comments (id)
-    WITH RECURSIVE doomed AS (
-      SELECT comment.id
-      FROM comments comment
-      INNER JOIN historical_doomed_posts post ON post.id = comment.post_id
-      UNION
-      SELECT comment.id
-      FROM comments comment
-      LEFT JOIN historical_protected_handles protected ON protected.handle = comment.author_handle
-      LEFT JOIN historical_doomed_posts post ON post.id = comment.post_id
-      WHERE post.id IS NULL AND protected.handle IS NULL
-    )
-    SELECT DISTINCT id FROM doomed;
+    SELECT comment.id
+    FROM comments comment
+    LEFT JOIN historical_protected_handles protected ON protected.handle = comment.author_handle
+    WHERE protected.handle IS NULL
+      AND (
+        comment.post_id IN (SELECT id FROM historical_doomed_posts)
+        OR comment.id NOT IN (SELECT id FROM historical_preserved_comment_lineage)
+      );
+
+    CREATE TEMP TABLE historical_redacted_comments (id text PRIMARY KEY) ON COMMIT DROP;
+    INSERT INTO historical_redacted_comments (id)
+    SELECT comment.id
+    FROM comments comment
+    LEFT JOIN historical_protected_handles protected ON protected.handle = comment.author_handle
+    WHERE protected.handle IS NULL
+      AND comment.post_id NOT IN (SELECT id FROM historical_doomed_posts)
+      AND comment.id NOT IN (SELECT id FROM historical_doomed_comments);
   `);
 
   await client.query(`
@@ -139,7 +216,7 @@ const stageLegacyRemoval = async (client: PoolClient) => {
       WHERE (
           attachment.owner_type = 'post' AND attachment.owner_id IN (SELECT id FROM historical_doomed_posts UNION SELECT id FROM historical_redacted_posts)
         ) OR (
-          attachment.owner_type = 'comment' AND attachment.owner_id IN (SELECT id FROM historical_doomed_comments)
+          attachment.owner_type = 'comment' AND attachment.owner_id IN (SELECT id FROM historical_doomed_comments UNION SELECT id FROM historical_redacted_comments)
         ) OR (
           attachment.owner_type = 'profile' AND attachment.owner_id NOT IN (SELECT handle FROM historical_protected_handles)
         )
@@ -150,7 +227,7 @@ const stageLegacyRemoval = async (client: PoolClient) => {
         AND ((
           attachment.owner_type = 'post' AND attachment.owner_id IN (SELECT id FROM historical_doomed_posts UNION SELECT id FROM historical_redacted_posts)
         ) OR (
-          attachment.owner_type = 'comment' AND attachment.owner_id IN (SELECT id FROM historical_doomed_comments)
+          attachment.owner_type = 'comment' AND attachment.owner_id IN (SELECT id FROM historical_doomed_comments UNION SELECT id FROM historical_redacted_comments)
         ) OR (
           attachment.owner_type = 'profile' AND attachment.owner_id NOT IN (SELECT handle FROM historical_protected_handles)
         ))
@@ -160,7 +237,7 @@ const stageLegacyRemoval = async (client: PoolClient) => {
 
     DELETE FROM attachments attachment
     WHERE (attachment.owner_type = 'post' AND attachment.owner_id IN (SELECT id FROM historical_doomed_posts UNION SELECT id FROM historical_redacted_posts))
-       OR (attachment.owner_type = 'comment' AND attachment.owner_id IN (SELECT id FROM historical_doomed_comments))
+       OR (attachment.owner_type = 'comment' AND attachment.owner_id IN (SELECT id FROM historical_doomed_comments UNION SELECT id FROM historical_redacted_comments))
        OR (attachment.owner_type = 'profile' AND attachment.owner_id NOT IN (SELECT handle FROM historical_protected_handles));
 
     UPDATE comments
@@ -168,6 +245,17 @@ const stageLegacyRemoval = async (client: PoolClient) => {
     WHERE author_handle IN (SELECT handle FROM historical_protected_handles)
       AND parent_id IN (SELECT id FROM historical_doomed_comments);
     DELETE FROM comments WHERE id IN (SELECT id FROM historical_doomed_comments);
+    UPDATE comments SET
+      author_handle = NULL,
+      author_name = 'Symposium archive',
+      stance = 'Retired fixture',
+      body = 'The original simulated comment was retired. Real-user interaction with it is preserved.',
+      content_document = NULL,
+      quote = NULL,
+      edited_at = now(),
+      deleted_at = NULL,
+      updated_at = now()
+    WHERE id IN (SELECT id FROM historical_redacted_comments);
     DELETE FROM posts WHERE id IN (SELECT id FROM historical_doomed_posts);
     UPDATE posts SET
       kind = 'thought',
@@ -224,6 +312,19 @@ const stageLegacyRemoval = async (client: PoolClient) => {
       saved_by = COALESCE((SELECT jsonb_agg(value) FROM jsonb_array_elements_text(comment.saved_by) value WHERE value IN (SELECT handle FROM historical_protected_handles)), '[]'::jsonb),
       signaled_by = COALESCE((SELECT jsonb_agg(value) FROM jsonb_array_elements_text(comment.signaled_by) value WHERE value IN (SELECT handle FROM historical_protected_handles)), '[]'::jsonb),
       forked_by = COALESCE((SELECT jsonb_agg(value) FROM jsonb_array_elements_text(comment.forked_by) value WHERE value IN (SELECT handle FROM historical_protected_handles)), '[]'::jsonb);
+    UPDATE posts post SET metrics = jsonb_build_object(
+      'signal', jsonb_array_length(post.signaled_by)::text,
+      'critiques', (SELECT count(*)::text FROM comments comment WHERE comment.post_id = post.id),
+      'forks', jsonb_array_length(post.forked_by)::text,
+      'saves', jsonb_array_length(post.saved_by)::text,
+      'reads', (SELECT count(*)::text FROM content_views view_row WHERE view_row.target_type = 'post' AND view_row.target_id = post.id)
+    ) WHERE post.id IN (SELECT id FROM historical_redacted_posts);
+    UPDATE comments comment SET metrics = jsonb_build_object(
+      'signal', jsonb_array_length(comment.signaled_by)::text,
+      'forks', jsonb_array_length(comment.forked_by)::text,
+      'saves', jsonb_array_length(comment.saved_by)::text,
+      'reads', (SELECT count(*)::text FROM content_views view_row WHERE view_row.target_type = 'comment' AND view_row.target_id = comment.id)
+    ) WHERE comment.id IN (SELECT id FROM historical_redacted_comments);
     UPDATE communities community SET member_handles = COALESCE((
       SELECT jsonb_agg(value) FROM jsonb_array_elements_text(community.member_handles) value
       WHERE value IN (SELECT handle FROM historical_protected_handles)
@@ -446,7 +547,40 @@ const insertPosts = async (client: PoolClient) => {
        evidence jsonb, tests jsonb, forks jsonb, saved_by jsonb, signaled_by jsonb,
        forked_by jsonb, quote jsonb, patronage jsonb, opportunity jsonb, search_text text, visibility text
      )
-     ON CONFLICT (id) DO NOTHING`,
+     ON CONFLICT (id) DO UPDATE SET
+       kind = EXCLUDED.kind,
+       post_type = EXCLUDED.post_type,
+       room = EXCLUDED.room,
+       community_id = EXCLUDED.community_id,
+       title = EXCLUDED.title,
+       author_handle = EXCLUDED.author_handle,
+       author_name = EXCLUDED.author_name,
+       affiliation = EXCLUDED.affiliation,
+       date_label = EXCLUDED.date_label,
+       created_at = EXCLUDED.created_at,
+       status = EXCLUDED.status,
+       metrics = EXCLUDED.metrics,
+       gathering_reason = EXCLUDED.gathering_reason,
+       excerpt = EXCLUDED.excerpt,
+       body = EXCLUDED.body,
+       content_document = EXCLUDED.content_document,
+       tags = EXCLUDED.tags,
+       signals = EXCLUDED.signals,
+       claims = EXCLUDED.claims,
+       objections = EXCLUDED.objections,
+       evidence = EXCLUDED.evidence,
+       tests = EXCLUDED.tests,
+       forks = EXCLUDED.forks,
+       saved_by = (SELECT COALESCE(jsonb_agg(DISTINCT value), '[]'::jsonb) FROM jsonb_array_elements_text(posts.saved_by || EXCLUDED.saved_by) value),
+       signaled_by = (SELECT COALESCE(jsonb_agg(DISTINCT value), '[]'::jsonb) FROM jsonb_array_elements_text(posts.signaled_by || EXCLUDED.signaled_by) value),
+       forked_by = (SELECT COALESCE(jsonb_agg(DISTINCT value), '[]'::jsonb) FROM jsonb_array_elements_text(posts.forked_by || EXCLUDED.forked_by) value),
+       quote = EXCLUDED.quote,
+       patronage = EXCLUDED.patronage,
+       opportunity = EXCLUDED.opportunity,
+       search_text = EXCLUDED.search_text,
+       visibility = EXCLUDED.visibility,
+       deleted_at = NULL,
+       updated_at = now()`,
     [JSON.stringify(rows)]
   );
 
@@ -463,7 +597,23 @@ const insertPosts = async (client: PoolClient) => {
        body text, content_document jsonb, metrics jsonb, saved_by jsonb, signaled_by jsonb,
        forked_by jsonb, quote jsonb, created_at text
      )
-     ON CONFLICT (id) DO NOTHING`,
+     ON CONFLICT (id) DO UPDATE SET
+       post_id = EXCLUDED.post_id,
+       parent_id = EXCLUDED.parent_id,
+       author_handle = EXCLUDED.author_handle,
+       author_name = EXCLUDED.author_name,
+       stance = EXCLUDED.stance,
+       body = EXCLUDED.body,
+       content_document = EXCLUDED.content_document,
+       metrics = EXCLUDED.metrics,
+       saved_by = (SELECT COALESCE(jsonb_agg(DISTINCT value), '[]'::jsonb) FROM jsonb_array_elements_text(comments.saved_by || EXCLUDED.saved_by) value),
+       signaled_by = (SELECT COALESCE(jsonb_agg(DISTINCT value), '[]'::jsonb) FROM jsonb_array_elements_text(comments.signaled_by || EXCLUDED.signaled_by) value),
+       forked_by = (SELECT COALESCE(jsonb_agg(DISTINCT value), '[]'::jsonb) FROM jsonb_array_elements_text(comments.forked_by || EXCLUDED.forked_by) value),
+       quote = EXCLUDED.quote,
+       created_at = EXCLUDED.created_at,
+       edited_at = NULL,
+       deleted_at = NULL,
+       updated_at = now()`,
     [JSON.stringify(allComments.map((entry) => ({
       id: entry.id,
       post_id: entry.postId,
@@ -504,7 +654,10 @@ const insertAttachmentsAndActions = async (client: PoolClient) => {
        file_name text, content_type text, byte_size integer, metadata jsonb, created_at text
      )
      ON CONFLICT (id) DO UPDATE SET owner_type = EXCLUDED.owner_type, owner_id = EXCLUDED.owner_id,
-       uploader_handle = EXCLUDED.uploader_handle, metadata = EXCLUDED.metadata, status = 'previewed', updated_at = now()`,
+       uploader_handle = EXCLUDED.uploader_handle, object_key = EXCLUDED.object_key,
+       upload_object_key = EXCLUDED.upload_object_key, file_name = EXCLUDED.file_name,
+       content_type = EXCLUDED.content_type, byte_size = EXCLUDED.byte_size,
+       metadata = EXCLUDED.metadata, status = 'previewed', updated_at = now()`,
     [JSON.stringify(attachmentRows.map(({ asset, ownerType, ownerId, uploaderHandle }) => ({
       id: asset.id,
       owner_type: ownerType,
@@ -523,7 +676,12 @@ const insertAttachmentsAndActions = async (client: PoolClient) => {
     ["save", entry.savedBy ?? []],
     ["signal", entry.signaledBy ?? []],
     ["fork", entry.forkedBy ?? []]
-  ] as const).flatMap(([action, handles]) => handles.map((handle) => ({ post_id: entry.id, actor_handle: handle, action, created_at: entry.createdAt }))));
+  ] as const).flatMap(([action, handles], actionIndex) => handles.map((handle, actorIndex) => ({
+    post_id: entry.id,
+    actor_handle: handle,
+    action,
+    created_at: new Date(Date.parse(entry.createdAt!) + (actionIndex * 31 + actorIndex + 1) * 73_000).toISOString()
+  }))));
   if (actionRows.length) await client.query(
     `INSERT INTO post_actions (post_id, actor_handle, action, active, count, revision, created_at, updated_at)
      SELECT row.post_id, row.actor_handle, row.action, true, 1, 1,
@@ -531,6 +689,30 @@ const insertAttachmentsAndActions = async (client: PoolClient) => {
      FROM jsonb_to_recordset($1::jsonb) AS row(post_id text, actor_handle text, action text, created_at text)
      ON CONFLICT (post_id, actor_handle, action) DO NOTHING`,
     [JSON.stringify(actionRows)]
+  );
+
+  const commentActionRows = allComments.flatMap((entry) => ([
+    ["save", entry.savedBy ?? []],
+    ["signal", entry.signaledBy ?? []],
+    ["fork", entry.forkedBy ?? []]
+  ] as const).flatMap(([action, handles], actionIndex) => handles.map((handle, actorIndex) => ({
+    comment_id: entry.id,
+    post_id: entry.postId,
+    actor_handle: handle,
+    action,
+    created_at: new Date(Date.parse(entry.createdAt!) + (actionIndex * 17 + actorIndex + 1) * 61_000).toISOString()
+  }))));
+  if (commentActionRows.length) await client.query(
+    `INSERT INTO comment_actions (
+       comment_id, post_id, actor_handle, action, active, count, revision, created_at, updated_at
+     )
+     SELECT row.comment_id, row.post_id, row.actor_handle, row.action, true, 1, 1,
+       row.created_at::timestamptz, row.created_at::timestamptz
+     FROM jsonb_to_recordset($1::jsonb) AS row(
+       comment_id text, post_id text, actor_handle text, action text, created_at text
+     )
+     ON CONFLICT (comment_id, actor_handle, action) DO NOTHING`,
+    [JSON.stringify(commentActionRows)]
   );
 
   const followRows = historicalCommunities.flatMap((community) =>

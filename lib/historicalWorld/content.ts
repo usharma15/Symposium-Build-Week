@@ -5,8 +5,9 @@ import type {
   VersionedDocumentContract
 } from "@/packages/contracts/src";
 import { documentPlainTextProjection } from "@/packages/contracts/src";
-import { historicalProfilesByHandle } from "./characters";
+import { historicalProfiles, historicalProfilesByHandle } from "./characters";
 import { historicalImages as images, historicalPapers as papers } from "./assets";
+import { casualActivitySeeds, type CasualCommentSeed } from "./casualActivity";
 import {
   attachmentBlock,
   citation,
@@ -307,7 +308,101 @@ const socialItems: InquiryItemContract[] = [
   item({ id: "opportunity-shakespeare-roast-night", room: "opportunities", authorHandle: "@shakespeare", createdAt: "2026-07-08T20:00:00.000Z", status: "Open event", gatheringReason: "Opportunity · live Amphitheatre event", title: "Open call: roast battle in which every joke must contain an argument", tags: ["opportunity", "event", "comedy", "debate"], opportunity: { kind: "event", status: "open", location: "Amphitheatre · live voice room", compensation: "Glory, edited transcript, and one decent supper", deadline: "2026-08-01", applicationCount: 21 }, document: document("roast-call", [heading("Rules of the ring"), paragraph("No immutable traits, no private grief, no borrowed slurs. The joke must expose a contradiction, incentive, affectation, or failed prediction visible in the public record."), paragraph(strong("Three minutes."), " The target receives ninety seconds of reply. A fact-checker may gong any premise that collapses on contact."), quotation("Cruelty is easy; comic diagnosis requires research.")]), comments: thread(comment("@diogenes", "Application", "I require no supper. Increase my time."), comment("@alcibiades", "Conflict disclosure", "I volunteer as target, judge, and audience favorite."), comment("@socrates", "Question", "Will the fact-checker also examine whether laughter has been mistaken for agreement?")), engagement: [97, 3, 20, 28, 1550] })
 ];
 
-export const historicalInquiryItems: InquiryItemContract[] = [...paperItems, ...socialItems];
+const casualItems = casualActivitySeeds.map((seed) => {
+  let sequence = 0;
+  const buildComment = (value: CasualCommentSeed, path: string): InquiryCommentContract => {
+    sequence += 1;
+    const person = historicalProfilesByHandle[value.authorHandle];
+    const createdAt = new Date(Date.parse(seed.createdAt) + sequence * 17 * 60_000).toISOString();
+    return {
+      id: `${seed.id}-comment-${path}`,
+      author: person.name,
+      authorHandle: value.authorHandle,
+      stance: value.stance,
+      body: value.body,
+      createdAt,
+      metrics: zeroCommentMetrics,
+      replies: (value.replies ?? []).map((reply, index) => buildComment(reply, `${path}-${index + 1}`))
+    };
+  };
+  return item({
+    ...seed,
+    comments: seed.comments.map((value, index) => buildComment(value, String(index + 1)))
+  });
+});
+
+const historicalHandles = historicalProfiles.map((person) => person.handle);
+
+const stringHash = (value: string) => {
+  let hash = 2166136261;
+  for (const character of value) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+};
+
+const rotatingActors = (subjectId: string, action: string, count: number, excludedHandle?: string) => {
+  const roster = historicalHandles.filter((handle) => handle !== excludedHandle);
+  const start = stringHash(`${subjectId}:${action}`) % roster.length;
+  const stride = 7;
+  const actors: string[] = [];
+  for (let index = 0; actors.length < Math.min(count, roster.length) && index < roster.length * 2; index += 1) {
+    const handle = roster[(start + index * stride) % roster.length];
+    if (!actors.includes(handle)) actors.push(handle);
+  }
+  return actors;
+};
+
+const enrichCommentActivity = (value: InquiryCommentContract): InquiryCommentContract => {
+  const hash = stringHash(value.id ?? `${value.authorHandle}:${value.body}`);
+  const signaledBy = rotatingActors(value.id ?? value.body, "comment-signal", 7 + (hash % 7), value.authorHandle);
+  const savedBy = rotatingActors(value.id ?? value.body, "comment-save", 3 + (hash % 5), value.authorHandle);
+  const forkedBy = rotatingActors(value.id ?? value.body, "comment-fork", 2 + (hash % 4), value.authorHandle);
+  return {
+    ...value,
+    metrics: {
+      signal: String(signaledBy.length),
+      forks: String(forkedBy.length),
+      saves: String(savedBy.length),
+      reads: String(45 + (hash % 640))
+    },
+    signaledBy,
+    savedBy,
+    forkedBy,
+    replies: (value.replies ?? []).map(enrichCommentActivity)
+  };
+};
+
+const enrichedHistoricalItems = [...paperItems, ...socialItems, ...casualItems].map((entry) => {
+  const hash = stringHash(entry.id);
+  const signaledBy = rotatingActors(entry.id, "post-signal", 20 + (hash % 9), entry.authorHandle);
+  const savedBy = rotatingActors(entry.id, "post-save", 12 + (hash % 8), entry.authorHandle);
+  const forkedBy = rotatingActors(entry.id, "post-fork", 6 + (hash % 8), entry.authorHandle);
+  const comments = entry.comments.map(enrichCommentActivity);
+  const countComments = (values: InquiryCommentContract[]): number => values.reduce(
+    (total, value) => total + 1 + countComments(value.replies ?? []),
+    0
+  );
+  const commentCount = countComments(comments);
+  return {
+    ...entry,
+    comments,
+    commentCount,
+    metrics: {
+      signal: String(Math.max(Number(entry.metrics.signal), signaledBy.length * 3 + (hash % 19))),
+      critiques: String(commentCount),
+      forks: String(Math.max(Number(entry.metrics.forks), forkedBy.length * 2 + (hash % 7))),
+      saves: String(Math.max(Number(entry.metrics.saves), savedBy.length * 2 + (hash % 11))),
+      reads: String(Math.max(Number(entry.metrics.reads), 540 + (hash % 3200)))
+    },
+    signaledBy,
+    savedBy,
+    forkedBy
+  };
+});
+
+export const historicalInquiryItems: InquiryItemContract[] = enrichedHistoricalItems;
 
 export const historicalCommunityActivityItems = historicalInquiryItems.filter((entry) => Boolean(entry.communityId));
 

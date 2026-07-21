@@ -31,12 +31,12 @@ for (const entry of historicalInquiryItems) inquiryItemSchema.parse(entry);
 assert.deepEqual(historicalWorldCounts, {
   profiles: 33,
   papers: 15,
-  thoughts: 19,
+  thoughts: 75,
   patronage: 3,
   opportunities: 3,
-  comments: 116
+  comments: 287
 });
-assert.equal(historicalInquiryItems.length, 40);
+assert.equal(historicalInquiryItems.length, 96);
 assert.match(
   foundationSource,
   /era:\s*person\.era\s*\?\?\s*undefined[\s\S]+lifeDates:\s*person\.lifeDates\s*\?\?\s*undefined/,
@@ -51,20 +51,64 @@ assert.ok(historicalInquiryItems.every((entry) => Number.isFinite(Date.parse(ent
 assert.ok(historicalInquiryItems.every((entry) => !/strategy\s*2032/i.test(`${entry.title} ${entry.body}`)));
 
 const usedHandles = new Set<string>();
+const knownHandles = new Set(historicalProfiles.map((person) => person.handle));
+const actionCounts = new Map<string, number>();
+const countActions = (handles: string[] | undefined) => handles?.forEach((handle) => {
+  assert.ok(knownHandles.has(handle), `Unknown historical action actor: ${handle}`);
+  actionCounts.set(handle, (actionCounts.get(handle) ?? 0) + 1);
+});
 const visitComments = (comments: typeof historicalInquiryItems[number]["comments"]) => {
   for (const comment of comments) {
-    if (comment.authorHandle) usedHandles.add(comment.authorHandle);
+    if (comment.authorHandle) {
+      assert.ok(knownHandles.has(comment.authorHandle), `Unknown historical comment author: ${comment.authorHandle}`);
+      usedHandles.add(comment.authorHandle);
+    }
+    assert.ok((comment.signaledBy?.length ?? 0) >= 7, `${comment.id} needs realistic comment likes.`);
+    assert.ok((comment.savedBy?.length ?? 0) >= 3, `${comment.id} needs realistic comment saves.`);
+    assert.ok((comment.forkedBy?.length ?? 0) >= 2, `${comment.id} needs realistic comment reshares.`);
+    countActions(comment.signaledBy);
+    countActions(comment.savedBy);
+    countActions(comment.forkedBy);
     visitComments(comment.replies ?? []);
   }
 };
 for (const entry of historicalInquiryItems) {
-  if (entry.authorHandle) usedHandles.add(entry.authorHandle);
+  if (entry.authorHandle) {
+    assert.ok(knownHandles.has(entry.authorHandle), `Unknown historical post author: ${entry.authorHandle}`);
+    usedHandles.add(entry.authorHandle);
+  }
+  assert.ok((entry.signaledBy?.length ?? 0) >= 20, `${entry.id} needs realistic post likes.`);
+  assert.ok((entry.savedBy?.length ?? 0) >= 12, `${entry.id} needs realistic post saves.`);
+  assert.ok((entry.forkedBy?.length ?? 0) >= 6, `${entry.id} needs realistic post reshares.`);
+  countActions(entry.signaledBy);
+  countActions(entry.savedBy);
+  countActions(entry.forkedBy);
   visitComments(entry.comments);
 }
 assert.deepEqual(
   historicalProfiles.filter((person) => !usedHandles.has(person.handle)).map((person) => person.handle),
   [],
   "Every historical profile must author a post or comment."
+);
+assert.deepEqual(
+  historicalProfiles.filter((person) => (actionCounts.get(person.handle) ?? 0) < 100).map((person) => person.handle),
+  [],
+  "Every historical profile needs a substantial like, save, and reshare trail."
+);
+assert.equal(
+  historicalInquiryItems.filter((entry) => entry.id.startsWith("casual-") || entry.id.startsWith("community-") || entry.id.startsWith("symposium-")).length,
+  56,
+  "The casual activity layer changed without review."
+);
+const casualAuthorHandles = new Set(
+  historicalInquiryItems
+    .filter((entry) => entry.id.startsWith("casual-") || entry.id.startsWith("community-") || entry.id.startsWith("symposium-"))
+    .map((entry) => entry.authorHandle)
+);
+assert.deepEqual(
+  historicalProfiles.filter((person) => !casualAuthorHandles.has(person.handle)).map((person) => person.handle),
+  [],
+  "Every historical profile needs authored casual activity."
 );
 
 const nodes = historicalInquiryItems.flatMap((entry) => entry.document?.nodes ?? []);
@@ -88,15 +132,43 @@ for (const asset of allHistoricalAssets) {
   assert.equal(statSync(path).size, asset.byteSize, `Byte-size drift for ${asset.fileName}`);
   assert.ok(!/strategy.*2032/i.test(asset.fileName));
 }
+for (const fileName of [
+  "plato-ion.pdf",
+  "meitner-frisch-disintegration-uranium.pdf",
+  "watson-crick-molecular-structure-nucleic-acids.pdf"
+]) {
+  const asset = allHistoricalAssets.find((entry) => entry.fileName === fileName);
+  assert.ok(asset, `Missing normalized paper asset: ${fileName}`);
+  const editionNote = asset.metadata?.editionNote;
+  if (typeof editionNote !== "string") throw new Error(`Missing edition note for normalized paper: ${fileName}`);
+  assert.match(editionNote, /clean reading edition|browser-compatible RGB reproduction/i);
+}
+assert.equal(
+  allHistoricalAssets.find((asset) => asset.fileName === "meitner-frisch-disintegration-uranium.pdf")?.metadata?.searchableEdition,
+  false
+);
+assert.equal(
+  allHistoricalAssets.find((asset) => asset.fileName === "watson-crick-molecular-structure-nucleic-acids.pdf")?.metadata?.searchableEdition,
+  false
+);
 assert.ok(!existsSync(join(process.cwd(), "public/historical-world/images/71baeb5b116f780a78c3edf795671b5e.jpg")));
 
 const fixtureSource = readFileSync(join(process.cwd(), "apps/api/src/repository/historicalWorldFixtures.ts"), "utf8");
+const localStoreSource = readFileSync(join(process.cwd(), "lib/dataStore.ts"), "utf8");
 for (const requiredBoundary of [
   "historical_world_snapshots",
   "clerk_user_id IS NOT NULL",
   "historical_protected_handles",
+  "historical_preserved_comment_lineage",
   "Historical fixture handles collide with protected Clerk profiles",
-  "strategy2032Included: false"
+  "strategy2032Included: false",
+  "INNER JOIN historical_protected_handles action_actor",
+  "INNER JOIN historical_protected_handles view_actor",
+  "comment.saved_by ? protected_action.handle"
 ]) assert.ok(fixtureSource.includes(requiredBoundary), `Missing replacement safety boundary: ${requiredBoundary}`);
+assert.match(fixtureSource, /historical-world-v2-casual-activity/);
+assert.match(localStoreSource, /historical-world-v2-casual-activity/);
+assert.match(fixtureSource, /INSERT INTO comment_actions/);
+assert.match(fixtureSource, /ON CONFLICT \(id\) DO UPDATE SET[\s\S]+author_handle = EXCLUDED\.author_handle/);
 
 console.log(`historical world checks passed (${historicalProfiles.length} profiles, ${historicalInquiryItems.length} posts, ${historicalWorldCounts.comments} comments, ${allHistoricalAssets.length} assets)`);
