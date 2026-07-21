@@ -41,7 +41,9 @@ import {
 import {
   extractPdfAttachmentMetadata,
   loadPdfModule,
+  pdfPageNeedsVisualTranslationFallback,
   readPdfPageText,
+  renderPdfPageTranslationImage,
   resolvePdfDocumentUrl,
   type PdfAttachmentViewContext
 } from "@/features/attachments/pdfAttachmentClient";
@@ -87,21 +89,25 @@ const metadataBoolean = (metadata: Record<string, unknown> | undefined, key: str
   metadata?.[key] === true;
 
 const boundedDocumentTranslationSource = (
-  sourcePages: Array<{ pageNumber: number; body: string }>,
+  sourcePages: Array<{ pageNumber: number; body?: string; imageDataUrl?: string }>,
   complete: boolean
 ): DocumentTranslationSource => {
   const pages: DocumentTranslationSource["pages"] = [];
   let remaining = maxAttachmentPreviewTextLength;
   let truncated = sourcePages.length > 40;
   for (const sourcePage of sourcePages.slice(0, 40)) {
-    const clean = sourcePage.body.trim();
-    if (!clean) continue;
+    const clean = sourcePage.body?.trim() ?? "";
+    if (!clean && !sourcePage.imageDataUrl) continue;
     const body = clean.slice(0, Math.min(12_000, remaining));
-    if (!body) {
+    if (clean && !body) {
       truncated = true;
       break;
     }
-    pages.push({ pageNumber: sourcePage.pageNumber, body });
+    pages.push({
+      pageNumber: sourcePage.pageNumber,
+      body,
+      ...(sourcePage.imageDataUrl ? { imageDataUrl: sourcePage.imageDataUrl } : {})
+    });
     remaining -= body.length;
     if (body.length < clean.length) truncated = true;
     if (remaining <= 0) {
@@ -705,8 +711,12 @@ function PdfAttachmentPreview({
   const boundedPage = Math.min(Math.max(1, page), Math.max(1, originalPageCount));
   const loadTranslationSource = useCallback(async () => {
     if (document) {
+      const body = await readPdfPageText(document, boundedPage);
+      const imageDataUrl = pdfPageNeedsVisualTranslationFallback(body)
+        ? await renderPdfPageTranslationImage(document, boundedPage)
+        : undefined;
       return boundedDocumentTranslationSource(
-        [{ pageNumber: boundedPage, body: await readPdfPageText(document, boundedPage) }],
+        [{ pageNumber: boundedPage, body, ...(imageDataUrl ? { imageDataUrl } : {}) }],
         true
       );
     }

@@ -11,6 +11,7 @@ import {
   assistantTranslationInstructions,
   documentTranslationInstructions,
   documentTranslationMaxOutputTokens,
+  documentTranslationRequestContent,
   documentTranslationRenderedInput
 } from "@/apps/api/src/services/openaiResponses";
 import {
@@ -28,7 +29,11 @@ import {
   documentTranslationResultSchema
 } from "@/packages/contracts/src";
 import { buildTabletAttachmentContext, tabletAttachmentTextLimit } from "@/features/assistant/tabletAttachmentContext";
-import { pdfTextItemsToPlainText, resolvePdfDocumentUrl } from "@/features/attachments/pdfAttachmentClient";
+import {
+  pdfPageNeedsVisualTranslationFallback,
+  pdfTextItemsToPlainText,
+  resolvePdfDocumentUrl
+} from "@/features/attachments/pdfAttachmentClient";
 
 const validInput = {
   message: "What is the strongest objection?",
@@ -94,14 +99,39 @@ assert.equal(documentTranslationInputSchema.safeParse({
   ...documentTranslationInput,
   sourcePages: [{ pageNumber: 1, body: "x".repeat(12_001) }]
 }).success, false);
+const scannedPdfTranslationInput = {
+  ...documentTranslationInput,
+  attachmentId: "attachment-pdf-scan-1",
+  sourceKind: "pdf" as const,
+  sourcePages: [{ pageNumber: 1, body: "", imageDataUrl: "data:image/jpeg;base64,YWJj" }]
+};
+assert.equal(documentTranslationInputSchema.safeParse(scannedPdfTranslationInput).success, true);
+assert.equal(documentTranslationInputSchema.safeParse({
+  ...scannedPdfTranslationInput,
+  sourcePages: [{ pageNumber: 1, body: "" }]
+}).success, false);
+assert.equal(documentTranslationInputSchema.safeParse({
+  ...scannedPdfTranslationInput,
+  sourcePages: [{ pageNumber: 1, body: "", imageDataUrl: "data:text/html;base64,YWJj" }]
+}).success, false);
+assert.equal(supportedLanguageFromInstruction("English"), "english");
 assert.equal(supportedLanguageFromInstruction("en français, s’il vous plaît"), "french");
 assert.equal(supportedLanguageFromInstruction("auf Deutsch"), "german");
+assert.equal(supportedLanguageFromInstruction("en español"), "spanish");
 assert.equal(supportedLanguageFromInstruction("Italian"), null);
 assert.equal(supportedLanguageFromInstruction("French or Spanish"), null);
 assert.match(documentTranslationInstructions, /one supplied source page/i);
+assert.match(documentTranslationInstructions, /source language may be any language/i);
 assert.match(documentTranslationRenderedInput(documentTranslationInput), /LANGUAGE INSTRUCTION/);
+assert.doesNotMatch(documentTranslationRenderedInput(scannedPdfTranslationInput), /data:image/);
+assert.ok(documentTranslationRenderedInput(scannedPdfTranslationInput).length > 12_000);
+assert.deepEqual(documentTranslationRequestContent(documentTranslationInput).map((item) => item.type), ["input_text"]);
+assert.deepEqual(documentTranslationRequestContent(scannedPdfTranslationInput).map((item) => item.type), ["input_text", "input_image"]);
 assert.ok(documentTranslationMaxOutputTokens(documentTranslationInput) >= 800);
 assert.ok(documentTranslationMaxOutputTokens(documentTranslationInput) <= 6000);
+assert.equal(documentTranslationMaxOutputTokens(scannedPdfTranslationInput), 6000);
+assert.equal(pdfPageNeedsVisualTranslationFallback("Short title"), true);
+assert.equal(pdfPageNeedsVisualTranslationFallback("x".repeat(200)), false);
 assert.equal(documentTranslationModelOutputSchema.safeParse({
   targetLanguage: "spanish",
   targetLanguageLabel: "Spanish",
@@ -271,7 +301,8 @@ assert.match(provider, /strict: true/);
 assert.match(provider, /symposium-translation-v1/);
 assert.match(provider, /prompt_cache_key: translating \? "symposium-translation-v1" : "symposium-contextual-tablet-v1"/);
 assert.match(provider, /reasoning: \{ effort: "none" \}/);
-assert.match(provider, /symposium-document-page-translation-v2/);
+assert.match(provider, /symposium-document-page-translation-v3/);
+assert.match(provider, /documentTranslationRequestContent\(input\.request\)/);
 assert.match(provider, /insufficient_quota/);
 assert.match(repository, /providerErrorCode/);
 assert.match(usageService, /pg_advisory_xact_lock\(hashtextextended\('symposium:ai-budget'/);
@@ -319,9 +350,11 @@ assert.match(shell, /attachmentPreviewViewContext/);
 assert.doesNotMatch(shell, /const \[attachmentViewContext,/);
 assert.match(attachmentViews, /new pdfjs\.TextLayer/);
 assert.match(attachmentViews, /readPdfPageText\(document, boundedPage\)/);
+assert.match(attachmentViews, /renderPdfPageTranslationImage\(document, boundedPage\)/);
 assert.match(attachmentViews, /DocumentTranslationControl state=\{translation\}/);
 assert.match(documentTranslationControl, /placeholder="e\.g\. Spanish"/);
-assert.match(documentTranslationControl, /Only the page you are viewing is translated/);
+assert.match(documentTranslationControl, /Due to limited usage restriction this beta translates one page at a time/);
+assert.match(documentTranslationControl, /TriangleAlert/);
 assert.match(documentTranslationControl, /Original/);
 assert.match(documentTranslationControl, /Translation/);
 assert.match(documentTranslationControl, /Translate · uses 1/);

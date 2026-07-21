@@ -2,6 +2,9 @@ import { maxAttachmentPreviewTextLength } from "@/lib/attachmentRules";
 
 const maxPdfMetadataPages = 40;
 const maxPdfMetadataTextLength = Math.min(maxAttachmentPreviewTextLength, 48_000);
+const maxPdfTranslationImageBytes = 560 * 1024;
+const pdfTranslationImageWidths = [1600, 1400, 1200, 1000] as const;
+const pdfTranslationImageQualities = [0.86, 0.78, 0.7] as const;
 
 type PdfTextItem = {
   str: string;
@@ -92,6 +95,57 @@ export const readPdfPageText = async (
   const page = await document.getPage(pageNumber);
   const textContent = await page.getTextContent();
   return pdfTextItemsToPlainText(textContent.items);
+};
+
+const canvasToBlob = (canvas: HTMLCanvasElement, quality: number) => new Promise<Blob>((resolve, reject) => {
+  canvas.toBlob((blob) => {
+    if (blob) resolve(blob);
+    else reject(new Error("Could not encode the rendered PDF page."));
+  }, "image/jpeg", quality);
+});
+
+const blobToDataUrl = (blob: Blob) => new Promise<string>((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onerror = () => reject(new Error("Could not prepare the rendered PDF page."));
+  reader.onload = () => typeof reader.result === "string"
+    ? resolve(reader.result)
+    : reject(new Error("Could not prepare the rendered PDF page."));
+  reader.readAsDataURL(blob);
+});
+
+export const pdfPageNeedsVisualTranslationFallback = (body: string) =>
+  body.replace(/\s+/g, "").length < 200;
+
+export const renderPdfPageTranslationImage = async (
+  document: import("pdfjs-dist").PDFDocumentProxy,
+  pageNumber: number
+) => {
+  const pdfPage = await document.getPage(pageNumber);
+  const baseViewport = pdfPage.getViewport({ scale: 1 });
+  let smallestBlob: Blob | null = null;
+
+  for (const targetWidth of pdfTranslationImageWidths) {
+    const scale = Math.max(0.1, targetWidth / Math.max(1, baseViewport.width));
+    const viewport = pdfPage.getViewport({ scale });
+    const canvas = window.document.createElement("canvas");
+    canvas.width = Math.max(1, Math.floor(viewport.width));
+    canvas.height = Math.max(1, Math.floor(viewport.height));
+
+    await pdfPage.render({ canvas, viewport, background: "#ffffff" }).promise;
+    for (const quality of pdfTranslationImageQualities) {
+      const blob = await canvasToBlob(canvas, quality);
+      if (!smallestBlob || blob.size < smallestBlob.size) smallestBlob = blob;
+      if (blob.size <= maxPdfTranslationImageBytes) return blobToDataUrl(blob);
+    }
+
+    canvas.width = 1;
+    canvas.height = 1;
+  }
+
+  if (smallestBlob && smallestBlob.size <= maxPdfTranslationImageBytes) {
+    return blobToDataUrl(smallestBlob);
+  }
+  throw new Error("This scanned page is too detailed to translate within the beta upload limit.");
 };
 
 const fallbackPdfPageCount = (bytes: ArrayBuffer) => {

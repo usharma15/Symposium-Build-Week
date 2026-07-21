@@ -1287,9 +1287,24 @@ export const assistantMessageInputSchema = z.object({
   }
 });
 
+const documentTranslationImageDataUrlSchema = z.string()
+  .max(800_000)
+  .regex(
+    /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/,
+    "Document translation images must be bounded JPEG, PNG, or WebP data URLs."
+  );
+
 export const documentTranslationSourcePageSchema = z.object({
   pageNumber: z.number().int().positive().max(1000),
-  body: z.string().trim().min(1).max(12000)
+  body: z.string().trim().max(12000).default(""),
+  imageDataUrl: documentTranslationImageDataUrlSchema.optional()
+}).superRefine((page, context) => {
+  if (!page.body && !page.imageDataUrl) {
+    context.addIssue({
+      code: "custom",
+      message: "A document page requires extracted text or a rendered page image."
+    });
+  }
 });
 
 export const documentTranslationInputSchema = z.object({

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
-import { Languages, LoaderCircle, X } from "lucide-react";
+import { Languages, LoaderCircle, TriangleAlert, X } from "lucide-react";
 import { createClientMutationId, symposiumApi, SymposiumApiError } from "@/features/api/symposiumApiClient";
 import type {
   DocumentTranslationResultContract,
@@ -63,8 +63,8 @@ export const useDocumentTranslation = ({
     const submittedPageNumber = pageNumber;
     try {
       const source = await loadSource();
-      if (!source.pages.length || source.pages.every((page) => !page.body.trim())) {
-        throw new Error("This document has no extractable text to translate.");
+      if (!source.pages.length || source.pages.every((page) => !page.body.trim() && !page.imageDataUrl)) {
+        throw new Error("This page could not be prepared for translation.");
       }
       const input = {
         attachmentId,
@@ -86,6 +86,7 @@ export const useDocumentTranslation = ({
           body: input
         }
       );
+      retryRef.current = null;
       setResult(response);
       window.dispatchEvent(new CustomEvent("symposium-ai-quota-change", { detail: response.quota }));
       if (response.status === "translated") {
@@ -187,7 +188,11 @@ export function DocumentTranslationControl({ state }: { state: DocumentTranslati
             disabled={state.busy}
             onChange={(event) => state.setInstruction(event.target.value)}
           />
-          <small>Only the page you are viewing is translated. English, French, German, or Spanish.</small>
+          <small className="document-translation-limit-warning">
+            <TriangleAlert size={14} aria-hidden="true" />
+            <span>Due to limited usage restriction this beta translates one page at a time</span>
+          </small>
+          <small>English, French, German, or Spanish.</small>
           {state.error ? <p role="alert">{state.error}</p> : null}
           <button type="submit" className="document-translation-submit" disabled={!state.instruction.trim() || state.busy}>
             {state.busy ? <LoaderCircle className="spin" size={14} /> : <Languages size={14} />}
