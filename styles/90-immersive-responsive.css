@@ -134,7 +134,7 @@
     height: 16%;
   }
 
-  .office-hotspot span {
+  .office-hotspot-label {
     opacity: 1;
     transform: translateX(-50%);
   }

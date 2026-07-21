@@ -383,11 +383,18 @@
 .room-hotspots {
   position: fixed;
   inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.office-hotspot-target {
+  position: fixed;
   pointer-events: none;
 }
 
 .office-hotspot {
-  position: fixed;
+  position: absolute;
+  inset: 0;
   pointer-events: auto;
   border: 0;
   border-radius: 8px;
@@ -396,6 +403,7 @@
   cursor: pointer;
   box-shadow: none;
   text-decoration: none;
+  clip-path: var(--office-hotspot-shape, polygon(0 0, 100% 0, 100% 100%, 0 100%));
 }
 
 .office-hotspot::before {
@@ -409,10 +417,10 @@
     box-shadow 160ms ease;
 }
 
-.office-hotspot span {
+.office-hotspot-label {
   position: absolute;
   left: 50%;
-  bottom: -34px;
+  bottom: var(--office-label-bottom, -34px);
   min-width: max-content;
   padding: 6px 10px;
   border: 1px solid rgba(255, 235, 185, 0.46);
@@ -438,24 +446,32 @@
     0 0 42px rgba(247, 177, 75, 0.44);
 }
 
-.office-hotspot:hover span,
-.office-hotspot:focus-visible span {
+.office-hotspot-target:hover .office-hotspot-label,
+.office-hotspot-target:focus-within .office-hotspot-label {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
 }
 
 .office-hotspot-notes {
-  left: 9.5%;
-  bottom: 8%;
-  width: 33%;
-  height: 20%;
+  left: 10.89%;
+  bottom: 5.18%;
+  width: 17.47%;
+  height: 16.01%;
+  --office-hotspot-shape: polygon(3.69% 0, 100% 13.12%, 99.86% 98.61%, 0 100%);
+  --office-label-bottom: -17px;
 }
 
 .office-hotspot-saved {
-  right: 7.5%;
-  bottom: 8%;
-  width: 34%;
-  height: 20%;
+  right: 9.39%;
+  bottom: 6.15%;
+  width: 18.35%;
+  height: 14.83%;
+  --office-hotspot-shape: polygon(0 2.08%, 95.24% 0, 100% 100%, 2.38% 97.92%);
+  --office-label-bottom: -23px;
+}
+
+.symposium-shell[data-room="office"] .bottom-action {
+  z-index: 45;
 }
 
 .communities-layout {

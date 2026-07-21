@@ -115,6 +115,7 @@ const main = async () => {
   assert.doesNotMatch(documentStyles, /\.symposium-document-editor\.disabled\s*\{[^}]*opacity:/);
   const attachmentStyles = [sources.get("20-legacy-content.css") ?? "", sources.get("87-structured-attachments.css") ?? ""].join("\n");
   const shellStyles = sources.get("10-legacy-shell.css") ?? "";
+  const immersiveShellStyles = sources.get("50-immersive-shell.css") ?? "";
   const feedStyles = [
     sources.get("60-immersive-communities-feed.css") ?? "",
     sources.get("70-immersive-content-profile.css") ?? "",
@@ -124,6 +125,9 @@ const main = async () => {
   const responsiveStyles = sources.get("90-immersive-responsive.css") ?? "";
   assert.match(foundationStyles, /--symposium-feed-width:\s*840px/);
   assert.match(shellStyles, /\.symposium-shell[\s\S]*overflow-x:\s*clip/);
+  assert.match(immersiveShellStyles, /\.room-hotspots\s*\{[^}]*z-index:\s*3/);
+  assert.match(immersiveShellStyles, /\.office-hotspot\s*\{[^}]*clip-path:\s*var\(--office-hotspot-shape/);
+  assert.match(immersiveShellStyles, /\.symposium-shell\[data-room="office"\] \.bottom-action\s*\{[^}]*z-index:\s*45/);
   assert.match(feedStyles, /\.feed-stream[\s\S]*max-width:\s*var\(--symposium-feed-width\)/);
   assert.match(feedStyles, /\.detail-layout\.simple-detail[\s\S]*var\(--symposium-feed-width\)/);
   assert.match(feedStyles, /\.workspace-main-column[\s\S]*var\(--symposium-feed-width\)/);
@@ -171,6 +175,7 @@ const main = async () => {
           "shared quote card and composer layout",
           "one canonical feed and clicked-post width",
           "one canonical desktop in-post top line for content, Back controls, and contextual rails",
+          "Office hotspots behind all four bottom launchers",
           "day and night document ink with theme-safe selection contrast",
           "flush sticky editor and opaque themed attachment surfaces",
           "focus-scoped inline comment and compact reply toolbars",

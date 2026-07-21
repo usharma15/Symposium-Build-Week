@@ -387,37 +387,49 @@ export function RoomRender({
 
           <>
 
-            <CanonicalLink
+            <div className="office-hotspot-target office-hotspot-notes">
 
-              className="office-hotspot office-hotspot-notes"
+              <CanonicalLink
 
-              route={{ kind: "workspace", view: "notes" }}
+                className="office-hotspot"
 
-              onNavigate={onOpenNotebook}
+                route={{ kind: "workspace", view: "notes" }}
 
-              aria-label="Open notes"
+                onNavigate={onOpenNotebook}
 
-            >
+                aria-label="Open notes"
 
-              <span>Notes</span>
+              >
 
-            </CanonicalLink>
+                <span aria-hidden="true" />
 
-            <CanonicalLink
+              </CanonicalLink>
 
-              className="office-hotspot office-hotspot-saved"
+              <span className="office-hotspot-label">Notes</span>
 
-              route={{ kind: "workspace", view: "saved" }}
+            </div>
 
-              onNavigate={onOpenSaved ?? (() => undefined)}
+            <div className="office-hotspot-target office-hotspot-saved">
 
-              aria-label="Saved for later"
+              <CanonicalLink
 
-            >
+                className="office-hotspot"
 
-              <span>Saved for later</span>
+                route={{ kind: "workspace", view: "saved" }}
 
-            </CanonicalLink>
+                onNavigate={onOpenSaved ?? (() => undefined)}
+
+                aria-label="Saved for later"
+
+              >
+
+                <span aria-hidden="true" />
+
+              </CanonicalLink>
+
+              <span className="office-hotspot-label">Saved for later</span>
+
+            </div>
 
           </>
 
