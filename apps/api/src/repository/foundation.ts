@@ -197,7 +197,7 @@ export const getProfileByHandle = async (handle: string) => {
     [clean]
   );
   const person = result.rows[0];
-  return person ? { ...person, avatarUrl: person.avatarUrl ?? undefined } : null;
+  return person ? publicProfile({ ...person, fields: json(person.fields, []) }) : null;
 };
 
 export const callRowToContract = (row: {
@@ -1334,12 +1334,12 @@ export const getInitialState = async (): Promise<BootstrapResponseContract> => {
     const profiles = Object.fromEntries(
       profileResult.rows.map((person) => [
         person.handle,
-        {
+        publicProfile({
           ...person,
           email: person.email || undefined,
           avatarUrl: person.avatarUrl || undefined,
           fields: json(person.fields, [])
-        }
+        })
       ])
     );
 
@@ -1404,10 +1404,18 @@ export const listCommunities = async () => {
 
 const communityMemberPreviewLimit = 50;
 
-export const publicProfile = (person: ResearchProfileContract): ResearchProfileContract => {
+export function publicProfile(person: ResearchProfileContract): ResearchProfileContract {
   const { email: _email, ...profile } = person;
-  return profile;
-};
+  return {
+    ...profile,
+    avatarUrl: person.avatarUrl ?? undefined,
+    actorKind: person.actorKind ?? undefined,
+    era: person.era ?? undefined,
+    lifeDates: person.lifeDates ?? undefined,
+    disclosure: person.disclosure ?? undefined,
+    sourceUrl: person.sourceUrl ?? undefined
+  };
+}
 
 export const publicCommunity = (
   community: ResearchCommunityContract,

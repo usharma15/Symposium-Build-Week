@@ -11,6 +11,8 @@ import { historicalProfiles } from "../lib/historicalWorld/characters";
 import { historicalCommunities } from "../lib/historicalWorld/communities";
 import { historicalInquiryItems, historicalWorldCounts } from "../lib/historicalWorld/content";
 
+const foundationSource = readFileSync(join(process.cwd(), "apps/api/src/repository/foundation.ts"), "utf8");
+
 assert.equal(historicalProfiles.length, 33, "The curated cast changed without updating the fixture review.");
 assert.equal(new Set(historicalProfiles.map((person) => person.handle)).size, historicalProfiles.length, "Historical handles must be unique.");
 for (const person of historicalProfiles) {
@@ -35,6 +37,11 @@ assert.deepEqual(historicalWorldCounts, {
   comments: 116
 });
 assert.equal(historicalInquiryItems.length, 40);
+assert.match(
+  foundationSource,
+  /era:\s*person\.era\s*\?\?\s*undefined[\s\S]+lifeDates:\s*person\.lifeDates\s*\?\?\s*undefined/,
+  "Nullable database metadata must be omitted from non-historical profile payloads."
+);
 assert.ok(historicalInquiryItems.every((entry) => Number.isFinite(Date.parse(entry.createdAt ?? ""))));
 assert.ok(historicalInquiryItems.every((entry) => !/strategy\s*2032/i.test(`${entry.title} ${entry.body}`)));
 
